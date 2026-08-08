@@ -1,6 +1,6 @@
 # SpringPy
 
-SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力，以及内嵌的 PyMyBatis ORM。
+SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力、内嵌的 PyMyBatis ORM，以及企业级 AI 模块（对齐 Spring AI 2.0：ChatClient/Advisor/Tools/RAG/Function Calling）。
 
 - SpringPy 版本：`1.6.0`
 - 内嵌 PyMyBatis 版本：`1.4.0`
