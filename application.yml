@@ -11,6 +11,34 @@ server:
 spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:default}
+  # AI 模块配置（对齐 Spring AI 的 spring.ai.*）
+  ai:
+    default-provider: ${AI_PROVIDER:openai}   # openai | ollama
+    max-retries: ${AI_MAX_RETRIES:3}
+    retry-delay-ms: ${AI_RETRY_DELAY_MS:500}
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      chat:
+        model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+        temperature: ${OPENAI_TEMPERATURE:0.7}
+      embedding:
+        model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        model: ${OLLAMA_CHAT_MODEL:llama3}
+        temperature: ${OLLAMA_TEMPERATURE:0.7}
+    vector-store:
+      type: ${AI_VECTOR_STORE:inmemory}        # inmemory | redis
+      collection: ${AI_VECTOR_COLLECTION:default}
+    memory:
+      store: ${AI_MEMORY_STORE:inmemory}        # inmemory | redis
+      max-messages: ${AI_MEMORY_MAX:20}
+    circuit-breaker:
+      enabled: ${AI_CB_ENABLED:true}
+      failure-threshold: ${AI_CB_FAILURE_THRESHOLD:5}
+      recovery-timeout: ${AI_CB_RECOVERY_TIMEOUT:30}
 
 startup:
   fail_fast: ${STARTUP_FAIL_FAST:}

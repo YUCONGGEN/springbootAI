@@ -2,7 +2,7 @@
 
 SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力，以及内嵌的 PyMyBatis ORM。
 
-- SpringPy 版本：`1.5.0`
+- SpringPy 版本：`1.6.0`
 - 内嵌 PyMyBatis 版本：`1.4.0`
 - Python：3.9+
 - 状态：GA (全面可用)
@@ -30,6 +30,7 @@ SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供�
 | Prometheus 监控 | ✅ 可用 | Counter/Gauge/Histogram指标暴露 |
 | Feign 声明式HTTP | ✅ 可用 | 声明式接口、Fallback降级、自动传播XID和trace头 |
 | 高级 AOP | ✅ 可用 | 限流、熔断、幂等、审计、锁、指标、追踪、缓存 |
+| SpringPy AI 模块 | ✅ 可用 | 对齐 Spring AI 2.0：ChatClient/ChatModel/EmbeddingModel/Advisor/Tools，OpenAI/Ollama/DeepSeek/Moonshot 适配，Function Calling 闭环、RAG、会话记忆、Redis 向量存储、熔断重试、真流式 async、Prometheus 观测、类型化配置绑定 |
 
 ## 安装
 
@@ -51,6 +52,12 @@ python -m pip install -e ".[rabbitmq]"
 python -m pip install -e ".[nacos]"
 python -m pip install -e ".[prometheus,logging]"
 python -m pip install -e ".[dev]"
+```
+
+AI 模块为可选依赖（未安装时降级原生 HTTP + FakeChatModel）：
+
+```bash
+pip install -r requirements-ai.txt   # langchain-openai/langchain-community/numpy（==锁版本）
 ```
 
 `requirements.txt` 是仓库的完整开发环境，包含多种数据库和中间件客户端。应用接入时优先按需安装 extras。
