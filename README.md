@@ -4,7 +4,7 @@ SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供�
 
 - SpringPy 版本：`1.3.0`
 - 内嵌 PyMyBatis 版本：`1.3.0`
-- Python：3.8+
+- Python：3.9+
 - 状态：Beta
 - 仓库：[GitHub - YUCONGGEN/springboot_cloud_python](https://github.com/YUCONGGEN/springboot_cloud_python)
 

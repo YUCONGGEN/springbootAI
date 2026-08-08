@@ -1,3 +1,122 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "wheel>=0.37"]
 build-backend = "setuptools.build_meta"
+
+# ========================================
+# SpringPy 项目元数据与依赖声明（PEP 621）
+# 本文件是依赖的单一真实来源，类似 Spring Boot 的 pom.xml
+# 版本锁定策略：所有直接依赖使用 == 精确锁定
+# 未安装/未测试的可选依赖（Oracle/Seata/SkyWalking）保留 >= 范围
+# ========================================
+
+[project]
+name = "springpy"
+version = "1.3.0"
+description = "Python版Spring Boot框架，集成PyMyBatis ORM"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "YuConggen", email = "1516933915@qq.com" }
+]
+keywords = ["spring", "springboot", "mybatis", "orm", "web", "framework", "python"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Database",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+]
+requires-python = ">=3.9"
+
+# ========================================
+# 核心依赖 - 类似 Spring Boot Starter Web/Core
+# 安装：pip install springpy
+# ========================================
+dependencies = [
+    "fastapi==0.128.8",
+    "uvicorn==0.39.0",
+    "pyyaml==6.0.3",
+    "python-dotenv==1.2.1",
+    "DBUtils==3.1.2",
+    "cryptography==48.0.1",
+    "bcrypt==5.0.0",
+    "pyjwt==2.13.0",
+    "pydantic==2.13.4",
+]
+
+[project.optional-dependencies]
+# ========================================
+# 数据库驱动 - 类似 Spring Boot Starter JDBC/Data JPA
+# ========================================
+mysql = ["PyMySQL==1.2.0"]
+postgresql = ["psycopg2-binary==2.9.11"]
+sqlalchemy = ["sqlalchemy==2.0.40"]
+
+# ========================================
+# Redis - 类似 Spring Boot Starter Data Redis
+# ========================================
+redis = ["redis==7.0.1"]
+
+# ========================================
+# 消息队列 - 类似 Spring Boot Starter AMQP
+# ========================================
+rabbitmq = ["pika==1.4.4"]
+
+# ========================================
+# 服务发现 - 类似 Spring Cloud Alibaba Nacos
+# ========================================
+nacos = ["nacos-sdk-python==2.0.11"]
+
+# ========================================
+# 监控和日志 - 类似 Spring Boot Actuator + Micrometer
+# ========================================
+prometheus = ["prometheus-client==0.26.0"]
+logging = ["loguru==0.7.3"]
+
+# ========================================
+# SQL注入检测
+# ========================================
+ast = ["sqlglot==27.28.1"]
+
+# ========================================
+# 开发依赖
+# ========================================
+dev = [
+    "pytest==8.4.2",
+    "pytest-cov==7.1.0",
+    "redis==7.0.1",
+    "sqlglot==27.28.1",
+]
+
+# ========================================
+# 全部依赖（一键安装）
+# ========================================
+full = [
+    "PyMySQL==1.2.0",
+    "psycopg2-binary==2.9.11",
+    "sqlalchemy==2.0.40",
+    "redis==7.0.1",
+    "sqlglot==27.28.1",
+    "pika==1.4.4",
+    "nacos-sdk-python==2.0.11",
+    "prometheus-client==0.26.0",
+    "loguru==0.7.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/YUCONGGEN/springboot_cloud_python"
+Repository = "https://github.com/YUCONGGEN/springboot_cloud_python.git"
+
+[project.scripts]
+springpy = "spring.main:run_cli"
+
+[tool.setuptools.packages.find]
+exclude = ["tests", "example*", "test_cloud_app"]
+
+[tool.setuptools.package-data]
+spring = ["*.py", "**/*.py", "**/*.xml", "**/*.yml", "**/*.yaml"]
