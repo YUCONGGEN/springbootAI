@@ -240,6 +240,35 @@ class UserService:
 
 `@Transactional` 内的多个 Mapper 调用复用同一个 Session，并在方法正常结束时提交、异常时回滚。支持 `propagation="REQUIRED"` 和使用 savepoint 的 `propagation="NESTED"`；其他传播级别会明确报错。
 
+## SpringPy AI 模块
+
+SpringPy AI 模块对齐 **Spring AI 2.0**，提供 `ChatClient`/`ChatModel`/`EmbeddingModel`/`Advisor`/`Tools` 抽象，底层复用 LangChain 生态做模型适配（未安装时降级原生 HTTP），上层保留 Spring 风格的统一配置与依赖注入。
+
+**核心能力**：
+- **多 Provider 适配**：OpenAI / Ollama / DeepSeek / Moonshot（LangChain 优先，HTTP 降级）
+- **ChatClient 链式 API**：`client.prompt().user("...").call().content()`，对齐 Spring AI
+- **Function Calling 闭环**：tools 自动注入请求体 + tool_call 循环执行回填续写（最多 5 轮）
+- **RAG**：QuestionAnswerAdvisor + VectorStore（InMemory / Redis 持久化）
+- **会话记忆**：MessageChatMemoryAdvisor（InMemory / Redis，多轮对话）
+- **文档 ETL**：TextReader / TokenTextSplitter / CharacterTextSplitter
+- **企业级能力**：熔断重试韧性（复用 spring.retry）、真流式 SSE+async、Prometheus 观测（复用框架 prometheus）、Redis 向量存储
+- **类型化配置绑定**：`AIProperties` dataclass + env 覆盖安全网，优先级 环境变量 > application.yml > 默认值
+
+**快速开始**：
+
+```python
+from spring.ai import configure_ai
+
+# 读取 application.yml 的 spring.ai.* 自动装配所有 Bean
+beans = configure_ai()
+client = beans["aiChatClient"]
+print(client.prompt().user("你好").call().content())
+```
+
+只需配置 `OPENAI_API_KEY` 即可启用真实模型；未配置时降级 `FakeChatModel`（开发/测试友好）。AI 依赖为可选，安装 `requirements-ai.txt` 后启用 LangChain 生态适配。
+
+完整文档见 [docs/AI_MODULE.md](docs/AI_MODULE.md)。
+
 ## 独立与内嵌 ORM 的关系
 
 | 场景 | 导入路径 |
@@ -470,6 +499,7 @@ SQLite 自动化通过不代表 MySQL、PostgreSQL 或 Oracle 已验证。上线
 ## 文档
 
 - [详细使用说明书](使用说明书.md)
+- [SpringPy AI 模块](docs/AI_MODULE.md) —— ChatClient/Advisor/Tools/RAG/Function Calling/企业级能力
 - [Java 到 Python 迁移指南](docs/JAVA_TO_PYTHON_MIGRATION.md)
 - [企业生产就绪评估](docs/ENTERPRISE_READINESS.md)
 - [部署指南](docs/DEPLOYMENT.md)
