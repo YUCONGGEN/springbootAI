@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11"]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest flake8 pip-audit
+
+    - name: Static code check with py_compile
+      run: |
+        echo "Compiling all Python files under spring/..."
+        python -m py_compile $(find spring/ -name "*.py" -type f)
+        echo "py_compile check passed"
+
+    - name: Run unit tests
+      run: pytest tests/ -v --tb=short
+
+    - name: Module import verification
+      run: |
+        python -c "
+        import spring
+        import spring.annotations
+        import spring.annotations.core
+        import spring.annotations.cloud
+        import spring.annotations.messaging
+        import spring.aop
+        import spring.cloud
+        import spring.config
+        import spring.context
+        import spring.core
+        import spring.event
+        import spring.logging
+        import spring.messaging
+        import spring.monitoring
+        import spring.orm
+        import spring.orm.pymybatis
+        import spring.retry
+        import spring.scheduling
+        import spring.security
+        import spring.tracing
+        import spring.utils
+        import spring.web
+        print('All module imports successful!')
+        print(f'spring version: {spring.__version__}')
+        "
+
+    - name: pip-audit dependency vulnerability scan
+      run: |
+        echo "Running pip-audit for dependency vulnerabilities..."
+        pip-audit || true
+        echo "pip-audit scan completed (non-zero exit codes allowed for reporting)"
+
+    - name: Generate SBOM
+      run: |
+        if [ -f scripts/generate_sbom.py ]; then
+          echo "Generating SBOM..."
+          python scripts/generate_sbom.py
+        else
+          echo "scripts/generate_sbom.py not found, skipping SBOM generation"
+        fi

@@ -34,7 +34,7 @@ def read_version():
         for line in f:
             if line.startswith('__version__'):
                 return line.split('=')[1].strip().strip("'\"")
-    return '1.3.0'
+    return '1.4.0'
 
 setup(
     name='springpy',

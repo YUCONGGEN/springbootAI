@@ -1,5 +1,6 @@
 from typing import Type, Optional
 import socket
+import signal
 from spring.context.application_context import ApplicationContext
 from spring.web.web_context import WebApplicationContext
 from spring.utils.banner import BannerPrinter
@@ -35,6 +36,19 @@ class SpringApplication:
         # 从配置文件和环境变量加载配置
         config = self.application_context.get_config()
         fail_fast = self._should_fail_fast(config)
+
+        # 生产环境安全检查
+        if fail_fast:
+            self._production_security_check(config)
+
+        # 解析配置中的密钥引用 (${secret:xxx})
+        try:
+            from spring.security.secret_manager import resolve_secret_config
+            resolved = resolve_secret_config(config)
+            config.update(resolved)
+            self.application_context._config = resolved
+        except Exception as e:
+            self.logger.debug(f"Secret resolution skipped: {e}")
         
         # 初始化日志
         init_logging(config.get('logging', {}))
@@ -182,6 +196,39 @@ class SpringApplication:
         profile = str(config.get('spring', {}).get('profiles', {}).get('active', 'default')).lower()
         return profile in {'prod', 'production'}
 
+    def _production_security_check(self, config: dict) -> None:
+        """生产环境安全检查"""
+        warnings = []
+        # 检查JWT密钥是否为默认值
+        jwt_config = config.get('jwt', {})
+        jwt_secret = jwt_config.get('secret_key', '')
+        if jwt_secret in ('', 'your-secret-key', 'secret', 'changeme', 'springpy-secret'):
+            warnings.append("JWT secret_key is default/empty, MUST set strong secret in production")
+
+        # 检查数据库是否无密码
+        db_config = config.get('database', {})
+        if db_config.get('enabled', False) and not db_config.get('password'):
+            warnings.append("Database password is empty, MUST set password in production")
+
+        # 检查CORS是否全开
+        cors_config = config.get('cors', {})
+        allow_origins = cors_config.get('allow_origins', [])
+        if '*' in (allow_origins if isinstance(allow_origins, list) else [allow_origins]):
+            warnings.append("CORS allows all origins (*), restrict to specific domains in production")
+
+        # 检查是否启用了debug模式
+        if config.get('debug', False) or config.get('server', {}).get('debug', False):
+            warnings.append("Debug mode is enabled, MUST disable in production")
+
+        # 检查Docker IP自动检测
+        import os
+        if not os.getenv('SPRING_DISABLE_DOCKER_IP_DETECT'):
+            warnings.append("SPRING_DISABLE_DOCKER_IP_DETECT not set, should be 1 in production")
+
+        if warnings:
+            for w in warnings:
+                self.logger.warning(f"[PROD-SECURITY] {w}")
+
     def _start_web_server(self, **kwargs) -> None:
         self.logger.info("Initializing web context...")
         self.web_context = WebApplicationContext(self.application_context)
@@ -189,6 +236,18 @@ class SpringApplication:
         self.web_context.fastapi_app.router.add_event_handler(
             'shutdown', self._deregister_discovery_service
         )
+        self.web_context.fastapi_app.router.add_event_handler(
+            'shutdown', self._on_app_shutdown
+        )
+
+        # 注册优雅退出信号处理
+        try:
+            from spring.core.graceful_shutdown import shutdown_handler
+            shutdown_handler.register_signals()
+            # 注册资源关闭钩子
+            shutdown_handler.register_hook("discovery_deregister", self._deregister_discovery_service, order=10)
+        except Exception:
+            pass
 
         # 从配置获取端口和主机
         config = self.application_context.get_config()
@@ -203,6 +262,16 @@ class SpringApplication:
         self._register_discovery_service(port)
 
         self.web_context.run(host=host, port=port)
+
+    def _on_app_shutdown(self):
+        """ASGI应用关闭事件回调"""
+        try:
+            from spring.core.graceful_shutdown import shutdown_handler
+            if not shutdown_handler._signal_received:
+                # 如果是ASGI服务器直接关闭（非信号触发），执行关闭钩子
+                shutdown_handler.initiate_shutdown()
+        except Exception:
+            pass
 
     def _register_discovery_service(self, port: int) -> None:
         """Register the running application after its HTTP port is known."""
