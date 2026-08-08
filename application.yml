@@ -1,0 +1,120 @@
+# Spring Python 应用配置文件
+# 环境变量会覆盖此处配置
+
+server:
+  port: ${SERVER_PORT:8080}
+  host: ${SERVER_HOST:0.0.0.0}
+  cors:
+    allow_origins: []
+    allow_credentials: false
+
+spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:default}
+
+startup:
+  fail_fast: ${STARTUP_FAIL_FAST:}
+
+# Redis配置（用于分布式锁、限流、熔断等）
+redis:
+  enabled: ${REDIS_ENABLED:false}
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  db: ${REDIS_DB:0}
+  password: ${REDIS_PASSWORD:null}
+  timeout: ${REDIS_TIMEOUT:5000}
+
+# JWT配置（用于认证授权）
+jwt:
+  secret_key: ${JWT_SECRET_KEY:spring-python-secret-key-change-in-production}
+  algorithm: ${JWT_ALGORITHM:HS256}
+  expires_in: ${JWT_EXPIRES_IN:3600}
+  issuer: ${JWT_ISSUER:}
+  audience: ${JWT_AUDIENCE:}
+  leeway: ${JWT_LEEWAY:0}
+
+# 数据库配置（支持PyMyBatis）
+database:
+  enabled: ${DB_ENABLED:true}
+  orm: ${DB_ORM:mybatis}
+  driver: ${DB_DRIVER:sqlite}
+  host: ${DB_HOST:localhost}
+  port: ${DB_PORT:3306}
+  database: ${DB_DATABASE:./test.db}
+  username: ${DB_USERNAME:}
+  password: ${DB_PASSWORD:}
+  # 连接池配置
+  min_size: ${DB_MIN_SIZE:1}
+  max_size: ${DB_MAX_SIZE:5}
+  max_idle: ${DB_MAX_IDLE:3600}
+  wait_timeout: ${DB_WAIT_TIMEOUT:10}
+  validation_interval: ${DB_VALIDATION_INTERVAL:300}
+  leak_detection_enabled: ${DB_LEAK_DETECTION:true}
+  leak_timeout: ${DB_LEAK_TIMEOUT:300}
+  # 安全配置
+  security:
+    block_ddl: ${DB_SECURITY_DDL_BLOCK:true}
+    sql_injection_detection: true
+    allow_raw_params: false
+  batch:
+    max_size: ${DB_SECURITY_MAX_BATCH:1000}
+  # 缓存配置
+  cache:
+    enabled: ${DB_CACHE_ENABLED:true}
+    ttl: ${DB_CACHE_TTL:3600}
+
+# 服务注册发现配置（Nacos）
+discovery:
+  enabled: ${DISCOVERY_ENABLED:false}
+  server_addr: ${NACOS_SERVER:localhost:8848}
+  namespace: ${NACOS_NAMESPACE:}
+  group: ${NACOS_GROUP:DEFAULT_GROUP}
+  username: ${NACOS_USERNAME:}
+  password: ${NACOS_PASSWORD:}
+
+# 分布式事务配置（Seata）
+seata:
+  enabled: ${SEATA_ENABLED:false}
+  mode: ${SEATA_MODE:local}  # local 或 distributed
+  server_addr: ${SEATA_SERVER:localhost:8091}
+  application_id: ${SEATA_APP_ID:spring-python-app}
+  transaction_group: ${SEATA_TX_GROUP:my_tx_group}
+
+# 分布式追踪配置（SkyWalking）
+skywalking:
+  enabled: ${SKYWALKING_ENABLED:false}
+  service_name: ${SKYWALKING_SERVICE:spring-python-app}
+  collector_address: ${SKYWALKING_COLLECTOR:127.0.0.1:11800}
+  protocol: ${SKYWALKING_PROTOCOL:grpc}
+
+# 重试配置
+retry:
+  enabled: ${RETRY_ENABLED:true}
+  default_max_retries: ${RETRY_MAX_RETRIES:3}
+  default_delay: ${RETRY_DELAY:1000}  # 毫秒
+  default_max_delay: ${RETRY_MAX_DELAY:10000}  # 毫秒
+  default_multiplier: ${RETRY_MULTIPLIER:2.0}
+  default_random_factor: ${RETRY_RANDOM_FACTOR:0.1}
+
+# 消息队列配置（RabbitMQ）
+rabbitmq:
+  enabled: ${RABBITMQ_ENABLED:false}
+  host: ${RABBITMQ_HOST:localhost}
+  port: ${RABBITMQ_PORT:5672}
+  username: ${RABBITMQ_USERNAME:guest}
+  password: ${RABBITMQ_PASSWORD:guest}
+  virtual_host: ${RABBITMQ_VHOST:/}
+
+# 监控配置（Prometheus）
+prometheus:
+  enabled: ${PROMETHEUS_ENABLED:false}
+  namespace: ${PROMETHEUS_NAMESPACE:spring}
+  subsystem: ${PROMETHEUS_SUBSYSTEM:python}
+  port: ${PROMETHEUS_PORT:8000}
+
+# 日志配置
+logging:
+  level: ${LOG_LEVEL:INFO}
+  log_dir: ${LOG_DIR:logs}
+  retention: ${LOG_RETENTION:30 days}
+  rotation: ${LOG_ROTATION:100 MB}

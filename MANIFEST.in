@@ -1,0 +1,22 @@
+include README.md
+include LICENSE
+include requirements.txt
+include pyproject.toml
+
+graft spring
+graft example_all
+graft tests
+graft test_cloud_app
+graft docs
+graft sql
+
+# 排除开发/构建产物
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude .DS_Store
+prune build
+prune dist
+prune .pytest_cache
+prune .venv
+prune logs

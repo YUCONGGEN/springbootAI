@@ -1,0 +1,45 @@
+# Docker ignore file for SpringPy project
+# 排除虚拟环境和Python缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 排除构建产物
+build/
+dist/
+*.egg
+
+# 排除IDE文件
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# 排除日志和数据库
+logs/
+*.log
+*.db
+*.sqlite
+
+# 排除测试覆盖率
+.coverage
+htmlcov/
+.coverage.*
+
+# 排除环境变量文件
+.env
+.env.local
+.env.*.local
+
+# 排除Git
+.git/
+.gitignore
+
+# 排除文档（生产镜像不需要）
+docs/
+*.md
+!README.md

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  兼容性测试: 框架解析器自动规范化 SQL 中未转义的 <= 和 >=
+  未转义的 >= 合法；此文件保留 <= 原始格式用于验证 XmlParser 的行为
+-->
+<mapper namespace="test.KnownLimitsMapper">
+    <select id="find_recent" resultType="dict">
+        SELECT * FROM users WHERE created_at >= '2024-01-01' AND age <= 65
+    </select>
+</mapper>

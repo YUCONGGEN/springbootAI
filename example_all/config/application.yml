@@ -1,0 +1,90 @@
+server:
+  port: 8080
+
+spring:
+  profiles:
+    active: default
+
+# 启动行为
+startup:
+  fail_fast: false
+
+# 自定义配置
+app:
+  name: example-all
+  version: 1.0.0
+  greeting: Hello from example_all!
+  greeting_dev: Hello from dev profile!
+  admin_users:
+    - admin
+    - superadmin
+
+# MySQL 数据库配置 (Docker: mysql:8.0, 无密码)
+database:
+  enabled: true
+  orm: mybatis
+  driver: mysql
+  host: 127.0.0.1
+  port: 3306
+  database: springpy
+  username: root
+  password: ""
+  min_size: 1
+  max_size: 5
+  leak_detection_enabled: false
+  mapper_locations:
+    - example_all/mappers
+  security:
+    block_ddl: false
+    sql_injection_detection: false
+
+# Redis 配置 (Docker: redis:7-alpine)
+redis:
+  enabled: true
+  host: localhost
+  port: 6379
+  db: 0
+  password: ""
+
+# 缓存配置
+cache:
+  enabled: true
+  ttl: 300
+  max_size: 1000
+
+# 重试配置
+retry:
+  enabled: true
+  default_max_retries: 3
+  default_delay: 1000
+
+# JWT 安全配置
+jwt:
+  enabled: true
+  secret: example_all_jwt_secret_key_2024
+  expiration: 3600
+
+# Nacos 服务发现 (Docker: nacos/nacos-server)
+discovery:
+  enabled: true
+  server_addr: "localhost:8848"
+  namespace: ""
+  group: "DEFAULT_GROUP"
+  username: "nacos"
+  password: "nacos"
+
+# RabbitMQ 消息队列 (Docker: rabbitmq:3-management-alpine)
+rabbitmq:
+  enabled: true
+  host: localhost
+  port: 5672
+  username: admin
+  password: admin123
+  virtual_host: "/"
+
+# Prometheus 监控
+prometheus:
+  enabled: true
+  namespace: spring
+  subsystem: example_all
+  port: 8000
