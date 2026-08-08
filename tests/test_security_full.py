@@ -66,7 +66,7 @@ class TestJwtUtilsConstruction:
 
 class TestJwtTokenGeneration:
     def setup_method(self):
-        self.jwt = JwtUtils(secret_key="test-secret-key", algorithm="HS256")
+        self.jwt = JwtUtils(secret_key="test-secret-key-for-unit-tests-0123456789abcdef", algorithm="HS256")
 
     def test_generate_token_returns_string(self):
         token = self.jwt.generate_token({"user_id": "u1"}, expires_in=3600)
@@ -123,7 +123,7 @@ class TestJwtTokenGeneration:
             "jti": "abc",
             "token_type": "access",
         }
-        token = pyjwt.encode(payload, "test-secret-key", algorithm="HS256")
+        token = pyjwt.encode(payload, "test-secret-key-for-unit-tests-0123456789abcdef", algorithm="HS256")
         assert self.jwt.is_expired(token) is True
 
     def test_extract_user_id(self):
@@ -149,7 +149,7 @@ class TestJwtTokenGeneration:
 
 class TestJwtRefreshToken:
     def setup_method(self):
-        self.jwt = JwtUtils(secret_key="test-secret-key", algorithm="HS256")
+        self.jwt = JwtUtils(secret_key="test-secret-key-for-unit-tests-0123456789abcdef", algorithm="HS256")
 
     def test_generate_refresh_token(self):
         token = self.jwt.generate_refresh_token({"user_id": "u1"}, expires_in=86400)

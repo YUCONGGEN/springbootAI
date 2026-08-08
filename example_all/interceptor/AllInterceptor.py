@@ -41,7 +41,9 @@ class SecurityHeaderInterceptor(HandlerInterceptor):
     """检查安全请求头的拦截器"""
 
     def pre_handle(self, request, handler) -> bool:
-        path = getattr(request, 'url', getattr(request, 'path', ''))
+        # request.url 是 Starlette URL 对象，需取其 .path 字符串再做包含判断
+        url = getattr(request, 'url', None)
+        path = getattr(url, 'path', '') or getattr(request, 'path', '')
         # 只检查 /api/secure/ 路径
         if '/api/secure/' in path:
             headers = getattr(request, 'headers', {})

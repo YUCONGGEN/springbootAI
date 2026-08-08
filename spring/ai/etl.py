@@ -2,11 +2,23 @@
 文档 ETL - DocumentReader（读取原始文档） + TextSplitter（切片），为 RAG 入库服务。
 
 对齐 Spring AI 的 DocumentReader / TextSplitter 抽象。
+设计原则：能用 LangChain 就用 LangChain（不做重复造轮子）——
+切片逻辑优先委托 `langchain-text-splitters` 的成熟实现（递归分隔符 / 字符分隔），
+仅当该包未安装时降级为内置实现，保证开箱即用。
 """
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+
+def _has_langchain_splitters() -> bool:
+    """探测是否安装了 langchain-text-splitters（切片器专属轻量包）。"""
+    try:
+        import langchain_text_splitters  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 @dataclass
@@ -18,6 +30,19 @@ class TextDocument:
     @property
     def source(self) -> str:
         return self.metadata.get("source", "")
+
+
+def _wrap_langchain_chunks(chunks: List[str],
+                           doc: TextDocument) -> List[TextDocument]:
+    """把 LangChain 切片结果映射为框架 TextDocument，并补齐 chunk_index 元数据。"""
+    result: List[TextDocument] = []
+    for idx, chunk in enumerate(chunks):
+        if not chunk:
+            continue
+        meta = dict(doc.metadata)
+        meta["chunk_index"] = idx
+        result.append(TextDocument(content=chunk, metadata=meta))
+    return result
 
 
 class DocumentReader(ABC):
@@ -72,6 +97,21 @@ class TokenTextSplitter(TextSplitter):
         self.min_chunk_size = min_chunk_size
 
     def split(self, documents: List[TextDocument]) -> List[TextDocument]:
+        # LangChain 优先：递归字符切片（自动按 \n\n/\n/空格/标点逐级切分，语义更佳）
+        if _has_langchain_splitters():
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+            lc = RecursiveCharacterTextSplitter(
+                chunk_size=self.chunk_size * 4,   # 保持 4 char ≈ 1 token 语义
+                chunk_overlap=min(self.chunk_overlap * 4,
+                                  self.chunk_size * 4 - 1),
+            )
+            result: List[TextDocument] = []
+            for doc in documents:
+                if not doc.content:
+                    continue
+                result.extend(_wrap_langchain_chunks(lc.split_text(doc.content), doc))
+            return result
+
         result: List[TextDocument] = []
         for doc in documents:
             text = doc.content
@@ -109,6 +149,23 @@ class CharacterTextSplitter(TextSplitter):
         self.chunk_overlap = chunk_overlap
 
     def split(self, documents: List[TextDocument]) -> List[TextDocument]:
+        # LangChain 优先：字符分隔切片
+        if _has_langchain_splitters():
+            from langchain_text_splitters import CharacterTextSplitter as LCCharSplit
+            lc = LCCharSplit(
+                separator=self.separator,
+                chunk_size=self.chunk_size,
+                # LangChain 要求 overlap < chunk_size；内置降级实现不应用 overlap，
+                # 此处夹紧以保证默认 chunk_size=30 等边界场景在安装后同样可用
+                chunk_overlap=min(self.chunk_overlap, self.chunk_size - 1),
+            )
+            result: List[TextDocument] = []
+            for doc in documents:
+                if not doc.content:
+                    continue
+                result.extend(_wrap_langchain_chunks(lc.split_text(doc.content), doc))
+            return result
+
         result: List[TextDocument] = []
         for doc in documents:
             parts = doc.content.split(self.separator)

@@ -19,8 +19,22 @@ langchain-openai==0.3.27
 # LangChain 核心（langchain-openai 的依赖，显式锁定）
 langchain-core==0.3.51
 
+# 文档切分器（RecursiveCharacterTextSplitter / CharacterTextSplitter）
+# 供 spring/ai/etl.py 的 TokenTextSplitter / CharacterTextSplitter 优先委托使用；
+# 未安装时自动降级内置实现。已测试（langchain-text-splitters==0.3.8，兼容 core==0.3.51）
+langchain-text-splitters==0.3.8
+
 # Ollama 本地模型适配（Llama3 / Qwen / Phi3 等）
 langchain-community==0.3.24
+
+# OpenAI 兼容多厂商专用适配（DeepSeek / Moonshot / ZhipuAI）
+# 注意：以下三个包为"推荐启用"项，尚未在本仓库测试环境完成精确版本锁定
+# （本仓库要求所有版本号 == 已测试验证）。启用前请先 pip install 最新版并跑
+# tests/test_ai_module.py 验证后再将版本号回填为 ==。未安装时
+# OpenAICompatChatModel 自动降级 OpenAI 兼容原生 HTTP，不影响使用。
+# langchain-deepseek==<TBD>
+# langchain-moonshot==<TBD>
+# langchain-zhipuai==<TBD>
 
 # 向量相似度计算（可选，未安装时用内置 math.sqrt 实现）
 numpy==2.0.2

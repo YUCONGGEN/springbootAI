@@ -339,17 +339,34 @@ class ChatClient:
 
     def _execute_stream(self, messages: List[Message], advisors: List[Advisor],
                         tool_registry, context: Dict[str, Any]):
-        # 流式：advisor 仅做请求预处理，逐块 yield
+        # 流式：advisor 先做请求预处理，逐块 yield；全部消费完后再统一回调
+        # advise_response（例如 MessageChatMemoryAdvisor 保存会话记忆）。
+        # 修复：之前流式模式从不调用 advise_response，导致"流式 + 记忆"时对话
+        # 永远不会被持久化。
         request = AdvisorRequest(
             messages=list(messages), chat_model=self.chat_model,
             tool_registry=tool_registry, context=dict(context),
         )
         for advisor in sorted(advisors, key=lambda a: a.order):
             request = advisor.advise_request(request)
-        yield from self.chat_model.stream(
-            request.messages, tool_registry=request.tool_registry,
-            options=request.options
-        )
+
+        chunks: List[ChatResponse] = []
+        for chunk in self.chat_model.stream(
+                request.messages, tool_registry=request.tool_registry,
+                options=request.options):
+            chunks.append(chunk)
+            yield chunk
+
+        # 聚合全部流式块，回调响应阶段 advisor（触发记忆保存/日志/审计等副作用）
+        if chunks:
+            combined = ChatResponse(
+                generations=[Generation(output=Message.assistant(
+                    "".join(c.content() for c in chunks)))],
+                metadata={"provider": (chunks[-1].metadata or {}).get("provider"),
+                          "stream": True, "combined": True},
+            )
+            for advisor in sorted(advisors, key=lambda a: a.order, reverse=True):
+                combined = advisor.advise_response(combined, request)
 
 
 class ChatClientBuilder:

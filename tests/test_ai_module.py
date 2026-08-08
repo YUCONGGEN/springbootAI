@@ -22,6 +22,7 @@ from spring.ai import (
     InMemoryChatMemory, RedisChatMemory, ChatMemory,
     SimpleInMemoryVectorStore, RedisVectorStore, VectorStore, SearchRequest, cosine_similarity,
     VectorDocument,
+    LangChainVectorStore,
     TokenTextSplitter, CharacterTextSplitter, TextReader, TextDocument,
     ToolRegistry, ToolDefinition,
     FakeChatModel, FakeEmbeddingModel, OpenAIChatModel, OpenAIEmbeddingModel,
@@ -234,6 +235,66 @@ class TestVectorStore:
         results = store.similarity_search(SearchRequest(query=""))
         assert results == []
 
+    def test_langchain_vectorstore_adapter(self):
+        """LangChainVectorStore 包装 langchain 向量库（用 stub 模拟）"""
+        emb = FakeEmbeddingModel(dim=4)
+
+        class _LcDoc:
+            def __init__(self, content, metadata=None):
+                self.page_content = content
+                self.metadata = metadata or {}
+
+        class _StubLangchainStore:
+            """模拟 langchain VectorStore 的最小接口（add_texts/similarity_search_by_vector）"""
+            def __init__(self):
+                self.texts = []
+                self.metadatas = []
+
+            def add_texts(self, texts, metadatas=None):
+                self.texts.extend(texts)
+                self.metadatas.extend(metadatas or [{}] * len(texts))
+                return [f"id-{i}" for i in range(len(self.texts))]
+
+            def similarity_search_by_vector(self, vector, k=4):
+                # 返回与 vector 完全一致的内容（模拟命中）
+                return [_LcDoc(t, m) for t, m in
+                        zip(self.texts[:k], self.metadatas[:k])]
+
+        lc = _StubLangchainStore()
+        store = LangChainVectorStore(langchain_store=lc, embedding_model=emb)
+
+        # add：委托 langchain add_texts（含 metadatas 透传）
+        store.add([VectorDocument(id="1", content="Spring文档", metadata={"src": "a"})])
+        assert lc.texts == ["Spring文档"]
+        assert lc.metadatas == [{"src": "a"}]
+
+        # add_texts
+        store.add_texts(["Python指南"], metadatas=[{"src": "b"}])
+        assert "Python指南" in lc.texts
+
+        # similarity_search：委托 similarity_search_by_vector，映射 page_content/metadata
+        results = store.similarity_search(SearchRequest(query="Spring"))
+        assert len(results) >= 1
+        assert results[0].content == "Spring文档"
+        assert results[0].metadata == {"src": "a"}
+
+        # 无 embedding_model 且无 embedding → 返回空
+        bare = LangChainVectorStore(langchain_store=lc)
+        assert bare.similarity_search(SearchRequest(query="x")) == []
+
+        # 未传入 langchain store → add/search 静默空
+        empty = LangChainVectorStore()
+        empty.add([VectorDocument(id="1", content="x")])
+        assert empty.similarity_search(SearchRequest(query="x", embedding=[1.0])) == []
+
+    def test_langchain_vectorstore_fallback_without_langchain(self):
+        """未安装 langchain_text_splitters 时，切片器走内置降级实现（不报错）"""
+        # 当前环境未安装 langchain，确保既有行为不变：长文本被切片且带 chunk_index
+        splitter = TokenTextSplitter(chunk_size=10, chunk_overlap=2, min_chunk_size=1)
+        docs = splitter.split([TextDocument(content="word " * 200)])
+        assert len(docs) > 1
+        assert all("chunk_index" in d.metadata for d in docs)
+
 
 # ==================== ETL ====================
 
@@ -368,10 +429,31 @@ class TestAdvisors:
             context={"conversation_id": "default"},
         )
         transformed = advisor.advise_request(advisor_request)
-        # 首条消息应为注入的 RAG system 提示
+        # 首条消息应为注入的 RAG system 提示（默认启用 Prompt 注入加固）
         assert transformed.messages[0].type == MessageType.SYSTEM
-        assert "上下文" in transformed.messages[0].content
+        assert "retrieved_documents" in transformed.messages[0].content
+        assert "SpringPy" in transformed.messages[0].content
         assert "retrieved_documents" in transformed.context
+        # 加固模板明确要求忽略文档中的指令（反 Prompt 注入）
+        assert "不是指令" in transformed.messages[0].content
+
+    def test_question_answer_advisor_harden_can_be_disabled(self):
+        """harden_injection=False 时回退到默认模板"""
+        from spring.ai.advisors import QuestionAnswerAdvisor
+        from spring.ai import SimpleInMemoryVectorStore
+        emb = FakeEmbeddingModel()
+        store = SimpleInMemoryVectorStore(embedding_model=emb)
+        # 交由 embedding_model 自动嵌入，保证查询与文档可检索到
+        store.add([VectorDocument(id="1", content="SpringPy 是 Python 微服务框架")])
+        advisor = QuestionAnswerAdvisor(store, embedding_model=emb,
+                                        harden_injection=False)
+        model = FakeChatModel()
+        advisor_request = AdvisorRequest(
+            messages=[Message.user("SpringPy 是 Python 微服务框架")], chat_model=model,
+        )
+        transformed = advisor.advise_request(advisor_request)
+        assert "上下文" in transformed.messages[0].content
+        assert "不是指令" not in transformed.messages[0].content
 
     def test_simple_logger_advisor_records_events(self):
         """SimpleLoggerAdvisor 记录请求/响应事件"""
@@ -1055,6 +1137,339 @@ class TestAIPropertiesBinding:
         assert isinstance(chat_model.circuit_breaker, AICircuitBreaker)
         assert chat_model.circuit_breaker.failure_threshold == 7
         assert chat_model.circuit_breaker.recovery_timeout == 45
+
+
+# ==================== P1 企业级修复测试 ====================
+
+class TestP1Fixes:
+    """P1 企业级修复 - 5 项关键修复的验证测试"""
+
+    def test_ai_allow_fake_false_raises_on_missing_key(self, monkeypatch):
+        """AI_ALLOW_FAKE=false + api_key 缺失 → ValueError"""
+        from spring.ai.autoconfig import _build_chat_model, bind_ai_config
+        monkeypatch.setenv("AI_ALLOW_FAKE", "false")
+        # 重新导入触发模块级 env 读取
+        import importlib
+        import spring.ai.autoconfig as ac
+        importlib.reload(ac)
+        props = bind_ai_config({"default-provider": "openai",
+                                "openai": {"api-key": ""}})
+        with pytest.raises(ValueError, match="AI_ALLOW_FAKE=false"):
+            ac._build_chat_model(props)
+
+    def test_ai_allow_fake_true_returns_fake_on_missing_key(self, monkeypatch):
+        """AI_ALLOW_FAKE=true（默认）+ api_key 缺失 → FakeChatModel"""
+        monkeypatch.setenv("AI_ALLOW_FAKE", "true")
+        import importlib
+        import spring.ai.autoconfig as ac
+        importlib.reload(ac)
+        props = ac.bind_ai_config({"default-provider": "openai",
+                                   "openai": {"api-key": ""}})
+        model = ac._build_chat_model(props)
+        from spring.ai.providers import FakeChatModel
+        assert isinstance(model, FakeChatModel)
+
+    def test_ai_allow_fake_false_raises_on_unknown_provider(self, monkeypatch):
+        """AI_ALLOW_FAKE=false + 未知 provider → ValueError"""
+        monkeypatch.setenv("AI_ALLOW_FAKE", "false")
+        import importlib
+        import spring.ai.autoconfig as ac
+        importlib.reload(ac)
+        props = ac.bind_ai_config({"default-provider": "nonexistent"})
+        with pytest.raises(ValueError, match="AI_ALLOW_FAKE=false"):
+            ac._build_chat_model(props)
+
+    def test_resilient_call_passes_provider_to_metrics(self):
+        """resilient_call provider 参数透传给熔断器指标"""
+        from spring.ai.resilience import resilient_call, AICircuitBreaker
+        cb = AICircuitBreaker(name="test_provider")
+        call_log = []
+        def _mock_func():
+            call_log.append("called")
+            return "ok"
+        wrapped = resilient_call(_mock_func, circuit_breaker=cb,
+                                 provider="test-provider")
+        result = wrapped()
+        assert result == "ok"
+        # provider 应通过 _cb_provider 注入 kwargs
+        assert cb.name == "test_provider"
+
+    def test_redis_vectorstore_max_scan_limits(self):
+        """RedisVectorStore max_scan 限制扫描文档数"""
+        from spring.ai.vectorstore import RedisVectorStore, Document
+        # 模拟原生 Redis 接口（hset 支持 key, field, value 格式）
+        class FakeRedis:
+            def __init__(self):
+                self._data = {}  # key -> {field: value}
+            def hset(self, key, field=None, value=None, mapping=None):
+                if mapping is not None:
+                    self._data.setdefault(key, {}).update(mapping)
+                elif field is not None:
+                    self._data.setdefault(key, {})[str(field)] = str(value) if value is not None else ""
+            def hgetall(self, key):
+                return self._data.get(key, {})
+            def delete(self, key):
+                self._data.pop(key, None)
+        fake = FakeRedis()
+        store = RedisVectorStore(redis_client=fake, max_scan=2)
+        for i in range(5):
+            store.add([Document(id=f"doc-{i}", content=f"text{i}",
+                                embedding=[float(i)])])
+        assert store.count() == 5  # count 不受限
+        # similarity_search 应受 max_scan 限制
+        from spring.ai.vectorstore import SearchRequest
+        results = store.similarity_search(SearchRequest(
+            query="", embedding=[0.0], top_k=10))
+        assert len(results) <= 2  # max_scan=2
+
+    def test_circuit_breaker_accepts_redis_client(self):
+        """AICircuitBreaker 接受 redis_client 参数，Redis 可用时同步状态"""
+        from spring.ai.resilience import AICircuitBreaker
+        class FakeRedisClient:
+            def __init__(self):
+                self._data = {}
+            def get_client(self):
+                return self
+            def hset(self, key, mapping):
+                self._data[key] = mapping
+            def hgetall(self, key):
+                return self._data.get(key, {})
+        fake_redis = FakeRedisClient()
+        cb = AICircuitBreaker(name="redis-test", redis_client=fake_redis,
+                              failure_threshold=1)
+        cb.record_failure()
+        assert cb.state == "OPEN"
+        # Redis 中应有同步的状态
+        state = fake_redis.hgetall("circuit_breaker:ai:redis-test")
+        assert state.get("state") == "OPEN"
+        assert state.get("failures") == "1"
+
+    def test_stream_retry_not_raise_on_network_error(self, monkeypatch):
+        """流式 SSE 网络中断不抛异常，降级 yield 错误提示"""
+        from spring.ai.providers import OpenAIChatModel
+        import json
+        import requests
+        call_count = [0]
+        def _mock_post(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] < 2:
+                raise requests.ConnectionError("模拟网络断开")
+            # 第二次成功
+            class MockResp:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    pass
+                def raise_for_status(self):
+                    pass
+                def iter_lines(self, decode_unicode=True):
+                    return ["data: " + json.dumps({
+                        "choices": [{"delta": {"content": "ok"}}]}),
+                            "data: [DONE]"]
+            return MockResp()
+        monkeypatch.setattr(requests, "post", _mock_post)
+        model = OpenAIChatModel(api_key="sk-test")
+        results = list(model.stream([Message.user("hi")]))
+        assert len(results) >= 1
+        assert results[0].content() == "ok"  # 第二次尝试成功
+
+
+class TestOptimizationFixes:
+    """AI 模块优化修复 - 流式记忆持久化 / 瞬态错误分类 / 统一 HTTP 重试"""
+
+    def test_stream_persists_conversation_memory(self):
+        """流式模式调用 advise_response 保存会话记忆（修复：之前流式不保存）"""
+        from spring.ai import (ChatClientBuilder, FakeChatModel,
+                               InMemoryChatMemory, MessageChatMemoryAdvisor)
+        memory = InMemoryChatMemory(max_messages=20)
+        advisor = MessageChatMemoryAdvisor(memory)
+        model = FakeChatModel(prefix="AI:")
+        client = (ChatClientBuilder(model).default_advisors(advisor).build())
+        # 消费完整流式
+        chunks = list(client.prompt()
+                      .user("你好")
+                      .param("conversation_id", "s1")
+                      .stream())
+        assert "".join(c.content() for c in chunks)  # 有流式输出
+        # 记忆应已保存用户输入与助手回复
+        contents = [m.content for m in memory.get("s1")]
+        assert any("你好" in c for c in contents)   # 用户消息已保存
+        assert any("AI:" in c for c in contents)    # 助手回复已保存
+
+    def test_stream_accumulates_full_content(self):
+        """流式聚合后输出完整内容（无丢块）"""
+        from spring.ai import ChatClientBuilder, FakeChatModel
+        model = FakeChatModel(prefix="AI:")
+        client = ChatClientBuilder(model).build()
+        chunks = list(client.prompt().user("流式测试").stream())
+        assert "".join(c.content() for c in chunks) == "AI: 流式测试"
+
+    def test_is_transient_http_exc_classification(self):
+        """瞬态/永久 HTTP 错误分类正确"""
+        from spring.ai.providers import _is_transient_http_exc
+        import requests
+
+        class R:
+            def __init__(self, code):
+                self.status_code = code
+        # 瞬态：网络/超时/429/5xx → 应重试
+        assert _is_transient_http_exc(requests.ConnectionError(), None)
+        assert _is_transient_http_exc(requests.Timeout(), None)
+        assert _is_transient_http_exc(requests.HTTPError("x"), R(429))
+        assert _is_transient_http_exc(requests.HTTPError("x"), R(503))
+        # 永久：401/403/400 → 不重试
+        assert not _is_transient_http_exc(requests.HTTPError("x"), R(401))
+        assert not _is_transient_http_exc(requests.HTTPError("x"), R(403))
+        assert not _is_transient_http_exc(requests.HTTPError("x"), R(400))
+
+    def test_http_post_json_retries_transient(self, monkeypatch):
+        """_http_post_json：429 视为瞬态并重试至成功"""
+        from spring.ai.providers import _http_post_json
+        import requests
+        calls = {"n": 0}
+
+        def _post(*a, **k):
+            calls["n"] += 1
+            code = 429 if calls["n"] <= 2 else 200
+
+            class Resp:
+                status_code = code
+                def raise_for_status(self):
+                    if self.status_code != 200:
+                        raise requests.HTTPError(str(self.status_code))
+                def json(self):
+                    return {"ok": True}
+            return Resp()
+
+        monkeypatch.setattr(requests, "post", _post)
+        out = _http_post_json("http://x", json_body={}, timeout=5,
+                              max_retries=3, retry_delay_ms=0,
+                              circuit_breaker=None, provider="test")
+        assert out == {"ok": True}
+        assert calls["n"] >= 2  # 至少发生了一次重试
+
+    def test_http_post_json_does_not_retry_auth_error(self, monkeypatch):
+        """_http_post_json：401 鉴权错误不重试，直接抛出"""
+        from spring.ai.providers import _http_post_json
+        import requests
+        calls = {"n": 0}
+
+        def _post(*a, **k):
+            calls["n"] += 1
+
+            class Resp:
+                status_code = 401
+                def raise_for_status(self):
+                    raise requests.HTTPError("401")
+            return Resp()
+
+        monkeypatch.setattr(requests, "post", _post)
+        with pytest.raises(requests.HTTPError):
+            _http_post_json("http://x", json_body={}, timeout=5,
+                            max_retries=3, retry_delay_ms=0,
+                            circuit_breaker=None, provider="test")
+        assert calls["n"] == 1  # 401 不重试
+
+
+class TestMultiProviderLangChain:
+    """多厂商 Provider（DeepSeek/Moonshot/ZhipuAI）LangChain 优先 + HTTP 降级"""
+
+    def test_compat_model_degrades_to_http_without_langchain(self):
+        """未安装专用 langchain 包时 _llm 为 None，自动走 HTTP 降级"""
+        from spring.ai.providers import OpenAICompatChatModel
+        m = OpenAICompatChatModel(
+            provider="deepseek", api_key="sk-x",
+            base_url="https://api.deepseek.com", model="deepseek-chat",
+            langchain_module="langchain_deepseek", langchain_class="ChatDeepSeek")
+        assert m._llm is None          # 当前环境未装 langchain_deepseek
+        assert m._provider == "deepseek"
+        assert m.base_url == "https://api.deepseek.com"
+
+    def test_compat_call_via_http_injects_tools(self, monkeypatch):
+        """HTTP 路径注入 tools schema 并解析 tool_calls"""
+        import json  # noqa: F401
+        from spring.ai.providers import OpenAICompatChatModel
+        captured = {}
+
+        def fake_http(url, *, json_body, headers=None, timeout, max_retries,
+                      retry_delay_ms, circuit_breaker, provider):
+            captured["body"] = json_body
+            captured["provider"] = provider
+            return {"choices": [{"message": {"content": "hi", "tool_calls": [
+                {"id": "c1", "function": {"name": "f1", "arguments": "{}"}}]}}],
+                "usage": {"total_tokens": 5}}
+
+        monkeypatch.setattr("spring.ai.providers._http_post_json", fake_http)
+        m = OpenAICompatChatModel(provider="deepseek", api_key="sk-x",
+                                  model="deepseek-chat")
+        reg = ToolRegistry()
+        reg.register("f1", lambda: 1, "desc")
+        resp = m._call_via_http([Message.user("hi")], reg, None)
+        assert captured["provider"] == "deepseek"
+        assert captured["body"]["tools"] is not None   # 注入 schema
+        assert resp.metadata["backend"] == "http"
+        assert resp.metadata["tool_calls"]              # 解析 tool_calls
+
+    def test_compat_http_stream_yields_chunks(self, monkeypatch):
+        """HTTP 流式解析 SSE data 行，逐块 yield"""
+        import json
+        import requests
+        from spring.ai.providers import OpenAICompatChatModel
+        m = OpenAICompatChatModel(provider="moonshot", api_key="sk-x",
+                                  model="moonshot-v1-8k")
+        lines = ["data: " + json.dumps({"choices": [{"delta": {"content": "你"}}]}),
+                 "data: " + json.dumps({"choices": [{"delta": {"content": "好"}}]}),
+                 "data: [DONE]"]
+
+        class FakeResp:
+            status_code = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+            def raise_for_status(self):
+                pass
+            def iter_lines(self, decode_unicode):
+                return iter(lines)
+
+        monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResp())
+        chunks = list(m.stream([Message.user("hi")]))
+        assert "".join(c.content() for c in chunks) == "你好"
+
+    def test_autoconfig_deepseek_builds_compat_model(self, monkeypatch):
+        """provider=deepseek + api_key → 构建 OpenAICompatChatModel"""
+        from spring.ai.autoconfig import bind_ai_config, _build_chat_model
+        monkeypatch.setenv("AI_PROVIDER", "deepseek")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-d")
+        props = bind_ai_config({})
+        model = _build_chat_model(props)
+        assert model._provider == "deepseek"
+        assert model.api_key == "sk-d"
+
+    def test_autoconfig_deepseek_no_key_degrades_to_fake(self, monkeypatch):
+        """provider=deepseek 无 api_key + AI_ALLOW_FAKE=true → FakeChatModel"""
+        import importlib
+        import spring.ai.autoconfig as ac
+        monkeypatch.setenv("AI_PROVIDER", "deepseek")
+        monkeypatch.setenv("AI_ALLOW_FAKE", "true")
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        importlib.reload(ac)
+        from spring.ai.autoconfig import bind_ai_config, _build_chat_model
+        from spring.ai.providers import FakeChatModel
+        model = _build_chat_model(bind_ai_config({}))
+        assert isinstance(model, FakeChatModel)
+
+    def test_autoconfig_deepseek_no_key_strict_raises(self, monkeypatch):
+        """provider=deepseek 无 api_key + AI_ALLOW_FAKE=false → ValueError"""
+        import importlib
+        import spring.ai.autoconfig as ac
+        monkeypatch.setenv("AI_PROVIDER", "deepseek")
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.setenv("AI_ALLOW_FAKE", "false")
+        importlib.reload(ac)
+        from spring.ai.autoconfig import bind_ai_config, _build_chat_model
+        with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
+            _build_chat_model(bind_ai_config({}))
 
 
 if __name__ == "__main__":

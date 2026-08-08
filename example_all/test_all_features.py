@@ -74,7 +74,7 @@ def test_01_module_imports():
             print(f"  FAIL {name} — {e}")
             fail += 1
     print(f"\n  导入: {ok} 成功, {fail} 失败")
-    return fail == 0
+    assert fail == 0, f"{fail} 个模块导入失败"
 
 
 def test_02_xml_mapper_parsing():
@@ -89,7 +89,7 @@ def test_02_xml_mapper_parsing():
     xml_path = os.path.join(base_dir, "mappers", "UserMapper.xml")
     if not os.path.exists(xml_path):
         print(f"  FAIL: XML 文件不存在: {xml_path}")
-        return False
+        assert False, f"XML 文件不存在: {xml_path}"
 
     parser = XmlParser()
     parser.parse_file(xml_path)
@@ -113,7 +113,7 @@ def test_02_xml_mapper_parsing():
              if (s := parser.get_mapped_statement(f"{ns}.{stmt_id}"))
              and s.sql_type == exp)
     print(f"\n  XML解析: {ok}/{len(expected)}")
-    return ok == len(expected)
+    assert ok == len(expected), f"XML解析 {ok}/{len(expected)} 不匹配"
 
 
 def test_03_annotations_combo():
@@ -132,7 +132,7 @@ def test_03_annotations_combo():
     found = {name for name in ann_types if name in expected}
     passed = expected == found
     print(f"  组合注解: {'PASS' if passed else 'FAIL'} (期望{expected}, 实际{found})")
-    return passed
+    assert passed, f"组合注解不匹配: 期望{expected}, 实际{found}"
 
 
 def test_04_component_scan():
@@ -187,7 +187,7 @@ def test_04_component_scan():
                 print(f"  FAIL: {cls_path} — {e}")
                 fail += 1
     print(f"  组件扫描: {ok} 成功, {fail} 失败")
-    return fail == 0
+    assert fail == 0, f"{fail} 个组件扫描失败"
 
 
 def test_05_http_api():
@@ -221,7 +221,7 @@ def test_05_http_api():
 
     if not server_started.wait(timeout=30):
         print("  FAIL: 服务器启动超时")
-        return False
+        assert False, "服务器启动超时"
     time.sleep(3)
 
     base_url = f"http://127.0.0.1:{port}"
@@ -307,7 +307,7 @@ def test_05_http_api():
             fail += 1
 
     print(f"\n  API: {ok} 通过, {fail} 失败")
-    return fail == 0
+    assert fail == 0, f"{fail} 个HTTP API失败"
 
 
 # ==================== 主入口 ====================
@@ -327,7 +327,8 @@ if __name__ == '__main__':
     results = []
     for name, fn in tests:
         try:
-            results.append((name, fn()))
+            fn()
+            results.append((name, True))
         except Exception as e:
             print(f"\n  ERROR: {name} 异常: {e}")
             import traceback

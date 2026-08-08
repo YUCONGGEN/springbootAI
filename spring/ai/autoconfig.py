@@ -49,7 +49,7 @@ from spring.ai.core import ChatClient, ChatClientBuilder, ChatModel
 from spring.ai.memory import ChatMemory, InMemoryChatMemory, RedisChatMemory
 from spring.ai.providers import (
     FakeChatModel, FakeEmbeddingModel, OllamaChatModel, OllamaEmbeddingModel,
-    OpenAIChatModel, OpenAIEmbeddingModel,
+    OpenAIChatModel, OpenAICompatChatModel, OpenAIEmbeddingModel,
 )
 from spring.ai.resilience import AICircuitBreaker
 from spring.ai.vectorstore import (
@@ -59,6 +59,11 @@ from spring.config.config_loader import config_loader
 from spring.context.registry import BeanRegistry
 
 logger = logging.getLogger("Spring.AI")
+
+# 生产环境安全开关：AI_ALLOW_FAKE=true（默认）时，api_key 缺失降级 FakeChatModel；
+# 设为 false 时，api_key 缺失直接抛 ConfigurationError，防止生产配错无声返回假数据。
+_AI_ALLOW_FAKE = os.environ.get("AI_ALLOW_FAKE", "true").strip().lower() in (
+    "true", "1", "yes", "on")
 
 
 # ==================== 类型化配置 dataclass ====================
@@ -105,6 +110,36 @@ class OllamaProps:
     embedding: OllamaEmbeddingProps = field(default_factory=OllamaEmbeddingProps)
 
 
+# ---- OpenAI 兼容多厂商（DeepSeek / Moonshot / ZhipuAI）----
+# 由 OpenAICompatChatModel 接入，底层优先 LangChain 专用包，降级 OpenAI 兼容 HTTP。
+
+@dataclass
+class DeepSeekProps:
+    api_key: str = field(default="", metadata={"env": "DEEPSEEK_API_KEY"})
+    base_url: str = field(default="https://api.deepseek.com",
+                          metadata={"env": "DEEPSEEK_BASE_URL"})
+    model: str = field(default="deepseek-chat", metadata={"env": "DEEPSEEK_MODEL"})
+    temperature: float = field(default=0.7, metadata={"env": "DEEPSEEK_TEMPERATURE"})
+
+
+@dataclass
+class MoonshotProps:
+    api_key: str = field(default="", metadata={"env": "MOONSHOT_API_KEY"})
+    base_url: str = field(default="https://api.moonshot.cn/v1",
+                          metadata={"env": "MOONSHOT_BASE_URL"})
+    model: str = field(default="moonshot-v1-8k", metadata={"env": "MOONSHOT_MODEL"})
+    temperature: float = field(default=0.7, metadata={"env": "MOONSHOT_TEMPERATURE"})
+
+
+@dataclass
+class ZhipuProps:
+    api_key: str = field(default="", metadata={"env": "ZHIPUAI_API_KEY"})
+    base_url: str = field(default="https://open.bigmodel.cn/api/paas/v4",
+                          metadata={"env": "ZHIPUAI_BASE_URL"})
+    model: str = field(default="glm-4-flash", metadata={"env": "ZHIPUAI_MODEL"})
+    temperature: float = field(default=0.7, metadata={"env": "ZHIPUAI_TEMPERATURE"})
+
+
 @dataclass
 class VectorStoreProps:
     type: str = field(default="inmemory", metadata={"env": "AI_VECTOR_STORE"})
@@ -132,6 +167,9 @@ class AIProperties:
     retry_delay_ms: int = field(default=500, metadata={"env": "AI_RETRY_DELAY_MS"})
     openai: OpenAIProps = field(default_factory=OpenAIProps)
     ollama: OllamaProps = field(default_factory=OllamaProps)
+    deepseek: DeepSeekProps = field(default_factory=DeepSeekProps)
+    moonshot: MoonshotProps = field(default_factory=MoonshotProps)
+    zhipu: ZhipuProps = field(default_factory=ZhipuProps)
     vector_store: VectorStoreProps = field(default_factory=VectorStoreProps)
     memory: MemoryProps = field(default_factory=MemoryProps)
     circuit_breaker: CircuitBreakerProps = field(default_factory=CircuitBreakerProps)
@@ -199,24 +237,31 @@ def bind_ai_config(ai_config: Dict[str, Any]) -> AIProperties:
 
 # ==================== Bean 构建 ====================
 
-def _build_circuit_breaker(props: AIProperties) -> Optional[AICircuitBreaker]:
-    """根据配置构建熔断器"""
+def _build_circuit_breaker(props: AIProperties, name: str = "default",
+                           redis_client=None):
+    """根据配置构建熔断器（复用框架 Redis 持久化电路状态）"""
     cb = props.circuit_breaker
     if not cb.enabled:
         return None
     return AICircuitBreaker(
         failure_threshold=cb.failure_threshold,
         recovery_timeout=cb.recovery_timeout,
+        name=name,
+        redis_client=redis_client,
     )
 
 
-def _build_chat_model(props: AIProperties) -> ChatModel:
+def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
     """根据配置构建 ChatModel（含熔断器）"""
-    cb = _build_circuit_breaker(props)
+    cb = _build_circuit_breaker(props, name="chat", redis_client=redis_client)
     provider = props.default_provider
 
     if provider == "openai":
         if not props.openai.api_key:
+            if not _AI_ALLOW_FAKE:
+                raise ValueError(
+                    "AI_ALLOW_FAKE=false 但 spring.ai.openai.api-key 未配置。"
+                    " 请设置 OPENAI_API_KEY 环境变量或 application.yml 的 api-key。")
             logger.warning("spring.ai.openai.api-key 未配置，降级 FakeChatModel")
             return FakeChatModel(prefix="[AI]")
         return OpenAIChatModel(
@@ -239,17 +284,49 @@ def _build_chat_model(props: AIProperties) -> ChatModel:
             circuit_breaker=cb,
         )
 
-    logger.warning("未知 AI provider: %s，降级 FakeChatModel", provider)
+    # OpenAI 兼容多厂商（DeepSeek / Moonshot / ZhipuAI）— 底层优先 LangChain 专用包
+    _COMPAT_SPECS = {
+        "deepseek": ("deepseek", "langchain_deepseek", "ChatDeepSeek",
+                     props.deepseek),
+        "moonshot": ("moonshot", "langchain_moonshot", "ChatMoonshot",
+                     props.moonshot),
+        "zhipu": ("zhipu", "langchain_zhipuai", "ChatZhipuAI", props.zhipu),
+    }
+    if provider in _COMPAT_SPECS:
+        pname, lc_mod, lc_cls, cfg = _COMPAT_SPECS[provider]
+        if not cfg.api_key:
+            if not _AI_ALLOW_FAKE:
+                raise ValueError(
+                    f"AI_ALLOW_FAKE=false 但 spring.ai.{provider}.api-key 未配置。"
+                    f" 请设置 {provider.upper()}_API_KEY 环境变量。")
+            logger.warning("spring.ai.%s.api-key 未配置，降级 FakeChatModel", provider)
+            return FakeChatModel(prefix="[AI]")
+        return OpenAICompatChatModel(
+            provider=pname, api_key=cfg.api_key, base_url=cfg.base_url,
+            model=cfg.model, temperature=cfg.temperature,
+            max_retries=props.max_retries, retry_delay_ms=props.retry_delay_ms,
+            circuit_breaker=cb, langchain_module=lc_mod, langchain_class=lc_cls,
+        )
+
+    logger.warning("未知 AI provider: %s", provider)
+    if not _AI_ALLOW_FAKE:
+        raise ValueError(
+            f"AI_ALLOW_FAKE=false 但未知 provider: {provider}。"
+            " 请检查 application.yml 的 spring.ai.default-provider 配置。")
     return FakeChatModel()
 
 
-def _build_embedding_model(props: AIProperties):
+def _build_embedding_model(props: AIProperties, redis_client=None):
     """根据配置构建 EmbeddingModel（含熔断器）"""
-    cb = _build_circuit_breaker(props)
+    cb = _build_circuit_breaker(props, name="embedding", redis_client=redis_client)
     provider = props.default_provider
 
     if provider == "openai":
         if not props.openai.api_key:
+            if not _AI_ALLOW_FAKE:
+                raise ValueError(
+                    "AI_ALLOW_FAKE=false 但 Embedding 未配置 api-key。"
+                    " 请设置 OPENAI_API_KEY 环境变量。")
             logger.warning("Embedding 未配置 api-key，降级 FakeEmbeddingModel")
             return FakeEmbeddingModel(dim=16)
         return OpenAIEmbeddingModel(
@@ -270,6 +347,27 @@ def _build_embedding_model(props: AIProperties):
             circuit_breaker=cb,
         )
 
+    # OpenAI 兼容多厂商（DeepSeek / Moonshot / ZhipuAI）— 复用 OpenAI 兼容嵌入
+    if provider in ("deepseek", "moonshot", "zhipu"):
+        cfg = getattr(props, provider)
+        if not cfg.api_key:
+            if not _AI_ALLOW_FAKE:
+                raise ValueError(
+                    f"AI_ALLOW_FAKE=false 但 Embedding 未配置 {provider} api-key。")
+            logger.warning("Embedding 未配置 %s api-key，降级 FakeEmbeddingModel",
+                           provider)
+            return FakeEmbeddingModel(dim=16)
+        return OpenAIEmbeddingModel(
+            api_key=cfg.api_key, base_url=cfg.base_url,
+            max_retries=props.max_retries,
+            retry_delay_ms=props.retry_delay_ms,
+            circuit_breaker=cb,
+        )
+
+    if not _AI_ALLOW_FAKE:
+        raise ValueError(
+            "AI_ALLOW_FAKE=false 但未知 Embedding provider。"
+            " 请检查 application.yml 的 spring.ai.default-provider 配置。")
     return FakeEmbeddingModel(dim=16)
 
 
@@ -303,18 +401,21 @@ def _resolve_redis_client(props: AIProperties,
 
     这样用户只需在 application.yml 配 vector-store.type=redis / memory.store=redis，
     即可自动启用 Redis 持久化，无需手动传 redis_client 参数。
+    熔断器也在需要 Redis 时自动复用。
     """
     if redis_client is not None:
         return redis_client
     needs_redis = (props.vector_store.type == "redis"
-                   or props.memory.store == "redis")
+                   or props.memory.store == "redis"
+                   or props.circuit_breaker.enabled)
     if not needs_redis:
         return None
     try:
         from spring.utils.redis_client import redis_client as global_redis
         return global_redis
     except ImportError:
-        logger.warning("框架 RedisClient 不可用，redis 模式将降级 inmemory")
+        if props.vector_store.type == "redis" or props.memory.store == "redis":
+            logger.warning("框架 RedisClient 不可用，redis 模式将降级 inmemory")
         return None
 
 
@@ -350,12 +451,12 @@ def configure_ai(registry: Optional[BeanRegistry] = None,
     beans: Dict[str, Any] = {}
 
     # 1. ChatModel（含熔断器）
-    chat_model = _build_chat_model(props)
+    chat_model = _build_chat_model(props, redis_client=redis_client)
     registry.register("aiChatModel", chat_model)
     beans["aiChatModel"] = chat_model
 
     # 2. EmbeddingModel（含熔断器）- RAG 自动可用
-    embedding_model = _build_embedding_model(props)
+    embedding_model = _build_embedding_model(props, redis_client=redis_client)
     registry.register("aiEmbeddingModel", embedding_model)
     beans["aiEmbeddingModel"] = embedding_model
 

@@ -61,7 +61,7 @@ retry:
 # JWT 安全配置
 jwt:
   enabled: true
-  secret: example_all_jwt_secret_key_2024
+  secret: example_all_jwt_secret_key_2024_with_strong_entropy_32bytes
   expiration: 3600
 
 # Nacos 服务发现 (Docker: nacos/nacos-server)

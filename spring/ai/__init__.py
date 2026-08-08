@@ -24,8 +24,8 @@ from spring.ai.advisors import (
 )
 from spring.ai.memory import ChatMemory, InMemoryChatMemory, RedisChatMemory
 from spring.ai.vectorstore import (
-    Document as VectorDocument, RedisVectorStore, SearchRequest,
-    SimpleInMemoryVectorStore, VectorStore, cosine_similarity,
+    Document as VectorDocument, LangChainVectorStore, RedisVectorStore,
+    SearchRequest, SimpleInMemoryVectorStore, VectorStore, cosine_similarity,
 )
 from spring.ai.etl import (
     CharacterTextSplitter, DocumentReader, TextDocument, TextReader,
@@ -34,7 +34,7 @@ from spring.ai.etl import (
 from spring.ai.tools import ToolDefinition, ToolRegistry
 from spring.ai.providers import (
     FakeChatModel, FakeEmbeddingModel, OllamaChatModel, OllamaEmbeddingModel,
-    OpenAIChatModel, OpenAIEmbeddingModel,
+    OpenAICompatChatModel, OpenAIChatModel, OpenAIEmbeddingModel,
 )
 from spring.ai.resilience import (
     AICircuitBreaker, CircuitOpenError, TransientError, resilient_call,
@@ -42,7 +42,7 @@ from spring.ai.resilience import (
 from spring.ai.observability import AIMetrics, ai_metrics
 from spring.ai.autoconfig import AIProperties, bind_ai_config, configure_ai
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 __all__ = [
     # core
@@ -56,8 +56,9 @@ __all__ = [
     # memory
     "ChatMemory", "InMemoryChatMemory", "RedisChatMemory",
     # vectorstore
-    "VectorDocument", "RedisVectorStore", "SearchRequest",
-    "SimpleInMemoryVectorStore", "VectorStore", "cosine_similarity",
+    "VectorDocument", "LangChainVectorStore", "RedisVectorStore",
+    "SearchRequest", "SimpleInMemoryVectorStore", "VectorStore",
+    "cosine_similarity",
     # etl
     "CharacterTextSplitter", "DocumentReader", "TextDocument", "TextReader",
     "TextSplitter", "TokenTextSplitter",
@@ -65,7 +66,8 @@ __all__ = [
     "ToolDefinition", "ToolRegistry",
     # providers
     "FakeChatModel", "FakeEmbeddingModel", "OllamaChatModel",
-    "OllamaEmbeddingModel", "OpenAIChatModel", "OpenAIEmbeddingModel",
+    "OllamaEmbeddingModel", "OpenAICompatChatModel", "OpenAIChatModel",
+    "OpenAIEmbeddingModel",
     # resilience
     "AICircuitBreaker", "CircuitOpenError", "TransientError", "resilient_call",
     # observability

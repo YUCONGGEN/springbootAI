@@ -97,6 +97,66 @@ class SimpleInMemoryVectorStore(VectorStore):
         self._docs.clear()
 
 
+class LangChainVectorStore(VectorStore):
+    """
+    LangChain 向量存储适配器 - 包装 langchain 生态的 VectorStore（FAISS/Chroma 等）。
+
+    设计原则：能用 LangChain 就用 LangChain（不做重复造轮子）。本类不自行实现
+    向量索引与检索，而是包装一个外部 langchain 向量存储实例（须提供
+    add_texts / similarity_search_by_vector），把框架统一的 VectorStore 接口
+    映射到 langchain 的成熟实现。需要先安装对应 langchain 向量库（如
+    langchain_community.vectorstores.FAISS / langchain_chroma）并自行构建实例传入。
+    """
+
+    def __init__(self, langchain_store=None, embedding_model=None):
+        self._store = langchain_store
+        self._embedding_model = embedding_model
+
+    def add(self, documents: List[Document]) -> None:
+        if self._store is None:
+            return
+        self._store.add_texts(
+            [d.content for d in documents],
+            metadatas=[d.metadata for d in documents],
+        )
+
+    def add_texts(self, texts: List[str],
+                  metadatas: Optional[List[Dict]] = None) -> None:
+        if self._store is None:
+            return
+        self._store.add_texts(texts, metadatas=metadatas or [{}] * len(texts))
+
+    def similarity_search(self, request: SearchRequest) -> List[Document]:
+        if self._store is None:
+            return []
+        emb = request.embedding
+        if emb is None and self._embedding_model and request.query:
+            emb = self._embedding_model.embed_one(request.query)
+        if emb is None:
+            return []
+        docs = self._store.similarity_search_by_vector(emb, k=request.top_k)
+        result: List[Document] = []
+        for i, d in enumerate(docs):
+            result.append(Document(
+                id=getattr(d, "id", "") or f"langchain-{i}",
+                content=getattr(d, "page_content", str(d)),
+                embedding=emb,
+                metadata=getattr(d, "metadata", {}) or {},
+            ))
+        return result
+
+    def count(self) -> int:
+        return 0 if self._store is None else getattr(self._store, "count", lambda: 0)()
+
+    def clear(self) -> None:
+        if self._store is None:
+            return
+        deleter = getattr(self._store, "delete_collection", None) \
+            or getattr(self._store, "clear", None)
+        if deleter:
+            deleter()
+
+
 def _safe_json_loads(val: Any) -> Optional[dict]:
     """安全 JSON 解析（兼容 str/bytes/dict）"""
     if isinstance(val, dict):
@@ -125,15 +185,18 @@ class RedisVectorStore(VectorStore):
     用 Redis hash 存储文档（id -> JSON{content,embedding,metadata}），
     检索时拉取全部并在 Python 端计算余弦相似度。
     适合中小规模（< 10 万文档）多副本部署；更大规模建议接入 RediSearch FTVECTOR。
+
+    max_scan 参数限制单次检索扫描上限，防止数据量过大时 OOM。
     """
 
     KEY_PREFIX = "springpy:ai:vectorstore:"
 
     def __init__(self, redis_client=None, collection: str = "default",
-                 embedding_model=None):
+                 embedding_model=None, max_scan: int = 10000):
         self._client = redis_client
         self.collection = collection
         self._embedding_model = embedding_model
+        self.max_scan = max_scan
 
     def _key(self) -> str:
         return f"{self.KEY_PREFIX}{self.collection}"
@@ -179,9 +242,11 @@ class RedisVectorStore(VectorStore):
             meta = metadatas[i] if metadatas and i < len(metadatas) else {}
             self.add([Document(id=doc_id, content=text, metadata=meta)])
 
-    def _all_docs(self) -> List[Document]:
+    def _all_docs(self, max_scan: Optional[int] = None) -> List[Document]:
         if self._client is None:
             return []
+        max_scan = max_scan if max_scan is not None else self.max_scan
+        # max_scan <= 0 表示无限制（count() 场景）
         if self._is_framework_client(self._client):
             # 框架封装：hash_get_all 已自动 JSON 反序列化
             raw = self._client.hash_get_all(self._key()) or {}
@@ -191,7 +256,10 @@ class RedisVectorStore(VectorStore):
             except Exception:
                 return []
         docs: List[Document] = []
+        scanned = 0
         for field, val in raw.items():
+            if max_scan > 0 and scanned >= max_scan:
+                break
             d = _safe_json_loads(val)
             if not d:
                 continue
@@ -201,6 +269,7 @@ class RedisVectorStore(VectorStore):
                 embedding=d.get("embedding", []),
                 metadata=d.get("metadata", {}),
             ))
+            scanned += 1
         return docs
 
     def similarity_search(self, request: SearchRequest) -> List[Document]:
@@ -220,7 +289,7 @@ class RedisVectorStore(VectorStore):
         return [d for _, d in scored[:request.top_k]]
 
     def count(self) -> int:
-        return len(self._all_docs())
+        return len(self._all_docs(max_scan=0))  # 0 = 无限制，count 需准确
 
     def clear(self) -> None:
         if self._client is None:

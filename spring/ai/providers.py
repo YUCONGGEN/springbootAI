@@ -39,8 +39,66 @@ def _has_langchain_community() -> bool:
         return False
 
 
+def _has_langchain(module: str) -> bool:
+    """按模块名探测是否安装了某个 langchain-* 包。"""
+    try:
+        __import__(module)
+        return True
+    except ImportError:
+        return False
+
+
 def _is_tool_registry(obj) -> bool:
     return obj is not None and hasattr(obj, "schemas") and hasattr(obj, "execute")
+
+
+# 瞬态 HTTP 状态码：网络抖动/限流/服务端瞬态故障应触发重试与熔断
+_TRANSIENT_STATUS = (429, 500, 502, 503, 504)
+
+
+def _http_post_json(url, *, json_body, headers=None, timeout,
+                    max_retries, retry_delay_ms, circuit_breaker, provider):
+    """
+    统一 HTTP POST + 重试 + 熔断（DRY 重构）。
+
+    将网络连接失败/超时/429/5xx 归类为瞬态（TransientError → 重试 + 熔断计数），
+    其余错误（如 401/403/400 鉴权或参数错误）原样抛出，不做无意义重试。
+
+    修复：此前各 Provider 的 HTTP 调用逻辑重复且瞬态分类不一致
+    （OllamaEmbeddingModel 漏掉 HTTPError 的 429/5xx 归类，导致瞬态不重试；
+    OpenAI 流式对 401/403 也重试，浪费并掩盖真实错误）。
+    """
+    from spring.ai.resilience import resilient_call, TransientError
+    import requests
+
+    def _do_post():
+        try:
+            resp = requests.post(url, json=json_body, headers=headers,
+                                 timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            raise TransientError(str(exc)) from exc
+        except requests.HTTPError as exc:
+            if resp.status_code in _TRANSIENT_STATUS:
+                raise TransientError(str(exc)) from exc
+            raise
+
+    return resilient_call(
+        _do_post, max_retries=max_retries, retry_delay_ms=retry_delay_ms,
+        retry_exceptions=(TransientError,), circuit_breaker=circuit_breaker,
+        count_as_failure_exc=(TransientError,), provider=provider,
+    )()
+
+
+def _is_transient_http_exc(exc, resp) -> bool:
+    """判断流式场景下异常是否为瞬态（连接/超时/429/5xx）。"""
+    import requests
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    if isinstance(exc, requests.HTTPError):
+        return getattr(resp, "status_code", None) in _TRANSIENT_STATUS
+    return False
 
 
 # ==================== OpenAI 兼容 ====================
@@ -163,9 +221,6 @@ class OpenAIChatModel(ChatModel):
 
     def _call_via_http(self, messages, tool_registry, options) -> ChatResponse:
         """单次 HTTP 调用 - 注入 tools schema，解析 tool_calls 到 metadata"""
-        from spring.ai.resilience import resilient_call, TransientError
-        import requests
-
         payload = {
             "model": self.model,
             "messages": [self._serialize_msg(m) for m in messages],
@@ -177,30 +232,17 @@ class OpenAIChatModel(ChatModel):
         if _is_tool_registry(tool_registry) and tool_registry.names():
             payload["tools"] = tool_registry.schemas()
 
-        def _do_post():
-            try:
-                resp = requests.post(
-                    f"{self.base_url}/chat/completions", json=payload,
-                    headers={"Authorization": f"Bearer {self.api_key}",
-                             "Content-Type": "application/json"},
-                    timeout=self.timeout,
-                )
-                resp.raise_for_status()
-                return resp.json()
-            except (requests.ConnectionError, requests.Timeout) as exc:
-                raise TransientError(str(exc)) from exc
-            except requests.HTTPError as exc:
-                if resp.status_code in (429, 500, 502, 503, 504):
-                    raise TransientError(str(exc)) from exc
-                raise
-
-        data = resilient_call(
-            _do_post, max_retries=self.max_retries,
+        data = _http_post_json(
+            f"{self.base_url}/chat/completions",
+            json_body=payload,
+            headers={"Authorization": f"Bearer {self.api_key}",
+                     "Content-Type": "application/json"},
+            timeout=self.timeout,
+            max_retries=self.max_retries,
             retry_delay_ms=self.retry_delay_ms,
-            retry_exceptions=(TransientError,),
             circuit_breaker=self.circuit_breaker,
-            count_as_failure_exc=(TransientError,),
-        )()
+            provider="openai",
+        )
 
         choice = data.get("choices", [{}])[0]
         msg_obj = choice.get("message", {})
@@ -219,8 +261,9 @@ class OpenAIChatModel(ChatModel):
         )
 
     def _stream_via_http(self, messages, options):
-        """真流式：解析 SSE data: 行，逐块 yield 增量内容"""
+        """真流式：解析 SSE data: 行，逐块 yield 增量内容（含网络中断重试降级）"""
         import requests
+        import time as _time
         payload = {
             "model": self.model,
             "messages": [self._serialize_msg(m) for m in messages],
@@ -229,30 +272,51 @@ class OpenAIChatModel(ChatModel):
         }
         if options:
             payload.update(options)
-        with requests.post(
-            f"{self.base_url}/chat/completions", json=payload, stream=True,
-            headers={"Authorization": f"Bearer {self.api_key}",
-                     "Content-Type": "application/json"},
-            timeout=self.timeout,
-        ) as resp:
-            resp.raise_for_status()
-            for line in resp.iter_lines(decode_unicode=True):
-                if not line or not line.startswith("data:"):
+        # 最多尝试 2 次
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                with requests.post(
+                    f"{self.base_url}/chat/completions", json=payload, stream=True,
+                    headers={"Authorization": f"Bearer {self.api_key}",
+                             "Content-Type": "application/json"},
+                    timeout=self.timeout,
+                ) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[len("data:"):].strip()
+                        if data_str == "[DONE]":
+                            return
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = (chunk.get("choices", [{}])[0]
+                                 .get("delta", {}).get("content", ""))
+                        if delta:
+                            yield ChatResponse(
+                                generations=[Generation(output=Message.assistant(delta))],
+                                metadata={"provider": "openai", "stream": True},
+                            )
+                return  # 成功完成，退出
+            except Exception as exc:
+                # 仅对瞬态（连接/超时/429/5xx）重试；401/403/400 等永久错误直接抛
+                if not _is_transient_http_exc(exc, locals().get("resp", None)):
+                    raise
+                logger.warning("流式 SSE 第 %d 次尝试失败: %s", attempt + 1, exc)
+                if attempt < max_attempts - 1:
+                    _time.sleep(1)
                     continue
-                data_str = line[len("data:"):].strip()
-                if data_str == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
-                delta = (chunk.get("choices", [{}])[0]
-                         .get("delta", {}).get("content", ""))
-                if delta:
-                    yield ChatResponse(
-                        generations=[Generation(output=Message.assistant(delta))],
-                        metadata={"provider": "openai", "stream": True},
-                    )
+                logger.error("流式 SSE 重试耗尽，降级: %s", exc)
+                yield ChatResponse(
+                    generations=[Generation(output=Message.assistant(
+                        "（流式响应中断，请重试）"))],
+                    metadata={"provider": "openai", "stream": True,
+                              "error": str(exc)},
+                )
+                return
 
     # ---------- 消息序列化 ----------
 
@@ -304,35 +368,196 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         return self._embed_via_http(texts)
 
     def _embed_via_http(self, texts: List[str]) -> List[List[float]]:
-        from spring.ai.resilience import resilient_call, TransientError
-        import requests
+        data = _http_post_json(
+            f"{self.base_url}/embeddings",
+            json_body={"model": self.model, "input": texts},
+            headers={"Authorization": f"Bearer {self.api_key}",
+                     "Content-Type": "application/json"},
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+            retry_delay_ms=self.retry_delay_ms,
+            circuit_breaker=self.circuit_breaker,
+            provider="openai",
+        )
+        return [item["embedding"] for item in data["data"]]
 
-        def _do_post():
+
+# ==================== OpenAI 兼容多 Provider（DeepSeek/Moonshot/ZhipuAI） ====================
+
+class OpenAICompatChatModel(ChatModel):
+    """
+    OpenAI 兼容多厂商聊天模型 - 对齐"能用 LangChain 就用 LangChain"方向。
+
+    用于 DeepSeek / Moonshot(Kimi) / ZhipuAI(GLM) 等提供 OpenAI 兼容
+    /chat/completions 接口的厂商：
+    - 优先：若安装了对应的专用 langchain-* 包（langchain_deepseek /
+      langchain_moonshot / langchain_zhipuai）且配置了 api_key，
+      则经 LangChain 调用（backend=langchain），复用其成熟生态
+    - 降级：未安装/初始化失败时走原生 HTTP（backend=http），
+      统一复用 _http_post_json 的重试/熔断/工具闭环，保证开箱即用
+
+    参数 langchain_module / langchain_class 指定要优先使用的 LangChain 包，
+    未指定或不可用时自动回退 HTTP。
+    """
+
+    def __init__(self, provider: str, api_key: str = "", base_url: str = "",
+                 model: str = "", temperature: float = 0.7, timeout: int = 120,
+                 max_retries: int = 3, retry_delay_ms: int = 500,
+                 circuit_breaker=None, langchain_module: Optional[str] = None,
+                 langchain_class: str = "", default_base_url: str = "",
+                 default_model: str = ""):
+        self._provider = provider
+        self.api_key = api_key
+        self.base_url = (base_url or default_base_url).rstrip("/")
+        self.model = model or default_model
+        self.temperature = temperature
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_delay_ms = retry_delay_ms
+        self.circuit_breaker = circuit_breaker
+        self._llm = None
+        if langchain_module and api_key and _has_langchain(langchain_module):
             try:
-                resp = requests.post(
-                    f"{self.base_url}/embeddings",
-                    json={"model": self.model, "input": texts},
+                mod = __import__(langchain_module, fromlist=[langchain_class])
+                cls = getattr(mod, langchain_class)
+                kwargs: Dict[str, Any] = {"api_key": api_key, "model": self.model,
+                                          "temperature": temperature}
+                if self.base_url:
+                    kwargs["base_url"] = self.base_url
+                self._llm = cls(**kwargs)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("%s LangChain 初始化失败，降级HTTP: %s",
+                               provider, exc)
+                self._llm = None
+
+    def call(self, messages, tool_registry=None, options=None):
+        """同步调用（基类闭环 + 整体指标）"""
+        from spring.ai.observability import ai_metrics
+        start = time.time()
+        try:
+            resp = super().call(messages, tool_registry, options)
+            usage = (resp.metadata or {}).get("usage") if resp else None
+            ai_metrics.record_call(self._provider, self.model, "success",
+                                   time.time() - start, usage)
+            return resp
+        except Exception:
+            ai_metrics.record_call(self._provider, self.model, "failure",
+                                   time.time() - start)
+            raise
+
+    def _raw_call(self, messages, tool_registry=None, options=None):
+        if self._llm is not None:
+            result = self._llm.invoke([(m.type, m.content) for m in messages])
+            content = result.content if hasattr(result, "content") else str(result)
+            return ChatResponse(
+                generations=[Generation(output=Message.assistant(content))],
+                metadata={"provider": self._provider, "backend": "langchain"})
+        return self._call_via_http(messages, tool_registry, options)
+
+    def _call_via_http(self, messages, tool_registry, options):
+        payload = {"model": self.model,
+                   "messages": [self._serialize_msg(m) for m in messages],
+                   "temperature": self.temperature}
+        if options:
+            payload.update(options)
+        if _is_tool_registry(tool_registry) and tool_registry.names():
+            payload["tools"] = tool_registry.schemas()
+
+        data = _http_post_json(
+            f"{self.base_url}/chat/completions",
+            json_body=payload,
+            headers={"Authorization": f"Bearer {self.api_key}",
+                     "Content-Type": "application/json"},
+            timeout=self.timeout, max_retries=self.max_retries,
+            retry_delay_ms=self.retry_delay_ms,
+            circuit_breaker=self.circuit_breaker,
+            provider=self._provider,
+        )
+        choice = data.get("choices", [{}])[0]
+        msg_obj = choice.get("message", {})
+        tool_calls = msg_obj.get("tool_calls")
+        content = msg_obj.get("content", "") or ""
+        meta = {"provider": self._provider, "backend": "http",
+                "usage": data.get("usage", {})}
+        if tool_calls:
+            meta["tool_calls"] = tool_calls
+        return ChatResponse(
+            generations=[Generation(output=Message(
+                content=content, type=MessageType.ASSISTANT,
+                metadata={"tool_calls": tool_calls or []}))],
+            metadata=meta)
+
+    def stream(self, messages, tool_registry=None, options=None):
+        if self._llm is not None:
+            for chunk in self._llm.stream([(m.type, m.content) for m in messages]):
+                content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                if content:
+                    yield ChatResponse(
+                        generations=[Generation(output=Message.assistant(content))],
+                        metadata={"provider": self._provider, "stream": True})
+            return
+        yield from self._stream_via_http(messages, options)
+
+    def _stream_via_http(self, messages, options):
+        import requests
+        import time as _time
+        payload = {"model": self.model, "temperature": self.temperature,
+                   "messages": [self._serialize_msg(m) for m in messages],
+                   "stream": True}
+        if options:
+            payload.update(options)
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                with requests.post(
+                    f"{self.base_url}/chat/completions", json=payload,
+                    stream=True,
                     headers={"Authorization": f"Bearer {self.api_key}",
                              "Content-Type": "application/json"},
                     timeout=self.timeout,
-                )
-                resp.raise_for_status()
-                return resp.json()
-            except (requests.ConnectionError, requests.Timeout) as exc:
-                raise TransientError(str(exc)) from exc
-            except requests.HTTPError as exc:
-                if resp.status_code in (429, 500, 502, 503, 504):
-                    raise TransientError(str(exc)) from exc
-                raise
+                ) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[len("data:"):].strip()
+                        if data_str == "[DONE]":
+                            return
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = (chunk.get("choices", [{}])[0]
+                                 .get("delta", {}).get("content", ""))
+                        if delta:
+                            yield ChatResponse(
+                                generations=[Generation(output=Message.assistant(delta))],
+                                metadata={"provider": self._provider, "stream": True})
+                return
+            except Exception as exc:
+                if not _is_transient_http_exc(exc, locals().get("resp", None)):
+                    raise
+                logger.warning("%s 流式第 %d 次尝试失败: %s",
+                               self._provider, attempt + 1, exc)
+                if attempt < max_attempts - 1:
+                    _time.sleep(1)
+                    continue
+                yield ChatResponse(
+                    generations=[Generation(output=Message.assistant(
+                        "（流式响应中断，请重试）"))],
+                    metadata={"provider": self._provider, "stream": True,
+                              "error": str(exc)})
+                return
 
-        data = resilient_call(
-            _do_post, max_retries=self.max_retries,
-            retry_delay_ms=self.retry_delay_ms,
-            retry_exceptions=(TransientError,),
-            circuit_breaker=self.circuit_breaker,
-            count_as_failure_exc=(TransientError,),
-        )()
-        return [item["embedding"] for item in data["data"]]
+    def _serialize_msg(self, m: Message) -> Dict[str, Any]:
+        d = m.to_dict()
+        if m.type == MessageType.TOOL:
+            d["role"] = "tool"
+            if m.metadata.get("tool_call_id"):
+                d["tool_call_id"] = m.metadata["tool_call_id"]
+        if m.type == MessageType.ASSISTANT and m.metadata.get("tool_calls"):
+            d["tool_calls"] = m.metadata["tool_calls"]
+        return d
 
 
 # ==================== Ollama ====================
@@ -390,33 +615,17 @@ class OllamaChatModel(ChatModel):
         return self._call_via_http(messages, options)
 
     def _call_via_http(self, messages, options):
-        from spring.ai.resilience import resilient_call, TransientError
-        import requests
-
-        def _do_post():
-            try:
-                resp = requests.post(
-                    f"{self.base_url}/api/chat", timeout=self.timeout,
-                    json={"model": self.model, "stream": False,
-                          "messages": [m.to_dict() for m in messages],
-                          "options": {"temperature": self.temperature}},
-                )
-                resp.raise_for_status()
-                return resp.json()
-            except (requests.ConnectionError, requests.Timeout) as exc:
-                raise TransientError(str(exc)) from exc
-            except requests.HTTPError as exc:
-                if resp.status_code in (429, 500, 502, 503, 504):
-                    raise TransientError(str(exc)) from exc
-                raise
-
-        data = resilient_call(
-            _do_post, max_retries=self.max_retries,
+        data = _http_post_json(
+            f"{self.base_url}/api/chat",
+            json_body={"model": self.model, "stream": False,
+                       "messages": [m.to_dict() for m in messages],
+                       "options": {"temperature": self.temperature}},
+            timeout=self.timeout,
+            max_retries=self.max_retries,
             retry_delay_ms=self.retry_delay_ms,
-            retry_exceptions=(TransientError,),
             circuit_breaker=self.circuit_breaker,
-            count_as_failure_exc=(TransientError,),
-        )()
+            provider="ollama",
+        )
         content = data.get("message", {}).get("content", "")
         return ChatResponse(
             generations=[Generation(output=Message.assistant(content))],
@@ -424,24 +633,45 @@ class OllamaChatModel(ChatModel):
 
     def stream(self, messages, tool_registry=None, options=None):
         import requests
-        with requests.post(
-            f"{self.base_url}/api/chat", stream=True, timeout=self.timeout,
-            json={"model": self.model, "stream": True,
-                  "messages": [m.to_dict() for m in messages]},
-        ) as resp:
-            resp.raise_for_status()
-            for line in resp.iter_lines(decode_unicode=True):
-                if not line:
+        import time as _time
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                with requests.post(
+                    f"{self.base_url}/api/chat", stream=True, timeout=self.timeout,
+                    json={"model": self.model, "stream": True,
+                          "messages": [m.to_dict() for m in messages]},
+                ) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = chunk.get("message", {}).get("content", "")
+                        if delta:
+                            yield ChatResponse(
+                                generations=[Generation(output=Message.assistant(delta))],
+                                metadata={"provider": "ollama", "stream": True})
+                return
+            except Exception as exc:
+                # 仅对瞬态（连接/超时/429/5xx）重试；其余错误直接抛
+                if not _is_transient_http_exc(exc, locals().get("resp", None)):
+                    raise
+                logger.warning("Ollama 流式第 %d 次尝试失败: %s", attempt + 1, exc)
+                if attempt < max_attempts - 1:
+                    _time.sleep(1)
                     continue
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                delta = chunk.get("message", {}).get("content", "")
-                if delta:
-                    yield ChatResponse(
-                        generations=[Generation(output=Message.assistant(delta))],
-                        metadata={"provider": "ollama", "stream": True})
+                logger.error("Ollama 流式重试耗尽，降级: %s", exc)
+                yield ChatResponse(
+                    generations=[Generation(output=Message.assistant(
+                        "（流式响应中断，请重试）"))],
+                    metadata={"provider": "ollama", "stream": True,
+                              "error": str(exc)},
+                )
+                return
 
 
 class OllamaEmbeddingModel(EmbeddingModel):
@@ -459,27 +689,16 @@ class OllamaEmbeddingModel(EmbeddingModel):
         self.circuit_breaker = circuit_breaker
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        from spring.ai.resilience import resilient_call, TransientError
-        import requests
-
         def _embed_one(text):
-            def _do_post():
-                try:
-                    resp = requests.post(
-                        f"{self.base_url}/api/embeddings", timeout=self.timeout,
-                        json={"model": self.model, "prompt": text},
-                    )
-                    resp.raise_for_status()
-                    return resp.json()
-                except (requests.ConnectionError, requests.Timeout) as exc:
-                    raise TransientError(str(exc)) from exc
-            data = resilient_call(
-                _do_post, max_retries=self.max_retries,
+            data = _http_post_json(
+                f"{self.base_url}/api/embeddings",
+                json_body={"model": self.model, "prompt": text},
+                timeout=self.timeout,
+                max_retries=self.max_retries,
                 retry_delay_ms=self.retry_delay_ms,
-                retry_exceptions=(TransientError,),
                 circuit_breaker=self.circuit_breaker,
-                count_as_failure_exc=(TransientError,),
-            )()
+                provider="ollama",
+            )
             return data.get("embedding", [])
 
         return [_embed_one(t) for t in texts]
