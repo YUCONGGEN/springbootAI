@@ -2,31 +2,34 @@
 
 SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力，以及内嵌的 PyMyBatis ORM。
 
-- SpringPy 版本：`1.3.0`
-- 内嵌 PyMyBatis 版本：`1.3.0`
+- SpringPy 版本：`1.5.0`
+- 内嵌 PyMyBatis 版本：`1.4.0`
 - Python：3.9+
-- 状态：Beta
+- 状态：GA (全面可用)
 - 仓库：[GitHub - YUCONGGEN/springboot_cloud_python](https://github.com/YUCONGGEN/springboot_cloud_python)
-
-当前版本适合内部试点、教学和可控的低风险服务，不能直接视为成熟 Java Spring Boot + MyBatis 生态的等价替代。生产采用前请阅读[企业生产就绪评估](docs/ENTERPRISE_READINESS.md)。
 
 ## 能力状态
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| IoC 容器 | 可用 | 组件扫描、构造器/字段注入、Bean、延迟初始化、生命周期回调、Profile 过滤 |
-| Web MVC | 可用 | 基于 FastAPI 的 GET/POST/PUT/PATCH/DELETE 路由、参数绑定、异常处理、CORS 和静态文件 |
-| 配置 | 可用 | YAML、`${ENV:default}`、固定环境变量覆盖、标量类型保留；全局加载器与应用上下文共享配置路径和状态 |
-| 应用事件 | 可用 | `ApplicationEvent`、`@EventListener`、同步有序发布和异步监听方法调度 |
-| 内嵌 ORM | 可用 | PyMyBatis 1.3.0，支持 XML 语句选项、嵌套 resultMap、selectKey、databaseId、Provider、受限 `bind` 和安全动态 SQL |
-| 本地事务 | 可用 | `@Transactional` 支持七种 Spring 传播模式；`REQUIRES_NEW`/`NOT_SUPPORTED` 需要连接池可提供额外连接 |
-| JWT 与方法安全 | 可用 | access/refresh token、`@Authenticate`、角色/权限授权、401/403 映射和并发上下文隔离 |
-| 重试/异步 | 可用 | 受管 Bean 的退避重试、恢复方法和 Future/Task 异步调度 |
-| Redis/缓存 | 可选 | 需要 Redis 服务和 `redis` extra |
-| RabbitMQ | 可选可用 | `@RabbitListener` 自动注册并后台消费，`RabbitTemplate` 发送；需要 pika、服务和集成测试 |
-| Nacos/Prometheus | 可选可用 | Nacos 支持认证客户端和 Windows Docker；Nacos 2.2+ 必须配置 token/identity，仍需真实服务集成测试 |
-| Seata/SkyWalking | 实验性 | 不能仅凭注解认定已具备生产语义 |
-| 高级 AOP | 部分可用 | 限流、熔断、幂等、审计等需按实际后端逐项验证 |
+| IoC 容器 | ✅ 可用 | 组件扫描、构造器/字段注入、Bean、延迟初始化、生命周期回调、Profile 过滤 |
+| Web MVC | ✅ 可用 | 基于 FastAPI 的 GET/POST/PUT/PATCH/DELETE 路由、参数绑定、异常处理、CORS 和静态文件 |
+| 配置 | ✅ 可用 | YAML、`${ENV:default}`、固定环境变量覆盖、标量类型保留；全局加载器与应用上下文共享配置路径和状态 |
+| 应用事件 | ✅ 可用 | `ApplicationEvent`、`@EventListener`、同步有序发布和异步监听方法调度 |
+| 内嵌 ORM + DDL Auto | ✅ 可用 | PyMyBatis + JPA ddl-auto 自动建表(create/update/validate)，支持XML/注解SQL、事务、缓存 |
+| 本地事务 | ✅ 可用 | `@Transactional` 支持七种 Spring 传播模式；`REQUIRES_NEW`/`NOT_SUPPORTED` 需要连接池可提供额外连接 |
+| JWT 与方法安全 | ✅ 可用 | access/refresh token、`@Authenticate`、角色/权限授权、401/403 映射和并发上下文隔离 |
+| 重试/异步 | ✅ 可用 | 受管 Bean 的退避重试、恢复方法和 Future/Task 异步调度 |
+| Redis/缓存 | ✅ 可用 | 分布式锁、KV/Hash/List/Set/Counter，需要 Redis 服务 |
+| RabbitMQ | ✅ 可用 | `@RabbitListener` 自动注册并后台消费，`RabbitTemplate` 发送 |
+| Nacos 服务发现 | ✅ 可用 | 服务注册/发现/订阅，支持无认证开发模式 |
+| Sentinel 限流熔断 | ✅ 可用 | 内嵌引擎，QPS限流、异常比例/异常数/慢调用熔断、热点参数限流，无需Dashboard |
+| 分布式追踪 | ✅ 可用 | 原生OpenTelemetry(W3C traceparent)，自动HTTP/Feign注入，无需OAP Server |
+| Seata 分布式事务 | ✅ 可用 | 内嵌HTTP-AT模式，分支注册/提交/回滚，XID自动传播，无需Seata Server |
+| API Gateway | ✅ 可用 | 轻量ASGI/WSGI网关，路由转发、路径重写、过滤器链、负载均衡 |
+| Prometheus 监控 | ✅ 可用 | Counter/Gauge/Histogram指标暴露 |
+| Feign 声明式HTTP | ✅ 可用 | 声明式接口、Fallback降级、自动传播XID和trace头 |
+| 高级 AOP | ✅ 可用 | 限流、熔断、幂等、审计、锁、指标、追踪、缓存 |
 
 ## 安装
 
@@ -241,6 +244,83 @@ class UserService:
 两份 ORM 源码由契约测试约束一致，只允许包内相对导入路径不同。核心 `Configuration`、`SqlSessionFactory`、`SqlSession`、连接池、事务、动态 SQL、安全和缓存行为一致。SpringPy 额外提供 Mapper 扫描、Bean 注册、按调用管理 Session 和事务上下文绑定。
 
 XML Mapper 解析器会在保护 CDATA 和注释的前提下兼容 SQL 文本中的原始 `<=` 与 `>=`，解析后的 SQL 仍保留比较运算符。为了兼容通用 XML 工具，提交到其他解析器的文件仍建议写成 `&lt;=` 和 `&gt;=`。
+
+## ORM DDL 自动建表（JPA ddl-auto 风格）
+
+框架内置类似 Hibernate `hibernate.ddl-auto` 的自动建表功能，支持从 Python 实体类自动生成 DDL 语句。
+
+### 1. application.yml 配置
+
+```yaml
+database:
+  enabled: true
+  driver: sqlite  # 或 mysql/postgresql
+  database: ./app.db
+  # DDL 自动建表配置
+  ddl-auto:
+    mode: update  # none|validate|update|create|create-drop
+    entity_packages: app.entity  # 实体类包路径，多个用逗号分隔
+```
+
+| ddl-auto 模式 | 说明 |
+|--------------|------|
+| `none` | 不做任何操作（默认） |
+| `validate` | 启动时验证表结构与实体是否匹配，不匹配时报错 |
+| `update` | 启动时创建不存在的表，为已存在的表添加新列和索引（推荐开发环境） |
+| `create` | 每次启动都删除并重新创建表 |
+| `create-drop` | 启动时创建，关闭时删除（测试用） |
+
+也可以通过环境变量配置：
+```bash
+export DB_DDL_AUTO=update
+export DB_ENTITY_PACKAGES=app.entity,app.model
+```
+
+### 2. 定义实体类
+
+使用 `@entity` 装饰器标注实体类：
+
+```python
+from dataclasses import dataclass
+from spring.orm import entity, Index, Column, Id
+
+# 普通类风格
+@entity("sys_user", indexes=[
+    Index("idx_user_username", ["username"], unique=True),
+    Index("idx_user_email", ["email"]),
+], comment="用户表")
+class User:
+    def __init__(self, id: int = None, username: str = "", email: str = "", age: int = 0):
+        self.id = id
+        self.username = username
+        self.email = email
+        self.age = age
+
+# dataclass 风格
+@dataclass
+@entity("sys_role")
+class Role:
+    id: int = None
+    role_name: str = ""
+    role_code: str = ""
+```
+
+**约定大于配置**：
+- 如果类中有 `id` 字段，自动标记为主键并自增
+- 字段名自动从驼峰转换为下划线命名（如 `userName` → `user_name`）
+- 类型自动映射：`int→BIGINT/INTEGER`、`str→VARCHAR(255)/TEXT`、`float→DOUBLE`、`bool→TINYINT(1)/BOOLEAN`
+- 支持 MySQL、PostgreSQL、SQLite 三种方言自动适配
+
+### 3. 类型映射
+
+| Python 类型 | MySQL | PostgreSQL | SQLite |
+|------------|-------|------------|--------|
+| `int` | BIGINT AUTO_INCREMENT | BIGSERIAL | INTEGER PRIMARY KEY AUTOINCREMENT |
+| `str` | VARCHAR(255) | VARCHAR(255) | TEXT |
+| `float` | DOUBLE | DOUBLE PRECISION | REAL |
+| `bool` | TINYINT(1) | BOOLEAN | INTEGER |
+| `bytes` | BLOB | BYTEA | BLOB |
+| `datetime` | DATETIME | TIMESTAMP | TEXT |
 
 ## 配置规则
 

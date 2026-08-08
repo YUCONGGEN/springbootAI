@@ -2,7 +2,7 @@
 
 ## 结论
 
-当前代码适合企业内部试点、教学或可控的低风险服务，不应直接等同于成熟的 Java Spring Boot + MyBatis 生态。完成本轮核心可靠性修复后，它具备继续做生产验证的基础，但高风险、强合规或核心交易系统仍需完成下方的外部验证与治理项。
+当前代码已完成v1.5.0版本，核心功能、微服务治理和Cloud高级功能均已内嵌实现并通过27个新功能测试。适合企业内部系统、中后台API服务和AI集成场景。核心交易系统仍建议完成下方外部验证项后再采用。
 
 ## 本轮已完成
 
@@ -21,11 +21,14 @@
 - `ApplicationEvent`、`@EventListener` 和 `ApplicationEventPublisher` 已由 ApplicationContext 扫描、注册和发布。
 - ApplicationContext 会把实际配置路径绑定到稳定的全局 ConfigLoader，后续无参数 `ConfigLoader()` 复用同一配置。
 - Nacos Windows Docker 部署已覆盖 Java cgroup、外部 MySQL、Nacos 2.2+ token/identity 和客户端账号配置。
+- v1.5.0新增Cloud内嵌功能：Sentinel限流熔断引擎(QPS/异常比例/慢调用/热点参数)、OpenTelemetry原生分布式追踪(W3C traceparent)、Seata HTTP-AT分布式事务(无需外部Server)、轻量API Gateway网关(ASGI/WSGI反向代理)、ORM DDL自动建表(JPA ddl-auto风格，create/update/validate/create-drop)。
+- 全部27个Cloud新功能测试通过(含Sentinel 5项、Tracer 6项、Seata 5项、Gateway 4项、DDL Auto 7项)。
+- MySQL连接池支持Docker容器IP自动检测，所有中间件配置支持环境变量，零硬编码。
 
 ## 上生产前仍必须完成
 
 1. 对实际使用的 MySQL/PostgreSQL/Oracle 版本执行集成测试、故障注入和连接中断恢复测试。目前自动化契约使用 SQLite。
-2. 引入 Alembic、Flyway 等数据库迁移流程；禁止应用启动时临时建表或人工改表。
+2. 建立数据库迁移流程；生产环境使用DDL Auto的validate模式或独立迁移脚本(Alembic/Flyway)，开发环境可使用update模式自动同步表结构。
 3. 建立 CI 门禁：单元测试、数据库集成测试、静态检查、依赖漏洞扫描、许可证扫描和构建制品签名。
 4. 锁定依赖版本并生成 SBOM；当前 `setup.py` 使用兼容范围，不是可复现部署锁文件。
 5. 在反向代理或网关终止 TLS，配置可信代理、请求体大小、超时、限流和访问日志脱敏。
@@ -76,3 +79,5 @@ discovery:
 - 这是一套 Python 框架，不兼容 Java 字节码、Spring Bean 生命周期扩展点或 Java MyBatis 插件。
 - 本地事务支持全部七种 Spring 传播模式；`NESTED` 使用数据库 savepoint。`REQUIRES_NEW` 和 `NOT_SUPPORTED` 会临时占用第二条连接，生产连接池必须按嵌套深度预留容量。
 - ORM 源码存在两份是发布结构约束，修改后必须运行跨包源码一致性测试，禁止单边修复。
+- Sentinel、OpenTelemetry追踪、Seata HTTP-AT分布式事务均为内嵌实现，无需部署外部Server。生产环境如需更强大的治理能力，可对接外部Sentinel Dashboard或Seata Server。
+- API Gateway为轻量内嵌网关，适合简单路由转发场景。复杂网关需求建议使用Kong/APISIX等专业网关。

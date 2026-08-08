@@ -233,11 +233,29 @@ class MyBatisConfigurer:
 
         self.sql_session_factory = build_session_factory(mybatis_config)
         
-        # 4. 扫描并注册Mapper
+        # 4. 初始化DDL自动建表（JPA hibernate.ddl-auto风格）
+        self._init_ddl_auto(db_config)
+        
+        # 5. 扫描并注册Mapper
         self._scan_mappers(application_context)
         
-        # 5. 注册SqlSessionFactory和SqlSession为Bean
+        # 6. 注册SqlSessionFactory和SqlSession为Bean
         self._register_beans(application_context.bean_factory)
+    
+    def _init_ddl_auto(self, db_config: dict) -> None:
+        """初始化DDL自动建表"""
+        try:
+            from spring.orm.ddl_auto import init_ddl_auto
+            # 获取连接池
+            pool = None
+            if hasattr(self.sql_session_factory, 'configuration'):
+                pool = getattr(self.sql_session_factory.configuration, 'pool', None)
+            if pool is None and hasattr(self.sql_session_factory, '_pool'):
+                pool = self.sql_session_factory._pool
+            if pool is not None:
+                init_ddl_auto(pool, db_config)
+        except Exception as e:
+            logger.warning(f"DDL auto initialization skipped: {e}")
     
     def _scan_mappers(self, application_context) -> None:
         """

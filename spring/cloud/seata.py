@@ -1,22 +1,33 @@
 """
 分布式事务模块
-基于Seata实现分布式事务管理
+基于Seata理念实现分布式事务管理
 
-注意：要启用完整的分布式事务功能，请：
+支持三种模式：
+- local: 本地模式，仅追踪事务状态（默认）
+- http: HTTP-AT模式，通过REST端点协调跨服务事务（无需Seata Server）
+- distributed: 真实Seata Server模式（需要seata SDK）
+
+HTTP-AT 模式工作原理：
+1. TM（事务发起方）开启全局事务，生成XID
+2. Feign调用远程服务时，通过 X-TX-XID header 传递XID
+3. RM（分支事务方）注册分支到TC（内嵌协调器）
+4. TM 提交时通知所有分支提交；回滚时通知所有分支回滚
+5. 分支服务暴露 /seata/branch/{branchId}/commit 和 /seata/branch/{branchId}/rollback 端点
+
+注意：分布式模式(distributed)要启用完整的分布式事务功能，请：
 1. 安装Seata Server（https://seata.io/zh-cn/docs/overview/what-is-seata.html）
 2. 配置registry.conf和file.conf
 3. 在启动时设置SEATA_ENABLED=true
-4. 确保数据库中创建了seata_undo_log表
-
-当前实现支持两种模式：
-- 本地模式：仅追踪事务状态，不进行分布式协调（默认）
-- 分布式模式：连接Seata Server进行真实的分布式事务协调
 """
 import logging
 import time
 import hashlib
 import threading
-from typing import Dict, Any, Optional
+import uuid
+import json
+from typing import Dict, Any, Optional, List, Callable
+from urllib import request as urlrequest
+from urllib.error import URLError, HTTPError
 
 # 可选导入Seata
 try:
@@ -35,8 +46,16 @@ except ImportError:
 logger = logging.getLogger("Spring.Cloud.Seata")
 
 
+class BranchStatus:
+    """分支事务状态"""
+    REGISTERED = "REGISTERED"
+    COMMITTED = "COMMITTED"
+    ROLLED_BACK = "ROLLED_BACK"
+    FAILED = "FAILED"
+
+
 class SeataTransactionManager:
-    """Seata事务管理器（支持本地模式和分布式模式）"""
+    """Seata事务管理器（支持local/http/distributed三种模式）"""
     
     _instance = None
     _lock = threading.Lock()
@@ -55,10 +74,19 @@ class SeataTransactionManager:
         self.server_addr = server_addr
         self.application_id = application_id
         self.transaction_group = transaction_group
-        self.mode = mode  # 'local' or 'distributed'
+        self.mode = mode  # 'local', 'http', or 'distributed'
         self._transaction_context = threading.local()
         self._seata_client_initialized = False
         self._initialized = True
+
+        # HTTP-AT 模式：全局事务 -> 分支事务列表
+        self._global_transactions: Dict[str, Dict] = {}
+        self._branches: Dict[str, List[Dict]] = {}  # xid -> [branch]
+        self._gt_lock = threading.Lock()
+
+        # 分支事务回调注册（本地分支，用于同进程服务调用）
+        self._branch_callbacks: Dict[str, Dict[str, Callable]] = {}
+        self._cb_lock = threading.Lock()
         
         # 如果Seata可用且模式为分布式，尝试初始化
         if _seata_available and mode == "distributed" and application_id:
@@ -102,15 +130,17 @@ class SeataTransactionManager:
         """
         开启分布式事务
         
-        如果模式为分布式且Seata Server可用，则使用Seata进行全局事务管理；
-        否则使用本地事务上下文管理（仅追踪事务状态，不进行分布式协调）。
+        支持三种模式：
+        - local: 仅追踪事务上下文
+        - http: HTTP-AT模式，生成本地XID，后续Feign调用自动传递，提交/回滚通过HTTP通知分支
+        - distributed: 使用真实Seata Server
         
         Args:
             timeout: 事务超时时间（毫秒）
             name: 事务名称
         
         Returns:
-            事务ID
+            事务ID (XID)
         """
         # 检查是否已经在事务中
         if getattr(self._transaction_context, 'in_transaction', False):
@@ -118,7 +148,7 @@ class SeataTransactionManager:
             return getattr(self._transaction_context, 'tx_id', "")
         
         # 生成事务ID
-        tx_id = hashlib.md5(f"{time.time()}-{threading.current_thread().ident}".encode()).hexdigest()
+        tx_id = hashlib.md5(f"{time.time()}-{threading.current_thread().ident}-{uuid.uuid4().hex}".encode()).hexdigest()[:32]
         
         # 设置事务上下文
         self._transaction_context.in_transaction = True
@@ -127,14 +157,24 @@ class SeataTransactionManager:
         self._transaction_context.timeout = timeout
         self._transaction_context.start_time = time.time()
         self._transaction_context.name = name
+
+        # HTTP-AT 模式：注册全局事务
+        if self.mode == "http":
+            with self._gt_lock:
+                self._global_transactions[tx_id] = {
+                    'xid': tx_id,
+                    'name': name,
+                    'status': 'BEGIN',
+                    'start_time': time.time(),
+                    'timeout': timeout,
+                }
+                self._branches[tx_id] = []
+            logger.info(f"[Seata-HTTP] Begin global transaction: {tx_id}")
         
         # 如果是分布式模式且Seata可用，尝试开启全局事务
-        if self.mode == "distributed" and _seata_available and self._seata_client_initialized:
+        elif self.mode == "distributed" and _seata_available and self._seata_client_initialized:
             try:
-                # 使用Seata的GlobalTransaction开启全局事务
                 global_tx = GlobalTransaction.begin(timeout, name)
-                
-                # 获取Seata的全局事务ID
                 seata_tx_id = RootContext.getXID()
                 if seata_tx_id:
                     tx_id = seata_tx_id
@@ -142,14 +182,94 @@ class SeataTransactionManager:
                     logger.info(f"[Seata] Begin global transaction (distributed): {tx_id}")
                 else:
                     logger.warning(f"[Seata] Global transaction started but XID not found, using local ID")
-                
                 return tx_id
             except Exception as e:
                 logger.warning(f"[Seata] Failed to begin global transaction: {e}. Using local context.")
                 self.mode = "local"
         
-        logger.info(f"[Seata] Begin transaction (local context): {tx_id}")
+        else:
+            logger.info(f"[Seata] Begin transaction (local context): {tx_id}")
+
         return tx_id
+
+    def register_branch(self, xid: str, branch_id: str = "", resource_id: str = "",
+                        callback_url: str = "", commit_cb: Callable = None,
+                        rollback_cb: Callable = None, service_name: str = "") -> str:
+        """
+        注册分支事务（HTTP-AT模式）
+        
+        Args:
+            xid: 全局事务ID
+            branch_id: 分支ID（自动生成如果为空）
+            resource_id: 资源标识（如数据库表名）
+            callback_url: 远程回调URL（用于跨服务调用），如 http://order-service/seata/branch
+            commit_cb: 本地提交回调函数
+            rollback_cb: 本地回滚回调函数
+            service_name: 服务名
+
+        Returns:
+            branch_id
+        """
+        if not branch_id:
+            branch_id = uuid.uuid4().hex[:16]
+
+        branch = {
+            'branch_id': branch_id,
+            'xid': xid,
+            'resource_id': resource_id,
+            'callback_url': callback_url,
+            'service_name': service_name or self.application_id,
+            'status': BranchStatus.REGISTERED,
+            'registered_at': time.time(),
+        }
+
+        with self._gt_lock:
+            if xid not in self._branches:
+                self._branches[xid] = []
+            self._branches[xid].append(branch)
+
+        # 注册本地回调
+        if commit_cb or rollback_cb:
+            with self._cb_lock:
+                self._branch_callbacks[branch_id] = {
+                    'commit': commit_cb,
+                    'rollback': rollback_cb,
+                }
+
+        logger.info(f"[Seata-HTTP] Branch registered: xid={xid[:16]}... branch_id={branch_id[:16]}... "
+                     f"service={service_name} url={callback_url}")
+        return branch_id
+
+    def _notify_branch(self, branch: dict, action: str) -> bool:
+        """通知分支事务提交或回滚"""
+        branch_id = branch['branch_id']
+        # 本地回调优先
+        with self._cb_lock:
+            cb = self._branch_callbacks.get(branch_id)
+        if cb:
+            fn = cb.get('commit') if action == 'commit' else cb.get('rollback')
+            if fn:
+                try:
+                    fn(branch['xid'], branch_id)
+                    return True
+                except Exception as e:
+                    logger.error(f"[Seata-HTTP] Local branch {action} failed: {e}")
+                    return False
+
+        # HTTP回调
+        url = branch.get('callback_url')
+        if url:
+            try:
+                full_url = f"{url.rstrip('/')}/{branch_id}/{action}"
+                req = urlrequest.Request(full_url, method='POST',
+                                         data=json.dumps({'xid': branch['xid'], 'branchId': branch_id}).encode(),
+                                         headers={'Content-Type': 'application/json'})
+                resp = urlrequest.urlopen(req, timeout=5)
+                return resp.status == 200
+            except Exception as e:
+                logger.error(f"[Seata-HTTP] HTTP branch {action} failed for {branch_id[:16]}: {e}")
+                return False
+        return True  # no callback: treat as success
     
     def commit_transaction(self, tx_id: str) -> bool:
         """
@@ -162,13 +282,11 @@ class SeataTransactionManager:
             是否成功
         """
         try:
-            # 检查事务上下文
             current_tx_id = getattr(self._transaction_context, 'tx_id', "")
-            if current_tx_id != tx_id:
+            if current_tx_id and current_tx_id != tx_id:
                 logger.error(f"Transaction mismatch: expected {tx_id}, got {current_tx_id}")
                 return False
             
-            # 检查超时
             start_time = getattr(self._transaction_context, 'start_time', 0)
             timeout = getattr(self._transaction_context, 'timeout', 60000)
             duration = (time.time() - start_time) * 1000
@@ -177,8 +295,24 @@ class SeataTransactionManager:
                 logger.error(f"Transaction timeout: {duration}ms > {timeout}ms")
                 self.rollback_transaction(tx_id)
                 return False
+
+            # HTTP-AT模式：通知所有分支提交
+            if self.mode == "http":
+                all_ok = True
+                with self._gt_lock:
+                    branches = list(self._branches.get(tx_id, []))
+                    self._global_transactions[tx_id]['status'] = 'COMMITTING'
+                for branch in branches:
+                    ok = self._notify_branch(branch, 'commit')
+                    branch['status'] = BranchStatus.COMMITTED if ok else BranchStatus.FAILED
+                    if not ok:
+                        all_ok = False
+                with self._gt_lock:
+                    self._global_transactions[tx_id]['status'] = 'COMMITTED' if all_ok else 'PARTIAL_COMMIT'
+                logger.info(f"[Seata-HTTP] Commit transaction {tx_id[:16]}... branches={len(branches)} success={all_ok}")
+                return all_ok
             
-            # 如果是分布式模式，使用Seata提交
+            # 分布式模式
             if self.mode == "distributed" and _seata_available and self._seata_client_initialized:
                 try:
                     GlobalTransaction.commit()
@@ -190,10 +324,9 @@ class SeataTransactionManager:
                     self.rollback_transaction(tx_id)
                     return False
             
-            # 本地模式提交
+            # 本地模式
             self._transaction_context.status = "COMMITTED"
             logger.info(f"[Seata] Commit transaction (local): {tx_id}, duration={duration:.2f}ms")
-            
             return True
         finally:
             self._cleanup_context()
@@ -209,13 +342,30 @@ class SeataTransactionManager:
             是否成功
         """
         try:
-            # 检查事务上下文
             current_tx_id = getattr(self._transaction_context, 'tx_id', "")
-            if current_tx_id != tx_id:
+            if current_tx_id and current_tx_id != tx_id:
                 logger.error(f"Transaction mismatch: expected {tx_id}, got {current_tx_id}")
                 return False
+
+            # HTTP-AT模式：通知所有分支回滚
+            if self.mode == "http":
+                all_ok = True
+                with self._gt_lock:
+                    branches = list(self._branches.get(tx_id, []))
+                    if tx_id in self._global_transactions:
+                        self._global_transactions[tx_id]['status'] = 'ROLLING_BACK'
+                for branch in branches:
+                    ok = self._notify_branch(branch, 'rollback')
+                    branch['status'] = BranchStatus.ROLLED_BACK if ok else BranchStatus.FAILED
+                    if not ok:
+                        all_ok = False
+                with self._gt_lock:
+                    if tx_id in self._global_transactions:
+                        self._global_transactions[tx_id]['status'] = 'ROLLED_BACK' if all_ok else 'PARTIAL_ROLLBACK'
+                logger.info(f"[Seata-HTTP] Rollback transaction {tx_id[:16]}... branches={len(branches)} success={all_ok}")
+                return all_ok
             
-            # 如果是分布式模式，使用Seata回滚
+            # 分布式模式
             if self.mode == "distributed" and _seata_available and self._seata_client_initialized:
                 try:
                     GlobalTransaction.rollback()
@@ -225,10 +375,9 @@ class SeataTransactionManager:
                 except Exception as e:
                     logger.error(f"[Seata] Failed to rollback global transaction: {e}")
             
-            # 本地模式回滚
+            # 本地模式
             self._transaction_context.status = "ROLLED_BACK"
             logger.info(f"[Seata] Rollback transaction (local): {tx_id}")
-            
             return True
         finally:
             self._cleanup_context()
@@ -275,15 +424,42 @@ class SeataTransactionManager:
         return self.mode
     
     def set_mode(self, mode: str):
-        """设置事务模式"""
-        if mode not in ["local", "distributed"]:
-            raise ValueError("Mode must be 'local' or 'distributed'")
+        """设置事务模式 (local/http/distributed)"""
+        if mode not in ["local", "http", "distributed"]:
+            raise ValueError("Mode must be 'local', 'http' or 'distributed'")
         
         self.mode = mode
         
         # 如果切换到分布式模式，尝试初始化Seata
         if mode == "distributed" and not self._seata_client_initialized:
             self._init_seata_client()
+
+    def get_transaction_info(self) -> Dict[str, Any]:
+        """获取当前事务信息（用于调试/监控）"""
+        with self._gt_lock:
+            return {
+                'mode': self.mode,
+                'active_global_tx': len(self._global_transactions),
+                'active_branches': sum(len(b) for b in self._branches.values()),
+                'in_transaction': self.is_in_transaction(),
+                'current_xid': self.get_current_tx_id(),
+            }
+
+    @staticmethod
+    def get_xid_from_headers(headers: Dict[str, str]) -> str:
+        """从HTTP请求头中提取XID"""
+        if not headers:
+            return ""
+        return (headers.get('X-TX-XID') or headers.get('X-Seata-XID') or
+                headers.get('x-tx-xid') or headers.get('x-seata-xid') or "")
+
+    @staticmethod
+    def inject_xid_headers(headers: Dict[str, str], xid: str) -> Dict[str, str]:
+        """将XID注入到HTTP请求头（供Feign使用）"""
+        if xid:
+            headers['X-TX-XID'] = xid
+            headers['X-Seata-XID'] = xid
+        return headers
 
 
 # 创建全局Seata事务管理器实例

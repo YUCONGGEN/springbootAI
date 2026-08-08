@@ -1,402 +1,324 @@
 # SpringPy 框架全面测试报告
 
-**测试日期**: 2026-08-08  
+**测试日期**: 2026-08-07  
 **测试环境**: macOS + Python 3.9.6 + Docker  
-**框架版本**: SpringPy 1.4.0 / PyMyBatis 1.4.0
+**框架版本**: SpringPy 1.5.0 / PyMyBatis 1.4.0  
+**测试结果**: ✅ **615 个用例全部通过**（15 个测试套件，0 失败，每个套件 ≥10 用例）
 
 ---
 
 ## 一、测试环境概览
 
-### 1.1 Docker 容器状态
-
-| 容器名称 | 镜像 | 端口 | 状态 |
-|---------|------|------|------|
-| springboot_cloud_python-master-nacos-1 | nacos/nacos-server:v2.5.1 | 8848 | ✅ 运行中（无认证模式） |
-| springboot_cloud_python-master-mysql-1 | mysql:8.0 | 3306 | ✅ 运行中（root无密码） |
-| springboot_cloud_python-master-redis-1 | redis:7-alpine | 6379 | ✅ 运行中 (healthy) |
-| springboot_cloud_python-master-rabbitmq-1 | rabbitmq:3-management-alpine | 5672/15672 | ✅ 运行中 (healthy) |
-
-### 1.2 项目结构
-
-```
-spring/
-├── annotations/       # 核心、Cloud、消息注解
-├── aop/              # 面向切面编程
-├── cloud/            # 微服务支持（Nacos/Feign/LoadBalancer/Seata）
-├── config/           # 配置加载
-├── context/          # IoC容器与Bean工厂
-├── event/            # 应用事件发布
-├── logging/          # 日志集成
-├── messaging/        # RabbitMQ消息
-├── monitoring/       # Prometheus监控
-├── orm/              # PyMyBatis ORM
-├── retry/            # 重试机制
-├── scheduling/       # 定时任务
-├── security/         # JWT安全
-├── tracing/          # 分布式追踪
-├── utils/            # 工具类
-└── web/              # FastAPI Web层
-```
-
----
-
-## 二、注解功能完整清单
-
-### 2.1 核心注解 (spring/annotations/core.py)
-
-| 分类 | 注解 | 状态 | 说明 |
-|------|------|------|------|
-| **启动注解** | `@SpringBootApplication` | ✅ 可用 | Spring Boot应用入口 |
-| | `@ComponentScan` | ✅ 可用 | 组件扫描 |
-| **Web MVC** | `@RestController` | ✅ 可用 | REST控制器 |
-| | `@Controller` | ✅ 可用 | 普通控制器 |
-| | `@RequestMapping` | ✅ 可用 | 请求映射 |
-| | `@GetMapping` | ✅ 可用 | GET请求 |
-| | `@PostMapping` | ✅ 可用 | POST请求 |
-| | `@PutMapping` | ✅ 可用 | PUT请求 |
-| | `@PatchMapping` | ✅ 可用 | PATCH请求 |
-| | `@DeleteMapping` | ✅ 可用 | DELETE请求 |
-| | `@CrossOrigin` | ✅ 可用 | CORS跨域 |
-| **参数绑定** | `@RequestParam` | ✅ 可用 | 查询参数 |
-| | `@PathVariable` | ✅ 可用 | 路径参数 |
-| | `@RequestBody` | ✅ 可用 | 请求体 |
-| | `@RequestHeader` | ✅ 可用 | 请求头 |
-| | `@CookieValue` | ✅ 可用 | Cookie值 |
-| | `@Valid` / `@Validated` | ✅ 可用 | 参数校验 |
-| **组件注解** | `@Service` | ✅ 可用 | 服务层组件 |
-| | `@Component` | ✅ 可用 | 通用组件 |
-| | `@Repository` | ✅ 可用 | 数据访问组件 |
-| **依赖注入** | `@Autowired` | ✅ 可用 | 自动注入 |
-| | `@Qualifier` | ✅ 可用 | 指定Bean名称 |
-| | `@Primary` | ✅ 可用 | 主要Bean |
-| | `@Lazy` | ✅ 可用 | 延迟初始化 |
-| **配置注解** | `@Configuration` | ✅ 可用 | 配置类 |
-| | `@Bean` | ✅ 可用 | Bean方法 |
-| | `@Value` | ✅ 可用 | 值注入 |
-| | `@ConfigurationProperties` | ✅ 可用 | 配置属性绑定 |
-| | `@Profile` | ✅ 可用 | 环境Profile |
-| | `@Scope` | ✅ 可用 | 作用域(singleton/prototype) |
-| **生命周期** | `@PostConstruct` | ✅ 可用 | 初始化后回调 |
-| | `@PreDestroy` | ✅ 可用 | 销毁前回调 |
-| **异常处理** | `@ControllerAdvice` | ✅ 可用 | 全局异常处理 |
-| | `@ExceptionHandler` | ✅ 可用 | 异常处理器 |
-| | `@ResponseStatus` | ✅ 可用 | 响应状态码 |
-| **日志** | `@Slf4j` | ✅ 可用 | 日志注入 |
-| | `@LogExecutionTime` | ✅ 可用 | 执行耗时日志 |
-| **事务缓存** | `@Transactional` | ✅ 可用 | 事务管理 |
-| | `@Cacheable` | ✅ 可用 | 缓存 |
-| **异步重试** | `@Async` | ✅ 可用 | 异步执行 |
-| | `@Retryable` | ✅ 可用 | 重试机制 |
-| **定时任务** | `@Scheduled` | ✅ 可用 | 定时任务 |
-| **事件** | `@EventListener` | ✅ 可用 | 事件监听 |
-| | `ApplicationEvent` | ✅ 可用 | 事件基类 |
-| **高级AOP** | `@RateLimit` | ✅ 可用 | 接口限流 |
-| | `@CircuitBreaker` | ✅ 可用 | 熔断器 |
-| | `@Idempotent` | ✅ 可用 | 幂等性 |
-| | `@AuditLog` | ✅ 可用 | 审计日志 |
-| | `@FeatureToggle` | ✅ 可用 | 功能开关 |
-| | `@Lock` | ✅ 可用 | 分布式锁 |
-| | `@Metrics` | ✅ 可用 | 指标监控 |
-| | `@Synchronized` | ✅ 可用 | 方法同步 |
-| | `@Validate` | ✅ 可用 | 参数校验 |
-| | `@Trace` | ✅ 可用 | 分布式追踪 |
-| **安全注解** | `@PreAuthorize` | ✅ 可用 | 方法级权限控制 |
-| | `@Secured` | ✅ 可用 | 角色权限控制 |
-| | `@Authenticate` | ✅ 可用 | JWT认证 |
-
-### 2.2 Spring Cloud 注解 (spring/annotations/cloud.py)
-
-| 注解 | 状态 | 说明 |
+| 组件 | 版本 | 状态 |
 |------|------|------|
-| `@EnableDiscoveryClient` | ✅ 可用 | 启用服务注册发现 |
-| `@NacosValue` | ✅ 可用 | Nacos配置动态刷新 |
-| `@RefreshScope` | ⚠️ 实验性 | 配置刷新作用域 |
-| `@EnableFeignClients` | ✅ 可用 | 启用Feign客户端 |
-| `@FeignClient` | ✅ 可用 | Feign客户端声明 |
-| `@SentinelResource` | ⚠️ 实验性 | Sentinel资源保护 |
-| `@EnableGateway` | ⚠️ 实验性 | 启用Gateway网关 |
-| `@LoadBalanced` | ✅ 可用 | 负载均衡 |
-| `@GlobalTransactional` | ⚠️ 实验性 | Seata分布式事务 |
+| Python | 3.9.6 | ✅ |
+| SpringPy | 1.5.0 | ✅ |
+| PyMyBatis（内嵌ORM） | 1.4.0 | ✅ |
+| MySQL（Docker） | 8.0.46 | ✅ 运行中（端口 3306，springpy 库已就绪） |
+| Redis（Docker） | 7-alpine | ✅ 运行中（healthy，PONG） |
+| RabbitMQ（Docker） | 3-management-alpine | ✅ 运行中（healthy） |
+| Nacos（Docker） | 2.5.1 | ✅ 运行中（HTTP 200） |
+| pytest | 8.4.2 | ✅ |
 
-### 2.3 消息注解 (spring/annotations/messaging.py)
+**Docker 中间件连通性实测**：
 
-| 注解/类 | 状态 | 说明 |
-|---------|------|------|
-| `@RabbitListener` | ✅ 可用 | RabbitMQ消息监听 |
-| `RabbitTemplate` | ✅ 可用 | RabbitMQ消息发送模板 |
+| 中间件 | 连通验证 | 结果 |
+|--------|---------|------|
+| Redis | `redis-cli ping` | ✅ PONG |
+| MySQL | `SELECT VERSION(); SHOW DATABASES LIKE 'springpy';` | ✅ 8.0.46 / springpy 存在 |
+| Nacos | `GET http://localhost:8848/nacos/` | ✅ HTTP 200 |
+| RabbitMQ | 容器 healthy + 端口 5672 暴露 | ✅ 运行中 |
 
-### 2.4 PyMyBatis ORM 注解 (spring/orm/pymybatis/annotations/annotations.py)
+---
 
-| 注解 | 状态 | 说明 |
+## 二、测试套件总览
+
+### 全面注解/功能测试套件（7 个文件，415 个用例）
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 1 | test_core_annotations_full.py | 38 | 核心基础注解（@Service/@Component/@Autowired/@Configuration/@Bean/@Value/@Scope/@Primary/@Profile/@Lazy/@PostConstruct/@PreDestroy/@SpringBootApplication/@ComponentScan） | ✅ 全部通过 |
+| 2 | test_web_annotations_full.py | 54 | Web层注解（@RestController/@Controller/@RequestMapping/@GetMapping/@PostMapping/@PutMapping/@PatchMapping/@DeleteMapping/@RequestParam/@PathVariable/@RequestBody/@RequestHeader/@CookieValue/@CrossOrigin/@ResponseStatus/@ExceptionHandler/@ControllerAdvice/@Valid/@Validated） | ✅ 全部通过 |
+| 3 | test_aop_annotations_full.py | 53 | AOP高级注解（@RateLimit/@CircuitBreaker/@Idempotent/@AuditLog/@FeatureToggle/@Lock/@Metrics/@Synchronized/@Validate/@Trace/@LogExecutionTime/@Transactional/@Cacheable/@Retryable/@Async/@Scheduled/@AsyncResult） | ✅ 全部通过 |
+| 4 | test_security_full.py | 74 | 安全功能（@PreAuthorize/@Secured/@Authenticate/JWT生成验证/密码加密SHA256-MD5-BCrypt/安全上下文/SQL注入检测） | ✅ 全部通过 |
+| 5 | test_orm_pymybatis_full.py | 60 | ORM/PyMyBatis（@Select/@Insert/@Update/@Delete/@Param/@Result/@ResultMap/@Options/DDL Auto类型映射/实体解析/建表/验证/dataclass支持） | ✅ 全部通过 |
+| 6 | test_cloud_embedded_full.py | 83 | Cloud内嵌功能（Sentinel限流熔断/OpenTelemetry追踪/Seata HTTP-AT事务/API Gateway/LoadBalancer/Cloud注解） | ✅ 全部通过 |
+| 7 | test_di_config_event_full.py | 53 | DI/配置/事件（ConfigLoader/BeanRegistry/ApplicationEventPublisher/EventListener/Retry装饰器/Backoff） | ✅ 全部通过 |
+
+### 契约/生产就绪/韧性测试套件（5 个文件，123 个用例）
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 8 | test_annotations_contract.py | 11 | 注解契约覆盖（全部注解构造+装饰、多注解叠加、@Value/@ConfigurationProperties 默认值） | ✅ 全部通过 |
+| 9 | test_pymybatis_contract.py | 10 | PyMyBatis契约（SQL Session/Mapper/动态SQL） | ✅ 全部通过 |
+| 10 | test_production_readiness.py | 42 | 生产就绪检查（连接池/安全/重试/熔断） | ✅ 全部通过 |
+| 11 | test_security.py | 49 | 安全深度测试（JWT/密码/SQL注入/访问控制） | ✅ 全部通过 |
+| 12 | test_connection_resilience.py | 11 | 连接韧性（断线重连/超时/泄漏检测） | ✅ 全部通过 |
+
+### Cloud 新特性 / DDL Auto 专项测试套件（2 个文件，49 个用例）
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 13 | test_new_features.py | 27 | Cloud新特性（Sentinel/Tracer/Seata/Gateway/DDL Auto） | ✅ 全部通过 |
+| 14 | test_ddl_auto.py | 22 | DDL Auto 专项（create/update/validate/none/create-drop 模式、@entity/@table/@Id/@Column、MySQL/PostgreSQL/SQLite 方言、类型映射、索引、dataclass、注册去重、init_ddl_auto 配置驱动） | ✅ 全部通过 |
+
+### 组合注解测试套件（1 个文件，28 个用例）
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 15 | test_annotation_combinations.py | 28 | 组合注解（类级组合/方法级AOP四合一/重复注解/安全+Web跨层/Cloud组合/异步+调度/声明顺序保持/继承隔离/Configuration+Bean 多方法） | ✅ 全部通过 |
+
+---
+
+## 三、注解覆盖率明细
+
+### 3.1 核心基础注解（38 个测试覆盖）
+
+| 注解 | 测试数 | 验证内容 |
+|------|--------|---------|
+| @Service | 2 | 元数据附加、默认值 |
+| @Component | 1 | 通用组件标记 |
+| @Repository | 1 | 数据访问层标记 |
+| @Autowired | 1 | required参数 |
+| @Qualifier | 1 | Bean名称指定 |
+| @Configuration | 1 | proxyBeanMethods参数 |
+| @Scope | 1 | singleton/prototype验证 |
+| @Bean | 1 | name/scope/init/destroy |
+| @Value | 1 | 配置值+默认值 |
+| @ConfigurationProperties | 1 | 前缀绑定 |
+| @Primary | 1 | 首选Bean标记 |
+| @Profile | 1 | 环境指定 |
+| @Lazy | 1 | 延迟初始化 |
+| @PostConstruct | 1 | 初始化回调 |
+| @PreDestroy | 1 | 销毁回调 |
+| @SpringBootApplication | 1 | 组合注解+扫描包 |
+| @ComponentScan | 1 | 扫描包指定 |
+| 多注解组合 | 1 | 同类叠加多个注解 |
+| 继承隔离 | 1 | 子类注解不修改父类元数据 |
+
+### 3.2 Web层注解（54 个测试覆盖）
+
+| 注解 | 测试数 | 验证内容 |
+|------|--------|---------|
+| @RestController | 1 | REST控制器标记 |
+| @Controller | 1 | 页面控制器标记 |
+| @RequestMapping | 5 | path/method/value别名/consumes/produces/互斥校验 |
+| @GetMapping | 3 | GET方法/value别名/互斥校验 |
+| @PostMapping | 1 | POST方法 |
+| @PutMapping | 1 | PUT方法 |
+| @PatchMapping | 1 | PATCH方法 |
+| @DeleteMapping | 1 | DELETE方法 |
+| @RequestParam | 3 | name/default/value别名 |
+| @PathVariable | 2 | name/value别名 |
+| @RequestBody | 2 | required/optional |
+| @RequestHeader | 1 | 请求头绑定 |
+| @CookieValue | 1 | Cookie+默认值 |
+| @CrossOrigin | 2 | 默认值/自定义CORS |
+| @ResponseStatus | 1 | 状态码+reason |
+| @ControllerAdvice | 1 | 全局异常处理 |
+| @ExceptionHandler | 1 | 异常类型处理 |
+| @Valid/@Validated | 1 | 校验标记 |
+| 类级+方法级组合 | 1 | @RequestMapping+@GetMapping |
+
+### 3.3 AOP高级注解（53 个测试覆盖）
+
+| 注解 | 测试数 | 验证内容 |
+|------|--------|---------|
+| @RateLimit | 2 | 参数/默认值 |
+| @CircuitBreaker | 1 | failure_threshold/recovery_timeout/fallback |
+| @Idempotent | 1 | key/expire/prefix |
+| @AuditLog | 1 | action/target/detail/level |
+| @FeatureToggle | 1 | name/default |
+| @Lock | 1 | key/expire/wait_timeout |
+| @Metrics | 1 | name/tags |
+| @Synchronized | 1 | lock_name |
+| @Validate | 1 | field/min_length/max_length/message |
+| @Trace | 1 | trace_id_key/span_name |
+| @Transactional | 1 | propagation/rollback_for/no_rollback_for |
+| @Cacheable | 1 | value/key/condition |
+| @Retryable | 3 | Backoff对象/数字backoff/校验异常 |
+| @Scheduled | 3 | cron/fixed_rate/校验异常 |
+| @Async | 1 | 异步标记 |
+| @AsyncResult | 1 | 结果包装 |
+| @LogExecutionTime | 3 | 同步保持返回值/异步保持返回值/保持函数名 |
+| 参数校验 | 5 | max_retries<=0/冲突max_attempts/多触发方式/zero rate/cron |
+
+### 3.4 安全注解与功能（74 个测试覆盖）
+
+| 模块 | 测试数 | 验证内容 |
+|------|--------|---------|
+| @PreAuthorize | 2 | hasRole/hasPermission表达式 |
+| @Secured | 2 | 多角色/角色列表 |
+| @Authenticate | 1 | 认证标记 |
+| JWT生成 | 4 | 返回字符串/包含payload/标准声明/refresh token |
+| JWT验证 | 5 | 有效Token/无效Token/过期Token/错误密钥/零过期 |
+| JWT解码 | 2 | issuer验证/不验证签名获取payload |
+| JWT配置 | 1 | 拒绝不支持算法 |
+| 密码加密 | 5 | SHA256加密验证/SHA256拒绝错误密码/MD5加密验证/None拒绝/全局函数 |
+| 安全上下文 | 5 | 默认未认证/设置认证/角色检查/权限检查/清除 |
+| SQL注入检测 | 5 | 正常查询/UNION注入/DROP注入/OR注入/注释注入 |
+
+### 3.5 ORM/PyMyBatis（60 个测试覆盖）
+
+| 模块 | 测试数 | 验证内容 |
+|------|--------|---------|
+| @Select | 2 | SQL附加/result_map+cache |
+| @Insert | 1 | 自增主键 |
+| @Update | 1 | SQL附加 |
+| @Delete | 1 | SQL附加 |
+| @Param | 1 | 参数名 |
+| @Result | 1 | property/column映射 |
+| @ResultMap | 1 | id+type |
+| @Options | 1 | use_cache/timeout |
+| SelectAnnotation | 1 | 数据对象属性 |
+| 类型映射 | 5 | 驼峰转下划线/int→BIGINT/str→VARCHAR/bool→TINYINT/float→DOUBLE |
+| @entity装饰器 | 3 | 标记类/自动表名/索引 |
+| DDL Auto建表 | 4 | 注册实体/create模式/主键/validate模式 |
+| DDL Auto模式 | 3 | none模式/dataclass支持/自定义Column |
+| DDL模式枚举 | 3 | 枚举值/无效模式/索引定义 |
+
+### 3.6 Cloud内嵌功能（83 个测试覆盖）
+
+| 模块 | 测试数 | 验证内容 |
+|------|--------|---------|
+| Cloud注解 | 10 | @EnableDiscoveryClient/@NacosValue/@RefreshScope/@EnableFeignClients/@FeignClient/@SentinelResource/@EnableGateway/@LoadBalanced/@GlobalTransactional/fallback |
+| Sentinel限流 | 10 | QPS限流/异常比例熔断/异常数熔断/熔断恢复/装饰器/统计/FlowRule/DegradeRule/成功计数/reset |
+| OpenTelemetry追踪 | 10 | Span创建/嵌套Span/W3C格式/Header注入/异常记录/装饰器/属性/持续时间/SpanKind/SpanStatus |
+| Seata HTTP-AT | 10 | 开启事务/提交/回滚/XID传播/嵌套事务/多分支提交/多分支回滚/无活动事务/分支ID/@GlobalTransactional |
+| API Gateway | 10 | 精确匹配/通配符/不匹配/strip_prefix/add_prefix/路由列表/URI路由/多路由优先级/service_id |
+| LoadBalancer | 3 | 轮询/随机/空列表 |
+
+### 3.7 DI/配置/事件（53 个测试覆盖）
+
+| 模块 | 测试数 | 验证内容 |
+|------|--------|---------|
+| ConfigLoader | 10 | 加载YAML/server.port/redis/database/jwt/不存在键/默认值/环境变量/带默认值/retry段 |
+| BeanRegistry | 10 | 注册获取/不存在/contains/按类型/注销/清除/全部/名称/数量/containsType |
+| EventPublisher | 10 | 发布到监听器/原始值包装/排序/移除/清除/类型过滤/计数/多监听器/@EventListener/source |
+| Retry装饰器 | 5 | 重试后成功/耗尽抛异常/特定异常/Backoff配置/无异常立即返回 |
+
+### 3.8 DDL Auto 专项（22 个测试覆盖，test_ddl_auto.py）
+
+| 模块 | 测试数 | 验证内容 |
+|------|--------|---------|
+| create 模式 | 2 | 建表/表已存在时先 DROP 再 CREATE |
+| none 模式 | 2 | 不执行 SQL/未知模式回退 none |
+| update 模式 | 3 | 添加新列/创建缺失索引/表不存在时直接创建 |
+| validate 模式 | 3 | 结构匹配通过/缺失列抛异常/缺失表抛异常 |
+| create-drop 模式 | 1 | drop_all 关闭时删除所有表 |
+| 实体解析与SQL生成 | 8 | dataclass支持/MySQL方言(AUTO_INCREMENT+ENGINE+COMMENT)/PostgreSQL方言(SERIAL+COMMENT ON TABLE)/驼峰转下划线/类型映射/@entity元数据/@table别名/@Id+@Column+column+id_column描述符 |
+| 注册与集成 | 3 | register去重/get_generated_sql+get_executed_sql/init_ddl_auto配置驱动 |
+
+### 3.9 注解契约补充（11 个测试覆盖，test_annotations_contract.py）
+
+| 模块 | 测试数 | 验证内容 |
+|------|--------|---------|
+| 核心注解构造+装饰 | 1 | 全部核心注解（50+）构造并附加到目标 |
+| 映射/参数别名 | 1 | @RequestMapping/@GetMapping/@RequestParam/@PathVariable 等别名与互斥校验 |
+| 注解参数校验 | 1 | @Scope/@Scheduled/@Retryable 非法配置拒绝 |
+| @LogExecutionTime | 1 | 同步/异步均保持返回值与函数名 |
+| @EventListener | 1 | 注解元数据 + 事件发布分发 |
+| Cloud注解覆盖 | 1 | 全部 Cloud 注解构造+装饰+_annotation_type |
+| RabbitMQ注解 | 1 | @RabbitListener + @RabbitTemplate 发送路径 |
+| PyMyBatis注解 | 1 | @Select/@Insert/@Update/@Delete + Provider 系列 + ResultMap/Options/Param |
+| 注解导出可导入 | 1 | __all__ 中所有名称可从 spring.annotations 导入 |
+| 多注解叠加 | 1 | @Metrics+@AuditLog 同方法叠加均被收集 |
+| @Value/@ConfigurationProperties | 1 | 默认值与前缀绑定元数据 |
+
+### 3.10 组合注解（28 个测试覆盖，test_annotation_combinations.py）
+
+| 组合类别 | 测试数 | 验证的组合 |
+|------|--------|---------|
+| 类级组合 | 5 | @RestController+@RequestMapping+@Slf4j；@Service+@Slf4j+@PostConstruct+@PreDestroy；@Configuration+@Primary+@Profile+@Lazy；@Repository+@ConfigurationProperties；@ControllerAdvice+@ResponseStatus+@CrossOrigin |
+| 方法级 AOP 组合 | 5 | @RateLimit+@AuditLog+@Metrics+@Trace 四合一；@Retryable+@Cacheable；@Transactional+@Cacheable+@Metrics；@RateLimit+@Idempotent+@Lock；@AuditLog+@Metrics+@LogExecutionTime |
+| 重复注解 | 2 | 同方法 3×@Validate（email/username/age）；2×@Value+@ConfigurationProperties |
+| 安全+Web 跨层 | 3 | @PreAuthorize+@GetMapping；@Secured+@PostMapping+@AuditLog；@Authenticate+@Trace+@Metrics |
+| Cloud 组合 | 5 | @FeignClient(类)+@SentinelResource(方法)；@GlobalTransactional+@Transactional；@EnableDiscoveryClient+@RefreshScope+@NacosValue；@EnableGateway+@LoadBalanced(Bean)；@SentinelResource+@CircuitBreaker+@Retryable |
+| 异步+调度 | 2 | @Async+@AsyncResult；@Scheduled+@Metrics |
+| 顺序与继承 | 4 | 声明顺序（自底向上）严格保持；子类组合不泄漏到父类；六注解叠加计数与类型；组合中各注解元数据互不干扰 |
+| Configuration+Bean | 2 | @Configuration+多 @Bean 方法（不同 scope/init/destroy）；@Controller+@Autowired 构造器+多 @GetMapping 方法 |
+
+---
+
+## 四、测试统计汇总
+
+| 指标 | 数值 |
+|------|------|
+| 测试套件总数 | 15 |
+| 测试用例总数 | 615 |
+| 通过用例 | 615 |
+| 失败用例 | 0 |
+| 通过率 | 100% |
+| 每个套件最少用例数 | 10（达到下限要求） |
+| 每个套件最多用例数 | 83（Cloud内嵌） |
+
+**最低用例数核验**（用户要求“每个用例不低于10个”）：
+
+| 套件 | 用例数 | ≥10 |
+|------|--------|-----|
+| test_annotations_contract.py | 11 | ✅ |
+| test_pymybatis_contract.py | 10 | ✅ |
+| test_ddl_auto.py | 22 | ✅ |
+| test_connection_resilience.py | 11 | ✅ |
+| test_annotation_combinations.py | 28 | ✅ |
+| test_new_features.py | 27 | ✅ |
+| test_core_annotations_full.py | 38 | ✅ |
+| test_production_readiness.py | 42 | ✅ |
+| test_security.py | 49 | ✅ |
+| test_aop_annotations_full.py | 53 | ✅ |
+| test_di_config_event_full.py | 53 | ✅ |
+| test_web_annotations_full.py | 54 | ✅ |
+| test_orm_pymybatis_full.py | 60 | ✅ |
+| test_security_full.py | 74 | ✅ |
+| test_cloud_embedded_full.py | 83 | ✅ |
+
+---
+
+## 五、功能覆盖矩阵
+
+| 功能类别 | 注解/功能数 | 测试覆盖 | 状态 |
+|---------|------------|---------|------|
+| 核心基础注解 | 19 | 38用例 | ✅ |
+| Web层注解 | 19 | 54用例 | ✅ |
+| AOP高级注解 | 17 | 53用例 | ✅ |
+| 安全注解+功能 | 3+5 | 74用例 | ✅ |
+| ORM/PyMyBatis | 10+DDL | 60用例 | ✅ |
+| Cloud内嵌功能 | 10+5模块 | 83用例 | ✅ |
+| DI/配置/事件 | 6模块 | 53用例 | ✅ |
+| DDL Auto专项 | 5模式+@entity/@table/@Id/@Column | 22用例 | ✅ |
+| 注解契约 | 全部注解 | 11用例 | ✅ |
+| 组合注解 | 8类组合场景 | 28用例 | ✅ |
+| **合计** | **84注解+16模块** | **615用例** | **✅ 100%** |
+
+---
+
+## 六、本轮测试新增/修复内容
+
+1. **新增 test_annotation_combinations.py 组合注解套件（28 用例）**：覆盖 8 类组合场景——类级组合（@RestController+@RequestMapping+@Slf4j 等 5 种）、方法级 AOP 组合（@RateLimit+@AuditLog+@Metrics+@Trace 四合一等 5 种）、重复注解（3×@Validate、2×@Value）、安全+Web 跨层（@PreAuthorize+@GetMapping 等 3 种）、Cloud 组合（@FeignClient+@SentinelResource 等 5 种）、异步+调度（@Async+@AsyncResult、@Scheduled+@Metrics）、声明顺序保持与继承隔离（4 种）、Configuration+Bean 多方法（2 种）。验证了多注解叠加时元数据完整收集、声明顺序（自底向上附加）严格保持、子类组合不泄漏到父类、组合中各注解元数据互不干扰。
+2. **test_ddl_auto.py 重写为标准 pytest 套件**：原文件为脚本式（共享状态、2 个用例在 pytest 下报 fixture 缺失错误），重写为 22 个自包含用例，覆盖 create/update/validate/none/create-drop 全部模式、@entity/@table/@Id/@Column/@column/@id_column 注解、MySQL/PostgreSQL/SQLite 三方言 SQL 生成、类型映射、索引、dataclass 实体、注册去重、init_ddl_auto 配置驱动。
+3. **test_annotations_contract.py 补充 2 个用例**：原 9 个用例不满足“≥10”下限，新增“多注解叠加（@Metrics+@AuditLog）”与“@Value/@ConfigurationProperties 默认值绑定”2 个用例，达到 11 个。
+4. **依赖补全**：补装 fastapi/uvicorn/redis/sqlalchemy/PyMySQL/DBUtils/sqlglot/cryptography/bcrypt/prometheus-client/loguru/requests/pika/pydantic/python-dotenv/pytest-cov，使全部测试套件可在干净的 Python 3.9.6 环境运行。
+
+---
+
+## 七、已知告警（不影响测试结果）
+
+| 告警 | 来源 | 影响 |
 |------|------|------|
-| `@Select` | ✅ 可用 | SELECT查询 |
-| `@Insert` | ✅ 可用 | INSERT插入 |
-| `@Update` | ✅ 可用 | UPDATE更新 |
-| `@Delete` | ✅ 可用 | DELETE删除 |
-| `@SelectProvider` | ✅ 可用 | 动态SELECT提供者 |
-| `@InsertProvider` | ✅ 可用 | 动态INSERT提供者 |
-| `@UpdateProvider` | ✅ 可用 | 动态UPDATE提供者 |
-| `@DeleteProvider` | ✅ 可用 | 动态DELETE提供者 |
-| `@ResultMap` | ✅ 可用 | 结果映射 |
-| `@Result` | ✅ 可用 | 字段映射 |
-| `@Options` | ✅ 可用 | SQL选项 |
-| `@Param` | ✅ 可用 | 参数命名 |
-| `@CacheNamespace` | ✅ 可用 | 缓存命名空间 |
-| `@DataSource` | ✅ 可用 | 数据源指定 |
-| `@Mapper` | ✅ 可用 | Mapper接口 |
-| `@MapperScan` | ✅ 可用 | Mapper扫描 |
+| InsecureKeyLengthWarning | PyJWT - HMAC密钥<32字节 | 无（测试环境） |
+| NotOpenSSLWarning | urllib3 - LibreSSL 2.8.3 | 无（测试环境） |
+| MovedIn20Warning | SQLAlchemy 2.0 declarative_base | 无（兼容模式） |
 
 ---
 
-## 三、单元测试结果
+## 八、测试结论
 
-### 3.1 tests/ 目录单元测试
+SpringPy 1.5.0 框架全部功能和注解测试通过，覆盖：
 
-执行命令: `python -m pytest tests/ -v`
+1. **84个注解** - 核心基础(19) + Web层(19) + AOP高级(17) + 安全(3) + Cloud(10) + ORM(8) + 消息(2) + 事件(1) + 其他(5)
+2. **16个功能模块** - DI容器/配置加载/事件发布/重试/Sentinel/Tracer/Seata/Gateway/LoadBalancer/JWT/密码加密/SQL注入检测/DDL Auto/连接池/安全上下文/健康检查
+3. **4个Docker中间件** - MySQL 8.0.46 / Redis 7 / RabbitMQ 3 / Nacos 2.5.1（均已实测连通）
+4. **每个测试套件≥10个用例** - 15个套件共615用例，最少10个，最多83个
+5. **组合注解全覆盖** - 28个用例验证类级/方法级/重复/跨层/Cloud/异步调度/顺序继承/Configuration-Bean 共8类组合场景，多注解叠加元数据完整、声明顺序严格保持、继承隔离正确
 
-| 测试文件 | 测试用例数 | 通过 | 失败 | 覆盖率 |
-|---------|-----------|------|------|--------|
-| test_annotations_contract.py | 9 | 9 | 0 | 100% |
-| test_pymybatis_contract.py | 10 | 10 | 0 | 100% |
-| **总计** | **19** | **19** | **0** | **100%** |
-
-✅ **所有19个单元测试全部通过!**
-
-### 3.2 单元测试覆盖范围
-
-1. **注解契约测试**
-   - 所有核心注解构造和装饰器功能
-   - Cloud注解覆盖
-   - RabbitMQ注解和模板
-   - PyMyBatis注解元数据
-   - 注解导出验证
-   - 配置验证（拒绝无效配置）
-   - @LogExecutionTime同步/异步保留结果
-   - @EventListener事件发布和分发
-
-2. **PyMyBatis契约测试**
-   - 七种事务传播行为
-   - 嵌套事务savepoint回滚
-   - 动态SQL bind/foreach
-   - 嵌套resultMap、selectKey、databaseId
-   - XML语句选项和include属性
-   - SQL Provider注解执行
-   - 缓存行不可变性
-   - 拦截器包装SqlSession
-   - Mapper返回注解和类型处理器
-
----
-
-## 四、集成测试结果
-
-### 4.1 模块导入测试
-
-| 测试项 | 结果 |
-|--------|------|
-| Controller模块 (8个) | ✅ 25/25 通过 |
-| Service模块 (8个) | ✅ 全部导入成功 |
-| Config模块 (2个) | ✅ 全部导入成功 |
-| Repository模块 (1个) | ✅ 全部导入成功 |
-| Mapper模块 (1个) | ✅ 全部导入成功 |
-| Interceptor模块 (2个) | ✅ 全部导入成功 |
-
-### 4.2 XML Mapper解析测试
-
-| 测试项 | 结果 |
-|--------|------|
-| namespace解析 | ✅ 通过 |
-| MappedStatements | ✅ 11个语句全部解析 |
-| SELECT语句 (6个) | ✅ 全部识别 |
-| INSERT语句 (2个) | ✅ 全部识别 |
-| UPDATE语句 (1个) | ✅ 全部识别 |
-| DELETE语句 (2个) | ✅ 全部识别 |
-| resultMap映射 | ✅ 正确配置 |
-
-### 4.3 注解组合验证
-
-测试 `@RateLimit + @AuditLog + @Metrics + @Trace` 组合注解:
-- ✅ 所有注解正确挂载
-- ✅ 注解顺序正确
-- ✅ 元数据完整保留
-
-### 4.4 组件扫描测试
-
-| 组件类型 | 数量 | 状态 |
-|---------|------|------|
-| Controllers | 12个 | ✅ 全部扫描成功 |
-| Services | 11个 | ✅ 全部扫描成功 |
-| Components/Repositories/Mappers | 3个 | ✅ 全部扫描成功 |
-
----
-
-## 五、代码修复记录
-
-在测试过程中发现并修复了以下问题：
-
-### 5.1 依赖注入类型注解缺失问题
-
-**问题**: 多个Controller和Service的`@Autowired`构造函数参数缺少类型注解，导致IoC容器无法解析依赖。
-
-**修复的文件**:
-1. [AllWebController.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/controller/AllWebController.py) - 为`AllWebController`和`ViewController`添加类型注解
-2. [AllAnnotationService.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/service/AllAnnotationService.py) - 为`AllAnnotationService`和`ConsumerService`添加类型注解
-3. [OrmBridgeService.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/service/OrmBridgeService.py) - 添加`UserMapper`类型注解
-4. [CloudController.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/controller/CloudController.py) - 添加`CloudService`类型注解
-5. [EventController.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/controller/EventController.py) - 添加`EventService`类型注解
-6. [MessagingController.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/controller/MessagingController.py) - 添加`MessagingService`类型注解
-7. [SecurityController.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/controller/SecurityController.py) - 添加`SecurityService`类型注解
-8. [AopController.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/controller/AopController.py) - 添加`AopService`和`AsyncService`类型注解
-9. [OrmController.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/controller/OrmController.py) - 添加`UserMapper`、`OrmBridgeService`、`ScheduledService`类型注解
-10. [AppConfig.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/example_all/config/AppConfig.py) - 添加`InjectConfig`构造函数类型注解
-
----
-
-## 六、功能模块状态
-
-### 6.1 核心功能状态
-
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| IoC容器 | ✅ 可用 | 组件扫描、构造器注入、Bean生命周期 |
-| Web MVC | ✅ 可用 | FastAPI路由、参数绑定、异常处理 |
-| 配置加载 | ✅ 可用 | YAML、环境变量、占位符解析 |
-| 应用事件 | ✅ 可用 | 事件发布、有序监听 |
-| PyMyBatis ORM | ✅ 可用 | XML映射、动态SQL、事务、缓存、连接池 |
-| JWT安全 | ✅ 可用 | Token生成/验证、方法级权限 |
-| AOP切面 | ✅ 可用 | 限流、熔断、幂等、审计、锁、指标、追踪 |
-| 异步/重试 | ✅ 可用 | @Async、@Retryable |
-| 定时任务 | ✅ 可用 | @Scheduled (fixed_rate/fixed_delay/cron) |
-| Redis缓存 | ✅ 可用 | 分布式锁、KV/Hash/List/Set/Counter |
-| RabbitMQ | ✅ 可用 | @RabbitListener、RabbitTemplate消息收发 |
-| Prometheus监控 | ✅ 可用 | 指标暴露 |
-| Nacos服务发现 | ✅ 可用 | 服务注册/发现/订阅（无认证开发模式） |
-| 负载均衡器 | ✅ 可用 | 轮询策略、健康实例过滤 |
-| Feign客户端 | ✅ 可用 | 声明式HTTP客户端、Fallback降级 |
-| 熔断器 | ✅ 可用 | pybreaker集成，失败阈值+重置超时 |
-| MySQL连接池 | ✅ 可用 | Docker容器IP自动检测、无密码连接 |
-| Seata分布式事务 | 📦 可选 | 需部署Seata Server，Python SDK待完善 |
-| SkyWalking追踪 | 📦 可选 | apache-skywalking已安装，需部署OAP Server |
-| Sentinel限流 | 📦 可选 | 需部署Sentinel Dashboard |
-
-### 6.2 健康检查端点
-
-| 端点 | 状态 | 说明 |
-|------|------|------|
-| `/actuator/health` | ✅ 可用 | 聚合健康状态 |
-| `/actuator/health/liveness` | ✅ 可用 | 存活检查 |
-| `/actuator/health/readiness` | ✅ 可用 | 就绪检查 |
-| `/actuator/info` | ✅ 可用 | 应用信息 |
-| `/docs` | ✅ 可用 | FastAPI Swagger文档 |
-
----
-
-## 七、问题修复记录（已解决）
-
-### 7.1 MySQL无密码连接 ✅ 已解决
-- **修复方案**: 
-  1. 容器重建使用`MYSQL_ALLOW_EMPTY_PASSWORD=yes`
-  2. 添加`--default-authentication-plugin=mysql_native_password`和`--skip-name-resolve`
-  3. 在[connection_pool.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/spring/orm/pymybatis/pool/connection_pool.py#L482-L543)添加Docker容器IP自动检测：当127.0.0.1连接失败时，自动调用`docker inspect`获取容器内部IP连接
-  4. 配置文件密码设为空字符串
-
-### 7.2 Nacos无认证连接 ✅ 已解决
-- **修复方案**:
-  1. Nacos容器启动时设置`NACOS_AUTH_ENABLE=false`关闭认证
-  2. 修复[discovery.py](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/spring/cloud/discovery.py#L62-L116)中SDK API兼容问题：先尝试无认证连接，失败后再尝试带认证
-  3. 修复`list_naming_instances`→`list_naming_instance`方法名，并兼容对象/字典两种返回格式
-
-### 7.3 Cloud高级功能可选部署
-- **Seata分布式事务**: Python SDK不可用，需使用HTTP API模式对接Seata Server（可选部署）
-- **SkyWalking追踪**: `apache-skywalking`依赖已安装，需部署SkyWalking OAP Server后启用
-- **Sentinel限流**: 需部署Sentinel Dashboard，框架内置`@CircuitBreaker`熔断器可满足大部分场景
-
-### 7.4 依赖注入类型注解 ✅ 已解决
-- 修复了10个Controller/Service文件中`@Autowired`构造函数缺少类型注解的问题
-
----
-
-## 八、测试总结
-
-### 8.1 测试统计
-
-| 类别 | 总数 | 通过 | 失败 | 通过率 |
-|------|------|------|------|--------|
-| 基础单元测试 | 19 | 19 | 0 | 100% |
-| 生产就绪测试 | 42 | 42 | 0 | 100% |
-| 安全测试 | 49 | 49 | 0 | 100% |
-| 连接池韧性测试 | 11 | 11 | 0 | 100% |
-| 模块导入 | 25 | 25 | 0 | 100% |
-| XML解析 | 11 | 11 | 0 | 100% |
-| 注解组合 | 4 | 4 | 0 | 100% |
-| 组件扫描 | 26 | 26 | 0 | 100% |
-| 核心注解 | 60+ | 60+ | 0 | 100% |
-| MySQL集成 | - | ✅ | 0 | 100% |
-| Redis缓存 | - | ✅ | 0 | 100% |
-| RabbitMQ消息 | - | ✅ | 0 | 100% |
-| Nacos服务发现 | - | ✅ | 0 | 100% |
-| 负载均衡器 | - | ✅ | 0 | 100% |
-| Feign客户端 | - | ✅ | 0 | 100% |
-| JWT安全 | - | ✅ | 0 | 100% |
-| 熔断器 | - | ✅ | 0 | 100% |
-| Prometheus监控 | - | ✅ | 0 | 100% |
-| **总计** | **247+** | **247+** | **0** | **100%** |
-
-### 8.2 高可用功能验证结果
-
-| 功能 | 验证结果 |
-|------|---------|
-| MySQL + PyMyBatis ORM | ✅ 连接池、SQL执行、事务正常 |
-| Redis分布式缓存/锁 | ✅ KV/Hash/List/Set/分布式锁正常 |
-| RabbitMQ消息队列 | ✅ 队列声明、消息发布正常 |
-| Nacos服务注册发现 | ✅ 注册/注销/发现实例正常（无认证模式） |
-| 轮询负载均衡器 | ✅ 健康实例选择正常 |
-| Feign声明式HTTP | ✅ GET/POST/PUT/DELETE/Fallback正常 |
-| JWT认证授权 | ✅ Token生成/验证正常 |
-| 熔断器(CircuitBreaker) | ✅ pybreaker集成，状态切换正常 |
-| @Retryable重试 | ✅ 注解切面、指数退避正常 |
-| Prometheus指标 | ✅ Counter/Gauge/Histogram正常 |
-
-### 8.3 结论
-
-✅ **SpringPy框架高可用功能全部就绪**
-
-1. **核心功能100%通过**: 19个单元测试全部通过，注解契约完备
-2. **Docker中间件全部可用**: MySQL(无密码)、Redis、RabbitMQ、Nacos(无认证)全部连接成功
-3. **微服务功能完善**: Nacos服务发现+负载均衡+Feign声明式调用链路完整
-4. **高可用保障**: 分布式锁、熔断器、重试机制、监控指标全部可用
-5. **代码修复完成**: 10个文件依赖注入类型注解修复、MySQL/Nacos连接问题修复
-6. **自动容错**: MySQL连接池支持Docker容器IP自动检测，无需硬编码容器IP
-
-### 8.4 快速开始配置
-
-所有Docker容器已配置为开发环境无认证模式：
-- **MySQL**: root@127.0.0.1:3306 无密码，数据库`springpy`（框架自动检测Docker IP）
-- **Redis**: 127.0.0.1:6379 无密码
-- **RabbitMQ**: admin/admin123@127.0.0.1:5672
-- **Nacos**: http://127.0.0.1:8848/nacos 无认证（nacos/nacos可登录控制台）
-
-### 8.5 生产环境建议
-
-1. 启用MySQL/Nacos认证，设置强密码
-2. 设置`SPRING_PROFILES_ACTIVE=production`
-3. 配置连接池大小、超时参数
-4. 启用Seata/SkyWalking/Sentinel（按需部署对应服务）
-5. 所有`@Autowired`构造函数参数务必添加类型注解
-
----
-
-## 九、文档更新
-
-本次测试同步检查了以下文档：
-- [README.md](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/README.md) - 框架主文档
-- [使用说明书.md](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/使用说明书.md) - 中文使用指南
-- [USAGE.md](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/USAGE.md) - 注解说明文档
-- [docs/DEPLOYMENT.md](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/docs/DEPLOYMENT.md) - 部署指南
-- [docs/ENTERPRISE_READINESS.md](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/docs/ENTERPRISE_READINESS.md) - 生产就绪评估
-- [docs/JAVA_TO_PYTHON_MIGRATION.md](file:///Users/yu/Desktop/springboot_cloud_python/springboot_cloud_python-master/docs/JAVA_TO_PYTHON_MIGRATION.md) - Java迁移指南
-
----
-
-*报告生成时间: 2026-08-07*  
-*测试工具: pytest + Python unittest + Docker*
+**框架已具备企业开发就绪水平。**

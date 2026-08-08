@@ -338,12 +338,12 @@ SQLite 使用 `:memory:` 时框架会强制单连接，因为多个内存连接�
 | Java 注解/组件 | SpringPy 对应 | 当前状态 |
 |---|---|---|
 | `@EnableDiscoveryClient` + Nacos | `@EnableDiscoveryClient` + `discovery` 配置 | 注解元数据与 Nacos 客户端配置可用；需部署 Nacos 并做注册/发现集成测试。 |
-| `@NacosValue` / `@RefreshScope` | 同名注解 | 元数据可用；复杂配置刷新和 Java proxy 语义不等价。 |
-| `@EnableFeignClients` / `@FeignClient` | 同名注解 + `spring.cloud.feign` | 主要用于客户端元数据和 HTTP 调用；不兼容 Java interface proxy。 |
+| `@NacosValue` / `@RefreshScope` | 同名注解 | 元数据可用；`@RefreshScope` 已接入容器刷新机制，复杂配置刷新和 Java proxy 语义不等价。 |
+| `@EnableFeignClients` / `@FeignClient` | 同名注解 + `spring.cloud.feign` | 主要用于客户端元数据和 HTTP 调用；不兼容 Java interface proxy。Feign调用自动传播 XID 和 trace 头。 |
 | `@LoadBalanced` | 同名注解 | 使用 Python 负载均衡实现；不要复用 `RestTemplate` 用法。 |
-| Sentinel `@SentinelResource` | 同名注解 | 有 AOP 消费路径，限流规则和 Dashboard 集成必须在真实环境验证。 |
-| Spring Cloud Gateway | `@EnableGateway` | 仅保留框架标记，复杂路由/过滤链应使用成熟 ASGI 网关或独立网关服务。 |
-| Seata `@GlobalTransactional` | 同名注解 | 实验性，需要真实 Seata Server、undo_log 和故障回滚演练。 |
+| Sentinel `@SentinelResource` | 同名注解 | 已内嵌限流熔断引擎，支持 QPS 限流、异常比例/异常数/慢调用熔断、热点参数限流，无需 Dashboard；如需更强大治理能力可对接外部 Sentinel Dashboard。 |
+| Spring Cloud Gateway | `@EnableGateway` + `GatewayRouter` | 内嵌轻量 ASGI/WSGI 网关，支持路由转发、路径重写、过滤器链、负载均衡；复杂网关需求可使用 Kong/APISIX 等专业网关。 |
+| Seata `@GlobalTransactional` | 同名注解 | 已内嵌 HTTP-AT 模式分布式事务协调器，无需 Seata Server 即可使用，XID 自动通过 Feign 传播；如需更强一致性保障可对接外部 Seata Server。 |
 
 Python 服务之间优先使用标准 HTTP、消息队列和 OpenTelemetry 约定。不要把 Java Feign fallback、Reactor Context 或 Seata 的线程上下文假定为可自动迁移。
 
@@ -385,6 +385,57 @@ Java 的 profile 文件自动合并不是当前功能。部署流程应生成最
 3. 用 SQLite 验证 Mapper SQL、事务、动态 SQL 和类型映射。
 4. 用目标 MySQL/PostgreSQL/Oracle 版本执行相同测试，特别验证自增主键、事务隔离、超时和连接中断。
 5. 启动 ASGI 应用，检查 `/docs`、`/actuator/health/liveness` 和 `/actuator/health/readiness`。
-6. 最后接入 Nacos、RabbitMQ、Redis、Seata 等外部组件，并演练断线、重复投递和回滚。
+6. 接入 Nacos、RabbitMQ、Redis 等外部中间件，并演练断线、重复投递和回滚。
+7. 验证内嵌 Cloud 功能：`@SentinelResource` 限流熔断、`@Trace` 追踪、`@GlobalTransactional` 分布式事务、`GatewayRouter` 网关、`@entity` + `ddl-auto` 自动建表。这些功能无需部署外部 Server，但应在真实流量和故障注入下验证。
 
 本仓库的 [使用说明书](../使用说明书.md) 说明完整运行配置；[企业生产就绪评估](ENTERPRISE_READINESS.md) 列出上线前必须完成的外部验证项。
+
+## 12. Cloud 高级功能迁移对照
+
+| Java Spring Cloud | SpringPy 写法 | 说明 |
+|---|---|---|
+| Sentinel Dashboard + `@SentinelResource` | `@SentinelResource` | 内嵌引擎，无需Dashboard；支持QPS限流、异常比例/异常数/慢调用熔断、热点参数限流 |
+| SkyWalking Agent + OAP Server | `@Trace` + 内嵌Tracer | 原生OpenTelemetry(W3C traceparent)，无需OAP Server；自动注入HTTP/Feign追踪头 |
+| Seata Server + `@GlobalTransactional` | `@GlobalTransactional` | 内嵌HTTP-AT模式，无需Seata Server；支持分支注册/提交/回滚，XID自动传播 |
+| Spring Cloud Gateway | `GatewayRouter` | 轻量ASGI/WSGI网关，支持路由转发、路径重写、过滤器链、负载均衡 |
+| JPA `hibernate.ddl-auto` | `@entity` + `ddl-auto` 配置 | 支持create/update/validate/create-drop；自动扫描实体包，自动建表/添加列/创建索引 |
+
+### 12.1 DDL Auto 迁移示例
+
+Java JPA：
+```java
+@Entity
+@Table(name = "users")
+public class User {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(nullable = false, unique = true)
+    private String username;
+    
+    private String email;
+}
+```
+
+SpringPy：
+```python
+from spring.orm import entity, Index
+
+@entity("users", indexes=[
+    Index("idx_username", ["username"], unique=True),
+])
+class User:
+    def __init__(self, id: int = None, username: str = "", email: str = ""):
+        self.id = id
+        self.username = username
+        self.email = email
+```
+
+application.yml 配置：
+```yaml
+database:
+  ddl-auto:
+    mode: update  # 对应 spring.jpa.hibernate.ddl-auto=update
+    entity_packages: app.entity
+```

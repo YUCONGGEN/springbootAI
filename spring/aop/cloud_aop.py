@@ -1,14 +1,13 @@
 """
 Spring Cloud AOP 切面实现（企业级版本）
-使用真实的分布式组件：Seata事务、Nacos服务发现、负载均衡等
+使用真实的分布式组件：Seata事务、Nacos服务发现、Sentinel限流熔断等
 """
 from typing import Any, Callable, Dict, List, Optional, Type
 import time
 import functools
 import threading
-import hashlib
-import logging
 import inspect
+import logging
 from spring.annotations.cloud import (
     SentinelResource,
     GlobalTransactional,
@@ -19,140 +18,98 @@ from spring.annotations.cloud import (
 )
 from spring.cloud.seata import seata_manager
 from spring.cloud.load_balancer import load_balancer
+from spring.cloud.sentinel import sentinel_engine, BlockException
 from spring.utils.redis_client import redis_client
 
 logger = logging.getLogger("Spring.Cloud.AOP")
 
 # ==================== 全局存储 ====================
-_sentinel_storage: Dict[str, dict] = {}  # Sentinel资源状态（本地缓存）
 _refresh_scope_cache: Dict[str, dict] = {}  # 刷新作用域缓存
 _refresh_lock = threading.Lock()  # 刷新锁
 
-# 分段锁，减少锁竞争
-_NUM_SEGMENTS = 32
-_segment_locks = [threading.Lock() for _ in range(_NUM_SEGMENTS)]
 
-
-def _get_segment_lock(key: str) -> threading.Lock:
-    """根据 key 获取对应的分段锁"""
-    if isinstance(key, str):
-        return _segment_locks[hash(key) % _NUM_SEGMENTS]
-    return _segment_locks[0]
-
-
-# ==================== SentinelResource 熔断限流切面 ====================
+# ==================== SentinelResource 熔断限流切面（使用真实Sentinel引擎） ====================
 def sentinel_resource_decorator(annotation: SentinelResource):
     """
-    Sentinel资源保护注解实现（Redis持久化）
-    - block_handler: 处理限流、黑名单、系统保护等阻断异常
+    Sentinel资源保护注解实现（内嵌Sentinel引擎）
+    - block_handler: 处理限流、熔断、系统保护等阻断异常
     - fallback: 处理业务异常、远程调用异常
     - hotkey: 热点参数限流
     """
     def decorator(func: Callable) -> Callable:
+        resource_key = annotation.value or f"{func.__module__}.{func.__name__}"
+        
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            resource_key = annotation.value or f"{func.__module__}.{func.__name__}"
-            
-            # 更新访问时间和请求计数（优先使用Redis）
-            redis = redis_client.get_client()
-            if redis is not None:
-                try:
-                    # 使用Hash存储统计信息
-                    redis.hset(f"sentinel:{resource_key}", mapping={
-                        "last_access": str(time.time()),
-                        "total_requests": str(redis.hincrby(f"sentinel:{resource_key}", "total_requests", 1)),
-                    })
-                    
-                    # 热点参数统计
-                    if annotation.hotkey and annotation.hotkey in kwargs:
-                        hotkey_value = kwargs[annotation.hotkey]
-                        redis.hincrby(f"sentinel:{resource_key}:hotkey", str(hotkey_value), 1)
-                except Exception as e:
-                    logger.warning(f"Redis sentinel stats failed: {e}")
-                    # 回退到本地存储
-                    _update_local_sentinel_stats(resource_key, annotation, kwargs)
-            else:
-                _update_local_sentinel_stats(resource_key, annotation, kwargs)
-            
+            entry = None
             try:
+                entry = sentinel_engine.entry(resource_key, args=args, kwargs=kwargs)
+                start = time.monotonic()
                 result = func(*args, **kwargs)
+                rt_ms = (time.monotonic() - start) * 1000
+                entry.success()
+                # 记录到Redis（可选统计）
+                _record_to_redis(resource_key, rt_ms, False)
                 return result
+            except BlockException as e:
+                # 限流/熔断阻断 -> block_handler
+                logger.warning(f"[Sentinel] Blocked {resource_key}: {e.rule_type}")
+                _record_to_redis(resource_key, 0, True, blocked=True)
+                handler_name = annotation.block_handler
+                if handler_name:
+                    handler_func = _find_handler(args, handler_name)
+                    if handler_func:
+                        return handler_func(*args[1:], **kwargs)
+                raise
             except Exception as e:
-                # 判断是否是阻断异常
-                is_block_exception = "block" in str(e).lower() or "rate limit" in str(e).lower()
-                
-                # block_handler 处理阻断异常
-                if is_block_exception and annotation.block_handler:
-                    block_handler_func = getattr(args[0], annotation.block_handler, None) if args else None
-                    if block_handler_func and callable(block_handler_func):
-                        logger.warning(f"[Sentinel] Block handler triggered for {resource_key}: {str(e)}")
-                        _update_block_count(resource_key)
-                        return block_handler_func(*args[1:], **kwargs)
-                
-                # fallback 处理业务异常
-                if annotation.fallback:
-                    fallback_func = getattr(args[0], annotation.fallback, None) if args else None
-                    if fallback_func and callable(fallback_func):
-                        if annotation.exceptions_to_ignore:
-                            if any(isinstance(e, exc_type) for exc_type in annotation.exceptions_to_ignore):
-                                raise
-                        logger.warning(f"[Sentinel] Fallback triggered for {resource_key}: {str(e)}")
-                        _update_error_count(resource_key)
+                # 业务异常 -> fallback
+                if entry:
+                    entry.error()
+                # 检查异常忽略列表
+                if annotation.exceptions_to_ignore:
+                    if any(isinstance(e, exc_type) for exc_type in annotation.exceptions_to_ignore):
+                        raise
+                _record_to_redis(resource_key, 0, True)
+                fallback_name = annotation.fallback
+                if fallback_name:
+                    fallback_func = _find_handler(args, fallback_name)
+                    if fallback_func:
+                        logger.warning(f"[Sentinel] Fallback triggered for {resource_key}: {e}")
                         return fallback_func(*args[1:], **kwargs)
-                
-                # 统计错误
-                _update_error_count(resource_key)
                 raise
         return wrapper
     return decorator
 
 
-def _update_local_sentinel_stats(resource_key: str, annotation: SentinelResource, kwargs: dict):
-    """更新本地Sentinel统计信息"""
-    with _get_segment_lock(resource_key):
-        if resource_key not in _sentinel_storage:
-            _sentinel_storage[resource_key] = {
-                "block_count": 0,
-                "error_count": 0,
-                "last_access": 0,
-                "hotkey_stats": {},
-                "total_requests": 0,
-            }
-        
-        _sentinel_storage[resource_key]["total_requests"] += 1
-        if annotation.hotkey and annotation.hotkey in kwargs:
-            hotkey_value = kwargs[annotation.hotkey]
-            stats = _sentinel_storage[resource_key]["hotkey_stats"]
-            stats[hotkey_value] = stats.get(hotkey_value, 0) + 1
-        _sentinel_storage[resource_key]["last_access"] = time.time()
+def _find_handler(args: tuple, handler_name: str) -> Optional[Callable]:
+    """查找实例方法作为handler"""
+    if args and hasattr(args[0], handler_name):
+        handler = getattr(args[0], handler_name, None)
+        if callable(handler):
+            return handler
+    return None
 
 
-def _update_block_count(resource_key: str):
-    """更新阻断计数"""
+def _record_to_redis(resource_key: str, rt_ms: float, is_error: bool, blocked: bool = False):
+    """将统计数据记录到Redis（可选，用于集群模式）"""
     redis = redis_client.get_client()
-    if redis is not None:
-        try:
-            redis.hincrby(f"sentinel:{resource_key}", "block_count", 1)
-        except:
-            pass
-    
-    with _get_segment_lock(resource_key):
-        if resource_key in _sentinel_storage:
-            _sentinel_storage[resource_key]["block_count"] += 1
-
-
-def _update_error_count(resource_key: str):
-    """更新错误计数"""
-    redis = redis_client.get_client()
-    if redis is not None:
-        try:
-            redis.hincrby(f"sentinel:{resource_key}", "error_count", 1)
-        except:
-            pass
-    
-    with _get_segment_lock(resource_key):
-        if resource_key in _sentinel_storage:
-            _sentinel_storage[resource_key]["error_count"] += 1
+    if redis is None:
+        return
+    try:
+        pipe = redis.pipeline()
+        pipe.hincrby(f"sentinel_stats:{resource_key}", "total", 1)
+        if blocked:
+            pipe.hincrby(f"sentinel_stats:{resource_key}", "blocked", 1)
+        if is_error and not blocked:
+            pipe.hincrby(f"sentinel_stats:{resource_key}", "error", 1)
+        if rt_ms > 0:
+            pipe.hincrbyfloat(f"sentinel_stats:{resource_key}", "rt_total", rt_ms)
+            pipe.hincrby(f"sentinel_stats:{resource_key}", "success", 1)
+        pipe.hset(f"sentinel_stats:{resource_key}", "last_access", str(time.time()))
+        pipe.expire(f"sentinel_stats:{resource_key}", 3600)
+        pipe.execute()
+    except Exception:
+        pass
 
 
 # ==================== GlobalTransactional 分布式事务切面（Seata集成） ====================
@@ -379,25 +336,24 @@ def apply_cloud_annotations(target: Any, method: Callable = None) -> Any:
 
 
 def get_sentinel_stats(resource_key: str = None) -> Dict[str, dict]:
-    """获取Sentinel统计数据（优先从Redis获取）"""
+    """获取Sentinel统计数据（从内嵌引擎获取，Redis作为补充）"""
+    result = sentinel_engine.get_resource_stats(resource_key)
     redis = redis_client.get_client()
-    
     if redis is not None and resource_key:
         try:
-            data = redis.hgetall(f"sentinel:{resource_key}")
+            data = redis.hgetall(f"sentinel_stats:{resource_key}")
             if data:
-                return {resource_key: {
-                    "block_count": int(data.get("block_count", "0")),
-                    "error_count": int(data.get("error_count", "0")),
-                    "last_access": float(data.get("last_access", "0")),
-                    "total_requests": int(data.get("total_requests", "0")),
-                }}
-        except:
+                result.setdefault(resource_key, {})
+                result[resource_key]['redis'] = {
+                    "total": int(data.get("total", 0)),
+                    "blocked": int(data.get("blocked", 0)),
+                    "error": int(data.get("error", 0)),
+                    "success": int(data.get("success", 0)),
+                    "last_access": float(data.get("last_access", 0)),
+                }
+        except Exception:
             pass
-    
-    if resource_key:
-        return {resource_key: _sentinel_storage.get(resource_key, {})}
-    return dict(_sentinel_storage)
+    return result
 
 
 def get_transaction_context() -> dict:

@@ -95,6 +95,26 @@ class FeignClientProxy:
         """Execute a declared Feign request and invoke its fallback if needed."""
         url = self._build_url(endpoint)
         call_kwargs = call_kwargs or {}
+
+        # 自动注入分布式事务XID头
+        req_headers = dict(headers) if headers else {}
+        try:
+            from spring.cloud.seata import seata_manager
+            xid = seata_manager.get_current_tx_id()
+            if xid:
+                seata_manager.inject_xid_headers(req_headers, xid)
+        except Exception:
+            pass
+
+        # 自动注入追踪头（W3C traceparent）
+        try:
+            from spring.cloud.tracer import get_tracer
+            tracer = get_tracer()
+            if tracer.enabled:
+                tracer.inject_headers(req_headers)
+        except Exception:
+            pass
+
         try:
             response = requests.request(
                 method.upper(),
@@ -102,7 +122,7 @@ class FeignClientProxy:
                 params=params,
                 json=self._jsonable(json_data) if json_data is not None else None,
                 data=data,
-                headers=headers,
+                headers=req_headers,
                 timeout=timeout,
             )
             response.raise_for_status()

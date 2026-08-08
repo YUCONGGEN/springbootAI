@@ -20,7 +20,9 @@
 - [二、核心高级注解（10个）](#二核心高级注解10个)
 - [三、Spring Cloud 微服务注解（11个）](#三spring-cloud-微服务注解11个)
 - [四、注解组合使用指南](#四注解组合使用指南)
-- [五、常见问题](#五常见问题)
+- [五、ORM DDL 自动建表注解](#五orm-ddl-自动建表注解)
+- [六、内嵌Cloud功能注解](#六内嵌cloud功能注解)
+- [七、常见问题](#七常见问题)
 
 ---
 
@@ -1892,7 +1894,98 @@ AOP 注解的执行顺序（从外到内）：
 
 ---
 
-## 五、常见问题
+## 五、ORM DDL 自动建表注解
+
+### @entity
+
+**含义**：标注一个类为JPA风格的实体类，框架自动生成DDL建表语句。
+
+**参数**：
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| name | str | "" | 表名，为空时自动用类名转下划线 |
+| indexes | List[Index] | None | 索引列表 |
+| comment | str | "" | 表注释（MySQL） |
+
+**用法示例**：
+```python
+from spring.orm import entity, Index
+
+@entity("sys_user", indexes=[
+    Index("idx_username", ["username"], unique=True),
+], comment="用户表")
+class User:
+    def __init__(self, id: int = None, username: str = "", email: str = ""):
+        self.id = id
+        self.username = username
+        self.email = email
+```
+
+**注意事项**：
+- `id`字段自动成为主键自增
+- 支持`@dataclass`风格实体类
+- 驼峰命名自动转下划线
+- 需在`application.yml`中配置`database.ddl-auto.mode`
+
+### ddl-auto 模式
+
+| 模式 | 说明 |
+|------|------|
+| none | 不操作（默认） |
+| validate | 验证表结构，不匹配报错 |
+| update | 创建不存在的表，添加新列和索引 |
+| create | 每次启动删表重建 |
+| create-drop | 启动建表，关闭删表 |
+
+---
+
+## 六、内嵌Cloud功能注解
+
+### @SentinelResource
+
+**含义**：Sentinel资源保护注解，集成内嵌限流熔断引擎。
+
+**参数**：
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| value | str | "" | 资源名，为空时用类名.方法名 |
+| block_handler | str | "" | 限流/熔断处理方法名 |
+| fallback | str | "" | 业务异常降级方法名 |
+| hotkey | bool | False | 是否启用热点参数限流 |
+| exceptions_to_ignore | list | None | 忽略的异常类型列表 |
+
+### @Trace
+
+**含义**：方法级追踪注解，自动创建OpenTelemetry Span。
+
+**用法示例**：
+```python
+from spring.annotations import Trace
+
+@Trace("user-service.create")
+def create_user(name: str):
+    # 自动创建span并记录traceId
+    return user_mapper.insert(name)
+```
+
+### @GlobalTransactional
+
+**含义**：Seata分布式事务注解，自动管理全局事务。
+
+**用法示例**：
+```python
+from spring.annotations import GlobalTransactional
+
+@GlobalTransactional(timeout=60000)
+def place_order(user_id: int, product_id: int):
+    # 自动开启分布式事务，异常自动回滚
+    order_service.create(user_id, product_id)
+    inventory_service.deduct(product_id)
+```
+
+---
+
+## 七、常见问题
 
 ### Q: 注解不生效怎么办？
 A: 检查以下几点：

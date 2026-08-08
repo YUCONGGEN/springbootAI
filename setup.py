@@ -14,7 +14,10 @@ SpringPy - Python版Spring Boot框架
 - 分布式事务（Seata）
 - 消息队列（RabbitMQ）
 - Prometheus监控
-- SkyWalking分布式追踪
+- OpenTelemetry分布式追踪
+- Sentinel限流熔断
+- API Gateway网关
+- ORM DDL自动建表(JPA ddl-auto)
 """
 
 from setuptools import setup, find_packages
@@ -34,7 +37,7 @@ def read_version():
         for line in f:
             if line.startswith('__version__'):
                 return line.split('=')[1].strip().strip("'\"")
-    return '1.4.0'
+    return '1.5.0'
 
 setup(
     name='springpy',

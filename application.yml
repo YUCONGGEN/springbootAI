@@ -43,6 +43,10 @@ database:
   database: ${DB_DATABASE:./test.db}
   username: ${DB_USERNAME:}
   password: ${DB_PASSWORD:}
+  # DDL自动建表配置（JPA hibernate.ddl-auto风格）
+  ddl-auto:
+    mode: ${DB_DDL_AUTO:none}  # none|validate|update|create|create-drop
+    entity_packages: ${DB_ENTITY_PACKAGES:}  # 实体类包路径，逗号分隔，如: app.entity,app.model
   # 连接池配置
   min_size: ${DB_MIN_SIZE:1}
   max_size: ${DB_MAX_SIZE:5}

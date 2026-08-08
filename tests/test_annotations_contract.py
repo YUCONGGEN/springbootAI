@@ -346,6 +346,39 @@ class AnnotationContractTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(__import__("spring.annotations", fromlist=[name]), name))
 
+    def test_repeatable_audit_and_metrics_decorators_stack(self):
+        """同一方法叠加多个 AOP 注解应均能被 get_spring_annotations 收集。"""
+        @Metrics(name="orders.created", tags=["region"])
+        @AuditLog(action="create", target="order", level="INFO")
+        def create_order(user_id):
+            return {"order_id": user_id}
+
+        attached = get_spring_annotations(create_order)
+        kinds = {type(a) for a in attached}
+        self.assertIn(AuditLog, kinds)
+        self.assertIn(Metrics, kinds)
+        # 装饰器自底向上应用：AuditLog 先附加，Metrics 后附加
+        self.assertIsInstance(attached[0], AuditLog)
+        self.assertIsInstance(attached[1], Metrics)
+        self.assertEqual("orders.created", attached[1].name)
+
+    def test_value_and_configuration_properties_defaults(self):
+        """@Value 带 default，@ConfigurationProperties 绑定前缀，元数据正确。"""
+        value_ann = Value("app.timeout", default=15)
+        self.assertEqual("app.timeout", value_ann.value)
+        self.assertEqual(15, value_ann.default)
+
+        props_ann = ConfigurationProperties("app.orders")
+        self.assertEqual("app.orders", props_ann.prefix)
+
+        @props_ann
+        class OrderProps:
+            pass
+
+        attached = get_spring_annotations(OrderProps)
+        self.assertEqual(1, len(attached))
+        self.assertIs(props_ann, attached[0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,12 +7,11 @@
    - [Redis](#21-redis)
    - [MySQL](#22-mysql)
    - [Nacos（可选）](#23-nacos可选)
-3. [SkyWalking 分布式追踪部署](#3-skywalking-分布式追踪部署)
-4. [Seata 分布式事务部署](#4-seata-分布式事务部署)
-5. [应用配置](#5-应用配置)
-6. [启动应用](#6-启动应用)
-7. [验证部署](#7-验证部署)
-8. [故障排查](#8-故障排查)
+3. [内嵌Cloud功能（无需外部部署）](#3-内嵌cloud功能无需外部部署)
+4. [应用配置](#4-应用配置)
+5. [启动应用](#5-启动应用)
+6. [验证部署](#6-验证部署)
+7. [故障排查](#7-故障排查)
 
 ---
 
@@ -20,12 +19,12 @@
 
 | 组件 | 版本要求 | 说明 |
 |------|---------|------|
-| Python | 3.10+ | 推荐 3.12 |
-| Redis | 6.0+ | 用于分布式锁、限流、熔断 |
+| Python | 3.9+ | 推荐 3.12 |
+| Redis | 6.0+ | 用于分布式锁、限流、缓存 |
 | MySQL | 5.7+ / 8.0+ | 用于业务数据存储 |
 | Nacos | 2.0+ | 服务注册发现（可选） |
-| SkyWalking | 9.0+ | 分布式追踪（可选） |
-| Seata | 1.7+ | 分布式事务（可选） |
+
+> **v1.5.0新特性**：Sentinel限流熔断、OpenTelemetry分布式追踪、Seata HTTP-AT分布式事务、API Gateway均已内嵌实现，无需部署外部Server。
 
 ---
 
@@ -126,220 +125,101 @@ docker run -d --name springpy-nacos \
 
 ---
 
-## 3. SkyWalking 分布式追踪部署
+## 3. 内嵌Cloud功能（无需外部部署）
 
-### 3.1 安装 SkyWalking OAP Server
+SpringPy v1.5.0 内嵌了以下微服务治理功能，无需部署外部Server即可使用。
 
-```bash
-# 下载 SkyWalking
-wget https://archive.apache.org/dist/skywalking/9.7.0/apache-skywalking-apm-9.7.0.tar.gz
-tar -zxvf apache-skywalking-apm-9.7.0.tar.gz
-cd apache-skywalking-apm-bin
+### 3.1 Sentinel 限流熔断（内嵌引擎）
 
-# 启动 OAP Server
-./bin/oapService.sh
+框架内置Sentinel限流引擎，支持QPS限流、异常比例/异常数熔断、慢调用比例熔断、热点参数限流。
 
-# 启动 UI
-./bin/webappService.sh
+通过注解使用，无需额外部署：
 
-# 访问 UI
-# http://localhost:8080
+```python
+from spring.annotations import SentinelResource
+
+@SentinelResource(value="createOrder", block_handler="handle_block", fallback="handle_fallback")
+def create_order(user_id: int, product_id: int):
+    # 业务逻辑
+    pass
+
+def handle_block(user_id, product_id):
+    return {"msg": "请求被限流，请稍后重试"}
+
+def handle_fallback(user_id, product_id):
+    return {"msg": "服务降级"}
 ```
 
-### 3.2 安装 Python Agent
+### 3.2 OpenTelemetry 分布式追踪（内嵌）
 
-```bash
-pip install skywalking>=0.12.0
+框架内置OpenTelemetry兼容追踪器，自动生成和传播W3C traceparent标准traceId/spanId，自动注入HTTP请求和Feign调用。
+
+```python
+from spring.annotations import Trace
+
+@Trace("order-service.create")
+def create_order(user_id: int):
+    # 自动创建span，记录traceId
+    pass
 ```
 
-### 3.3 配置 SkyWalking
+无需部署SkyWalking OAP Server，追踪信息通过日志输出。如需对接Jaeger等后端，可配置exporter。
 
-在 `application.yml` 中启用：
+### 3.3 Seata HTTP-AT 分布式事务（内嵌）
+
+框架内置HTTP-AT模式分布式事务协调器，通过HTTP端点协调跨服务事务，无需部署Seata Server。
+
+```python
+from spring.annotations import GlobalTransactional
+
+@GlobalTransactional(timeout=60000)
+def place_order(user_id: int, product_id: int):
+    # 自动开启分布式事务
+    order_service.create(user_id, product_id)
+    inventory_service.deduct(product_id)
+    # 异常自动回滚所有分支
+```
+
+Feign客户端自动传播XID事务ID到下游服务。
+
+### 3.4 API Gateway 网关（内嵌）
+
+框架内置轻量ASGI/WSGI网关，支持路由转发、路径重写、全局过滤器、负载均衡。
+
+```python
+from spring.cloud.gateway import GatewayRouter
+
+gateway = GatewayRouter(discovery_client=nacos_discovery)
+gateway.route("/api/users/**", "user-service", strip_prefix=True)
+```
+
+### 3.5 ORM DDL 自动建表（JPA ddl-auto 风格）
+
+框架支持从实体类自动生成DDL，支持create/update/validate/create-drop模式。
 
 ```yaml
-skywalking:
-  enabled: true
-  service_name: your-service-name
-  collector_address: 127.0.0.1:11800
-  protocol: grpc
+database:
+  ddl-auto:
+    mode: update  # none|validate|update|create|create-drop
+    entity_packages: app.entity
 ```
 
-或者通过环境变量：
+```python
+from spring.orm import entity, Index
 
-```bash
-export SKYWALKING_ENABLED=true
-export SKYWALKING_SERVICE=your-service-name
-export SKYWALKING_COLLECTOR=127.0.0.1:11800
+@entity("sys_user", indexes=[Index("idx_username", ["username"], unique=True)])
+class User:
+    def __init__(self, id: int = None, username: str = "", email: str = ""):
+        self.id = id
+        self.username = username
+        self.email = email
 ```
 
 ---
 
-## 4. Seata 分布式事务部署
+## 4. 应用配置
 
-### 4.1 安装 Seata Server
-
-```bash
-# 下载 Seata
-wget https://github.com/seata/seata/releases/download/v1.8.0/seata-server-1.8.0.tar.gz
-tar -zxvf seata-server-1.8.0.tar.gz
-cd seata-server-1.8.0
-```
-
-### 4.2 配置 Seata
-
-#### 4.2.1 修改 `conf/file.conf`
-
-```properties
-store.mode = db
-store.db.datasource = druid
-store.db.dbType = mysql
-store.db.driverClassName = com.mysql.cj.jdbc.Driver
-store.db.url = jdbc:mysql://localhost:3306/seata?useUnicode=true&rewriteBatchedStatements=true&serverTimezone=UTC&allowPublicKeyRetrieval=true&useSSL=false
-store.db.user = root
-store.db.password = your_password
-store.db.minConn = 5
-store.db.maxConn = 30
-store.db.globalTable = global_table
-store.db.branchTable = branch_table
-store.db.lockTable = lock_table
-```
-
-#### 4.2.2 修改 `conf/registry.conf`
-
-```properties
-registry {
-  type = "nacos"
-  nacos {
-    serverAddr = "localhost:8848"
-    namespace = ""
-    group = "SEATA_GROUP"
-    application = "seata-server"
-  }
-}
-
-config {
-  type = "nacos"
-  nacos {
-    serverAddr = "localhost:8848"
-    namespace = ""
-    group = "SEATA_GROUP"
-  }
-}
-```
-
-### 4.3 初始化 Seata 数据库
-
-创建 Seata 专用数据库并执行初始化脚本：
-
-```sql
-CREATE DATABASE IF NOT EXISTS seata;
-USE seata;
-
--- 全局事务表
-CREATE TABLE IF NOT EXISTS `global_table` (
-    `xid` VARCHAR(128) NOT NULL,
-    `transaction_id` BIGINT,
-    `status` TINYINT NOT NULL,
-    `application_id` VARCHAR(32),
-    `transaction_service_group` VARCHAR(32),
-    `transaction_name` VARCHAR(128),
-    `timeout` INT,
-    `begin_time` BIGINT,
-    `application_data` VARCHAR(2000),
-    `gmt_create` DATETIME,
-    `gmt_modified` DATETIME,
-    PRIMARY KEY (`xid`),
-    KEY `idx_gmt_modified_status` (`gmt_modified`, `status`),
-    KEY `idx_transaction_id` (`transaction_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 分支事务表
-CREATE TABLE IF NOT EXISTS `branch_table` (
-    `branch_id` BIGINT NOT NULL,
-    `xid` VARCHAR(128) NOT NULL,
-    `transaction_id` BIGINT,
-    `resource_group_id` VARCHAR(32),
-    `resource_id` VARCHAR(256),
-    `branch_type` VARCHAR(8),
-    `status` TINYINT,
-    `client_id` VARCHAR(64),
-    `application_data` VARCHAR(2000),
-    `gmt_create` DATETIME,
-    `gmt_modified` DATETIME,
-    PRIMARY KEY (`branch_id`),
-    KEY `idx_xid` (`xid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 锁表
-CREATE TABLE IF NOT EXISTS `lock_table` (
-    `row_key` VARCHAR(128) NOT NULL,
-    `xid` VARCHAR(128),
-    `transaction_id` BIGINT,
-    `branch_id` BIGINT NOT NULL,
-    `resource_id` VARCHAR(256),
-    `table_name` VARCHAR(32),
-    `pk` VARCHAR(36),
-    `gmt_create` DATETIME,
-    `gmt_modified` DATETIME,
-    PRIMARY KEY (`row_key`),
-    KEY `idx_branch_id` (`branch_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-```
-
-### 4.4 在业务数据库中创建 undo_log 表
-
-执行 `sql/seata_undo_log.sql` 脚本：
-
-```bash
-mysql -u username -p your_database < sql/seata_undo_log.sql
-```
-
-### 4.5 安装 Python Seata Client
-
-```bash
-pip install seata>=1.7.0
-```
-
-### 4.6 配置 Seata
-
-在 `application.yml` 中启用：
-
-```yaml
-seata:
-  enabled: true
-  mode: distributed
-  server_addr: localhost:8091
-  application_id: your-service-name
-  transaction_group: my_tx_group
-```
-
-或者通过环境变量：
-
-```bash
-export SEATA_ENABLED=true
-export SEATA_MODE=distributed
-export SEATA_SERVER=localhost:8091
-export SEATA_APP_ID=your-service-name
-export SEATA_TX_GROUP=my_tx_group
-```
-
-### 4.7 启动 Seata Server
-
-```bash
-cd seata-server-1.8.0/bin
-
-# Linux/Unix
-./seata-server.sh -p 8091 -h 0.0.0.0
-
-# Windows
-seata-server.bat -p 8091 -h 0.0.0.0
-```
-
----
-
-## 5. 应用配置
-
-### 5.1 生产环境配置文件
+### 4.1 生产环境配置文件
 
 创建 `application-prod.yml`（可选）：
 
@@ -360,6 +240,10 @@ jwt:
 database:
   enabled: true
   url: mysql+pymysql://user:password@localhost:3306/your_database?charset=utf8mb4
+  # DDL Auto 生产环境建议使用 validate 模式
+  ddl-auto:
+    mode: validate
+    entity_packages: app.entity
 
 discovery:
   enabled: true
@@ -367,24 +251,18 @@ discovery:
   username: ${NACOS_USERNAME}
   password: ${NACOS_PASSWORD}
 
-seata:
-  enabled: true
-  mode: distributed
-  server_addr: your-seata-server:8091
-  application_id: spring-python-app
-  transaction_group: my_tx_group
-
-skywalking:
-  enabled: true
-  service_name: spring-python-app
-  collector_address: your-skywalking-collector:11800
+# 内嵌Cloud功能配置（默认即可，无需外部Server）
+# - Sentinel限流熔断：通过 @SentinelResource 注解使用，无需配置
+# - OpenTelemetry追踪：通过 @Trace 注解使用，日志输出traceId
+# - Seata HTTP-AT分布式事务：通过 @GlobalTransactional 注解使用
+# - API Gateway：通过 @EnableGateway + GatewayRouter 使用
 
 logging:
   level: INFO
   log_dir: /var/log/spring-python
 ```
 
-### 5.2 环境变量配置
+### 4.2 环境变量配置
 
 推荐使用环境变量覆盖默认配置：
 
@@ -396,28 +274,28 @@ logging:
 | `REDIS_PASSWORD` | Redis 密码 | null |
 | `JWT_SECRET_KEY` | JWT 密钥 | spring-python-secret-key-change-in-production |
 | `DB_URL` | 数据库连接 URL | sqlite:///./test.db |
+| `DB_DDL_AUTO` | DDL自动建表模式（none/validate/update/create/create-drop） | none |
+| `DB_ENTITY_PACKAGES` | 实体类包路径，逗号分隔 | 空 |
 | `DISCOVERY_ENABLED` | 是否启用 Nacos 服务发现 | false |
 | `NACOS_SERVER` | Nacos 地址 | localhost:8848 |
 | `NACOS_USERNAME` | Nacos 客户端账号 | 空 |
 | `NACOS_PASSWORD` | Nacos 客户端密码 | 空 |
-| `SEATA_ENABLED` | 是否启用 Seata | false |
-| `SEATA_MODE` | Seata 模式 | local |
-| `SEATA_SERVER` | Seata Server 地址 | localhost:8091 |
-| `SKYWALKING_ENABLED` | 是否启用 SkyWalking | false |
-| `SKYWALKING_COLLECTOR` | SkyWalking Collector 地址 | 127.0.0.1:11800 |
+| `SPRING_DISABLE_DOCKER_IP_DETECT` | 设为1禁用Docker容器IP自动检测 | 0 |
+
+> Sentinel、OpenTelemetry追踪、Seata HTTP-AT、API Gateway 已内嵌实现，不需要对应环境变量启用。
 
 ---
 
-## 6. 启动应用
+## 5. 启动应用
 
-### 6.1 开发模式
+### 5.1 开发模式
 
 ```bash
 cd your-project
 python -m spring.main
 ```
 
-### 6.2 生产模式
+### 5.2 生产模式
 
 ```bash
 # 必需的生产配置
@@ -433,7 +311,7 @@ export STARTUP_FAIL_FAST=true
 uvicorn myapp.asgi:app --host 0.0.0.0 --port 8080 --workers 4
 ```
 
-### 6.3 使用 Gunicorn（推荐）
+### 5.3 使用 Gunicorn（推荐）
 
 ```bash
 # Linux环境安装进程管理器
@@ -443,7 +321,7 @@ pip install gunicorn uvicorn
 gunicorn -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8080 myapp.asgi:app
 ```
 
-### 6.4 作为系统服务
+### 5.4 作为系统服务
 
 创建 `/etc/systemd/system/spring-python.service`：
 
@@ -456,8 +334,8 @@ After=network.target redis.service mysqld.service
 Type=simple
 User=spring-python
 WorkingDirectory=/opt/spring-python
-Environment="SEATA_ENABLED=true"
-Environment="SKYWALKING_ENABLED=true"
+Environment="SPRING_PROFILES_ACTIVE=production"
+Environment="STARTUP_FAIL_FAST=true"
 ExecStart=/usr/bin/python -m spring.main
 Restart=always
 RestartSec=5
@@ -476,9 +354,9 @@ sudo systemctl enable spring-python
 
 ---
 
-## 7. 验证部署
+## 6. 验证部署
 
-### 7.1 健康检查
+### 6.1 健康检查
 
 ```bash
 curl http://localhost:8080/actuator/health
@@ -493,13 +371,14 @@ curl http://localhost:8080/actuator/health
         "redis": "UP",
         "database": "UP",
         "nacos": "UP",
-        "seata": "UP",
-        "skywalking": "UP"
+        "rabbitmq": "UP"
     }
 }
 ```
 
-### 7.2 重试机制验证
+> Sentinel、OpenTelemetry追踪、Seata HTTP-AT、API Gateway 已内嵌实现，不属于外部依赖组件，因此不显示在聚合健康检查中。可通过应用日志或 `@SentinelResource`、`@Trace`、`@GlobalTransactional` 注解的实际调用验证。
+
+### 6.2 重试机制验证
 
 ```python
 from spring.annotations import Retryable
@@ -513,53 +392,41 @@ def test_retry():
 test_retry()
 ```
 
-### 7.3 SkyWalking 验证
+### 6.3 OpenTelemetry 追踪验证
 
-访问 SkyWalking UI（默认 http://localhost:8080），查看服务列表和追踪信息。
+查看应用日志中的traceId和spanId输出。使用`@Trace`注解的方法会自动创建span：
 
-### 7.4 Seata 验证
+```python
+from spring.annotations import Trace
 
-执行分布式事务测试：
+@Trace("test-operation")
+def test_traced():
+    pass
+
+test_traced()
+# 日志中会输出: [Trace] span_id=xxx trace_id=xxx
+```
+
+### 6.4 Seata 分布式事务验证
 
 ```python
 from spring.cloud.seata import seata_manager
 
-# 开启分布式事务
 tx_id = seata_manager.begin_transaction(name="test_tx")
-
 try:
     # 执行业务操作
-    # ...
-    
-    # 提交事务
     seata_manager.commit_transaction(tx_id)
     print("Transaction committed")
 except Exception as e:
-    # 回滚事务
     seata_manager.rollback_transaction(tx_id)
     print(f"Transaction rolled back: {e}")
 ```
 
 ---
 
-## 8. 故障排查
+## 7. 故障排查
 
-### 8.1 Seata 连接问题
-
-**问题：** `Seata client failed to connect to server`
-
-**解决方案：**
-
-1. 检查 Seata Server 是否启动：
-   ```bash
-   telnet localhost 8091
-   ```
-
-2. 检查 `registry.conf` 配置是否正确
-
-3. 检查 Nacos 服务注册是否正常
-
-### 8.2 Nacos Docker 启动失败
+### 7.1 Nacos Docker 启动失败
 
 **问题：** 容器退出码为 255，日志提示 `NACOS_AUTH_TOKEN` 或 `NACOS_AUTH_IDENTITY_*` 缺失。
 
@@ -577,20 +444,7 @@ except Exception as e:
 
 应用客户端还需安装 `nacos-sdk-python`，并设置 `NACOS_SERVER`、`NACOS_USERNAME` 和 `NACOS_PASSWORD`。
 
-### 8.3 SkyWalking 数据不显示
-
-**问题：** SkyWalking UI 看不到追踪数据
-
-**解决方案：**
-
-1. 检查 Collector 地址是否正确
-2. 检查防火墙是否开放 11800 端口
-3. 检查 Agent 日志：
-   ```bash
-   grep -i skywalking logs/application*.log
-   ```
-
-### 8.4 MySQL 认证问题
+### 7.2 MySQL 认证问题
 
 **问题：** `Access denied for user 'root'@'localhost'`
 
@@ -602,8 +456,9 @@ except Exception as e:
    ```sql
    SHOW GRANTS FOR 'user'@'%';
    ```
+4. Docker环境下如遇localhost认证问题，设置环境变量`SPRING_DISABLE_DOCKER_IP_DETECT=0`启用容器IP自动检测
 
-### 8.5 Redis 连接问题
+### 7.3 Redis 连接问题
 
 **问题：** `ConnectionError: Error 111 connecting to localhost:6379`
 
@@ -617,6 +472,16 @@ except Exception as e:
 2. 检查防火墙规则
 
 3. 检查 Redis 绑定地址（`bind 0.0.0.0`）
+
+### 7.4 DDL Auto 建表失败
+
+**问题：** DDL自动建表提示权限不足或SQL语法错误
+
+**解决方案：**
+
+1. 确保数据库用户有DDL权限（CREATE/ALTER/DROP）
+2. 生产环境建议使用`validate`模式而非`create`/`update`
+3. 检查实体类字段类型是否在支持范围内（int/str/float/bool/bytes/datetime）
 
 ---
 
@@ -647,6 +512,14 @@ export DB_ENABLED=false
 export DB_URL=sqlite:///./test.db
 export DB_USERNAME=
 export DB_PASSWORD=
+export DB_DRIVER=sqlite
+export DB_HOST=localhost
+export DB_PORT=3306
+export DB_DATABASE=./test.db
+
+# ORM DDL Auto
+export DB_DDL_AUTO=none  # none|validate|update|create|create-drop
+export DB_ENTITY_PACKAGES=  # 实体类包路径，逗号分隔
 
 # Nacos
 export DISCOVERY_ENABLED=false
@@ -662,18 +535,8 @@ export NACOS_AUTH_TOKEN=<base64-token-with-at-least-32-decoded-bytes>
 export NACOS_AUTH_IDENTITY_KEY=springpy
 export NACOS_AUTH_IDENTITY_VALUE=springpy-local
 
-# Seata
-export SEATA_ENABLED=false
-export SEATA_MODE=local
-export SEATA_SERVER=localhost:8091
-export SEATA_APP_ID=spring-python-app
-export SEATA_TX_GROUP=my_tx_group
-
-# SkyWalking
-export SKYWALKING_ENABLED=false
-export SKYWALKING_SERVICE=spring-python-app
-export SKYWALKING_COLLECTOR=127.0.0.1:11800
-export SKYWALKING_PROTOCOL=grpc
+# Docker 辅助
+export SPRING_DISABLE_DOCKER_IP_DETECT=0  # 设为1禁用容器IP自动检测
 
 # Retry
 export RETRY_ENABLED=true
@@ -699,6 +562,8 @@ export LOG_LEVEL=INFO
 export LOG_DIR=logs
 ```
 
+> Sentinel限流熔断、OpenTelemetry分布式追踪、Seata HTTP-AT分布式事务、API Gateway 均为内嵌实现，无对应环境变量。
+
 ### B. Docker Compose 示例
 
 ```yaml
@@ -721,7 +586,6 @@ services:
       MYSQL_DATABASE: example_db
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./sql/seata_undo_log.sql:/docker-entrypoint-initdb.d/seata_undo_log.sql
 
   nacos:
     image: nacos/nacos-server:v2.3.0
@@ -736,29 +600,16 @@ services:
       NACOS_AUTH_IDENTITY_KEY: "springpy"
       NACOS_AUTH_IDENTITY_VALUE: "springpy-local"
 
-  skywalking-oap:
-    image: apache/skywalking-oap-server:9.7.0
-    ports:
-      - "11800:11800"
-      - "12800:12800"
-
-  skywalking-ui:
-    image: apache/skywalking-ui:9.7.0
-    ports:
-      - "8080:8080"
-    environment:
-      SW_OAP_ADDRESS: http://skywalking-oap:12800
-
   spring-python:
     build: .
     ports:
-      - "8081:8080"
+      - "8080:8080"
     environment:
       REDIS_HOST: redis
       DB_URL: mysql+pymysql://root:root@mysql/example_db
-      SEATA_ENABLED: true
-      SKYWALKING_ENABLED: true
-      SKYWALKING_COLLECTOR: skywalking-oap:11800
+      DISCOVERY_ENABLED: "true"
+      NACOS_SERVER: nacos:8848
+      # Sentinel/OpenTelemetry/Seata/Gateway 内嵌实现，无需配置
     depends_on:
       - redis
       - mysql

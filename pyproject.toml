@@ -6,12 +6,12 @@ build-backend = "setuptools.build_meta"
 # SpringPy 项目元数据与依赖声明（PEP 621）
 # 本文件是依赖的单一真实来源，类似 Spring Boot 的 pom.xml
 # 版本锁定策略：所有直接依赖使用 == 精确锁定
-# 未安装/未测试的可选依赖（Oracle/Seata/SkyWalking）保留 >= 范围
+# Sentinel/OpenTelemetry/Seata HTTP-AT/API Gateway/DDL Auto 均为内嵌实现，无需外部依赖
 # ========================================
 
 [project]
 name = "springpy"
-version = "1.4.0"
+version = "1.5.0"
 description = "Python版Spring Boot框架，集成PyMyBatis ORM"
 readme = "README.md"
 license = { text = "MIT" }
@@ -20,7 +20,7 @@ authors = [
 ]
 keywords = ["spring", "springboot", "mybatis", "orm", "web", "framework", "python"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",

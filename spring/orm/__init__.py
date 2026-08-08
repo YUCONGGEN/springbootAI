@@ -126,6 +126,30 @@ from spring.orm.pymybatis.metrics import (
     MetricsCollector,
 )
 
+# 导入数据库迁移（Flyway风格）
+from spring.orm.migration import (
+    MigrationManager,
+    MigrationError,
+    MigrationState,
+)
+
+# 导入DDL自动建表（JPA hibernate.ddl-auto风格）
+from spring.orm.ddl_auto import (
+    DdlAutoManager,
+    DdlAutoMode,
+    EntityTable,
+    Table,
+    Column,
+    Id,
+    Index,
+    entity,
+    table as table_decorator,
+    column as column_decorator,
+    id_column as id_column_decorator,
+    init_ddl_auto,
+    get_ddl_manager,
+)
+
 # 版本信息
 from spring.orm.pymybatis.version import __version__
 
@@ -194,6 +218,24 @@ __all__ = [
     'CircuitBreaker',
     # 指标监控
     'MetricsCollector',
+    # 数据库迁移
+    'MigrationManager',
+    'MigrationError',
+    'MigrationState',
+    # DDL自动建表
+    'DdlAutoManager',
+    'DdlAutoMode',
+    'EntityTable',
+    'Table',
+    'Column',
+    'Id',
+    'Index',
+    'entity',
+    'table_decorator',
+    'column_decorator',
+    'id_column_decorator',
+    'init_ddl_auto',
+    'get_ddl_manager',
     # 版本
     '__version__',
 ]

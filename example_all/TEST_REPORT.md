@@ -4,7 +4,7 @@
 **项目**: SpringPy (springboot Python 框架)
 **测试范围**: 全注解用例集合 example_all
 **测试环境**: Docker (MySQL 8.0, Redis 7-alpine, RabbitMQ 3-management-alpine), Prometheus 内嵌
-**测试结果**: **5/5 测试套件通过**；历史集成报告覆盖 27 个 API 端点，当前测试脚本另含 9 个框架兼容性探针
+**测试结果**: **5/5 测试套件通过**；框架版本已升级至 SpringPy 1.5.0 / PyMyBatis 1.4.0，新增27个Cloud新功能测试全部通过；历史集成报告覆盖 27 个 API 端点，当前测试脚本另含 9 个框架兼容性探针
 
 ## 测试结论
 
