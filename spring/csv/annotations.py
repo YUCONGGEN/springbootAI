@@ -241,11 +241,18 @@ def _get_class_file_meta(cls: type) -> CsvFile:
 
 
 def _resolve_init_hints(cls: type) -> dict:
-    """获取 ``__init__`` 参数的类型注解（用于无类属性注解时的类型推断）。"""
+    """获取 ``__init__`` 参数的类型注解（用于无类属性注解时的类型推断）。
+
+    返回的承载类型已解包 ``Optional[X]``：Python 3.10 的 ``get_type_hints`` 会把带
+    ``None`` 默认值的参数注解自动包装为 ``Optional[X]``，3.11+ 不再包装。统一解包
+    为承载类型，使转换器选择/类型推断与 Python 版本无关（可空性不由类型承载）。
+    """
     import inspect
     try:
         from typing import get_type_hints
-        return get_type_hints(cls.__init__)
+        from spring.core.typing_utils import unwrap_optional_type
+        hints = get_type_hints(cls.__init__)
+        return {k: unwrap_optional_type(v) for k, v in hints.items()}
     except Exception:
         try:
             return dict(inspect.signature(cls).parameters)

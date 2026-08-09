@@ -22,6 +22,8 @@ from typing import Dict, List, Optional, Any, Type, Tuple, get_type_hints
 from dataclasses import is_dataclass, fields as dataclass_fields
 from enum import Enum
 
+from spring.core.typing_utils import unwrap_optional_type
+
 logger = logging.getLogger("Spring.ORM.DDL")
 
 
@@ -397,6 +399,10 @@ class DdlAutoManager:
                     continue
                 # 优先取 __init__ 注解，其次取类注解
                 py_type = init_hints.get(attr_name) or cls_annotations.get(attr_name)
+                # 解包 Optional[X]：Python 3.10 的 get_type_hints 会把带 None 默认值的
+                # 参数注解自动包装为 Optional[X]，3.11+ 不再包装。此处统一解包为承载类型，
+                # 否则 _get_sql_type 在 3.10 上识别失败回退到 TEXT，导致数值列被当字符串存储。
+                py_type = unwrap_optional_type(py_type)
                 if py_type is None:
                     py_type = type(default_val) if default_val is not None and default_val != "" else str
                 # 检查Column注解

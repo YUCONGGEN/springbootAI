@@ -27,6 +27,7 @@ from spring.annotations.cloud import EnableFeignClients, FeignClient
 from spring.annotations.conditional import all_conditions_match as _all_conditions_match
 from spring.config.config_loader import ConfigLoader, set_global_config_loader
 from spring.event import ApplicationEventPublisher
+from spring.core.typing_utils import unwrap_optional_type
 import inspect
 
 
@@ -273,6 +274,11 @@ class ApplicationContext:
                     if param_name == 'self':
                         continue
                     parameter_type = type_hints.get(param_name, param.annotation)
+                    # 解包 Optional[X]：Python 3.10 的 get_type_hints 会把带 None 默认值的
+                    # 构造参数注解自动包装为 Optional[X]（3.11+ 不再包装）。此处统一解包为承载类型，
+                    # 否则按类型匹配 Bean 时 Optional[SomeService] 无法命中已注册的 SomeService。
+                    # 在 Annotated 解包之前先解 Optional，可正确处理 Optional[Annotated[X, Q]]。
+                    parameter_type = unwrap_optional_type(parameter_type)
                     if parameter_type is not inspect.Parameter.empty:
                         qualifier = None
                         for ann in init_annotations:
