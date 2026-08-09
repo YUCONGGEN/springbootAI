@@ -38,15 +38,15 @@
 Excel 引擎是**可选依赖**，按需安装（不安装不影响框架核心与注解声明）：
 
 ```bash
-pip install springpy[excel]      # 推荐：经 extras 安装，自动装 openpyxl==3.1.5
+pip install springpy-framework[excel]      # 推荐：经 extras 安装，自动装 openpyxl==3.1.5
 # 或
 pip install -r requirements-excel.txt
 # 或
 pip install openpyxl==3.1.5
 ```
 
-> 同时，本次发布还为 **AI 模块**补齐了单独安装能力：`pip install springpy[ai]`。
-> 一键全量安装：`pip install springpy[full]`。
+> 同时，本次发布还为 **AI 模块**补齐了单独安装能力：`pip install springpy-framework[ai]`。
+> 一键全量安装：`pip install springpy-framework[full]`。
 
 ---
 
@@ -204,7 +204,7 @@ EasyExcel.read("multi.xlsx", head=DemoUser).sheet(sheet_no=0).doRead()
 | **表头行可配置** | `head_row_number` 支持表头不在第 1 行（前置说明行场景）。 |
 | **样式** | 默认表头加粗居中+填充+边框、冻结表头、自适应列宽；支持 `width`/`num_format`。 |
 | **流式 API** | `EasyExcel.read(...).head_row_number(...).sheet(...).doRead()`，对齐 alibaba EasyExcel。 |
-| **可选依赖降级** | 注解声明无需 openpyxl；未安装时 read/write 抛 `ExcelDependencyError` 提示 `pip install springpy[excel]`。 |
+| **可选依赖降级** | 注解声明无需 openpyxl；未安装时 read/write 抛 `ExcelDependencyError` 提示 `pip install springpy-framework[excel]`。 |
 
 ---
 
@@ -245,7 +245,7 @@ EasyExcel.read("multi.xlsx", head=DemoUser).sheet(sheet_no=0).doRead()
 运行：
 
 ```bash
-pip install springpy[excel]      # 或 pip install openpyxl==3.1.5
+pip install springpy-framework[excel]      # 或 pip install openpyxl==3.1.5
 pytest tests/test_excel_module.py -v
 ```
 

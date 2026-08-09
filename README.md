@@ -15,11 +15,11 @@ SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供�
 
 | 模块 | 文档 | 安装 | 说明 |
 |------|------|------|------|
-| AI（对齐 Spring AI 2.0） | [AI_MODULE.md](doc/AI_MODULE.md) | `pip install springpy[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测 |
+| AI（对齐 Spring AI 2.0） | [AI_MODULE.md](doc/AI_MODULE.md) | `pip install springpy-framework[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测 |
 | 内嵌 PyMyBatis ORM 与 DDL | [ORM_MODULE.md](doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 |
 | Spring Cloud（对齐 Cloud Alibaba） | [CLOUD_MODULE.md](doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 负载均衡 / 分布式事务 |
-| Excel（对齐 alibaba EasyExcel） | [EXCEL_MODULE.md](doc/EXCEL_MODULE.md) | `pip install springpy[excel]` | `@ExcelProperty` / `@ExcelIgnore` / `@excel_sheet` 注解驱动读写 |
-| CSV（注解驱动读写） | [CSV_MODULE.md](doc/CSV_MODULE.md) | `pip install springpy[csv]` | `@CsvProperty` / `@CsvIgnore` / `@csv_file` 注解驱动读写 / 转换器 / 流式 |
+| Excel（对齐 alibaba EasyExcel） | [EXCEL_MODULE.md](doc/EXCEL_MODULE.md) | `pip install springpy-framework[excel]` | `@ExcelProperty` / `@ExcelIgnore` / `@excel_sheet` 注解驱动读写 |
+| CSV（注解驱动读写） | [CSV_MODULE.md](doc/CSV_MODULE.md) | `pip install springpy-framework[csv]` | `@CsvProperty` / `@CsvIgnore` / `@csv_file` 注解驱动读写 / 转换器 / 流式 |
 | Swagger / OpenAPI（对齐 SpringDoc） | [SWAGGER_MODULE.md](doc/SWAGGER_MODULE.md) | 随核心包 | `@Tag` / `@Operation` / `@ApiResponse` / `@Parameter` / `@Schema` / `@SecurityScheme` 注解驱动 API 文档 + Swagger2 别名 |
 | P0/P1/P2 八大模块 | [EIGHT_MODULES.md](doc/EIGHT_MODULES.md) | 随核心包 | Spring Data Repository / Actuator / 多数据源读写分离 / 事务事件 / 配置松散绑定 / 测试切片 / i18n / WebSocket |
 | 安全 | [SECURITY.md](doc/SECURITY.md) | 随核心包 | JWT 生成校验 / 密码加密（SHA256/MD5/BCrypt）/ SQL 注入防护 / 访问控制 |
@@ -1940,7 +1940,7 @@ class CleanupJob:
 
 ## 12. SpringPy AI 模块
 
-> 本节（新手入门、快速开始、配置、AI 注解、ChatClient 链式 API、Advisor、ETL、工具调用、自动装配、企业级能力、DeepSeek 全特性演示）已分离至独立文档：[AI_MODULE.md](doc/AI_MODULE.md)。安装：`pip install springpy[ai]`。
+> 本节（新手入门、快速开始、配置、AI 注解、ChatClient 链式 API、Advisor、ETL、工具调用、自动装配、企业级能力、DeepSeek 全特性演示）已分离至独立文档：[AI_MODULE.md](doc/AI_MODULE.md)。安装：`pip install springpy-framework[ai]`。
 
 ## 13. Java 迁移指南
 

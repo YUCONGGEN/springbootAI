@@ -1,7 +1,7 @@
 # SpringPy CSV 模块使用文档
 
 > 版本：SpringPy CSV 1.0.0 ｜ 框架版本：SpringPy 1.7.0
-> 对齐 alibaba EasyExcel / commons-csv 的注解驱动 CSV 读写，**无可选依赖**（Python 标准库 `csv`），`pip install springpy` 即可用。
+> 对齐 alibaba EasyExcel / commons-csv 的注解驱动 CSV 读写，**无可选依赖**（Python 标准库 `csv`），`pip install springpy-framework` 即可用。
 > 设计原则：**复用项目既有范式，不重复造轮子**——注解描述符、反射解析、转换器、流式 API 全部对齐既有 Excel/ORM 实现。
 
 ---
@@ -214,7 +214,7 @@ class U:
 
 - **无样式/数字格式**：CSV 格式本身不支持单元格样式与数字格式，故无 `@ExcelProperty` 的 `num_format` / `style` 等价物；`date_format` 仅控制日期字符串的解析/格式化。
 - **转换器方法名仍为 `to_excel` / `from_excel`**：与 Excel 模块共享同一实现（DRY），避免分叉。`CsvConverter` 提供 `to_csv` / `from_csv` 语义别名。
-- **无可选依赖**：CSV 使用 Python 标准库 `csv`，无需 `pip install springpy[excel]`；注解声明与读写均开箱即用。
+- **无可选依赖**：CSV 使用 Python 标准库 `csv`，无需 `pip install springpy-framework[excel]`；注解声明与读写均开箱即用。
 - **列匹配**：有显式 `@CsvProperty` 且含表头时按表头文案匹配；无注解或无表头时按列位置匹配（与 EasyExcel 一致）。
 
 ---
