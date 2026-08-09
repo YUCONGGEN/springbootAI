@@ -147,7 +147,7 @@ class RedisSecondLevelCache:
         if params:
             sorted_params = sorted(params.items())
             key += str(sorted_params)
-        return hashlib.md5(key.encode()).hexdigest()
+        return hashlib.sha256(key.encode()).hexdigest()
 
     def get(self, table_name: str, params: Dict[str, Any]) -> Optional[Any]:
         """

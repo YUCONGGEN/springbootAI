@@ -252,6 +252,15 @@ class ConfigLoader:
         insecure_secret = 'spring-python-secret-key-change-in-production'
         if not secret or secret == insecure_secret or len(str(secret)) < 32:
             raise ConfigurationError("生产环境 JWT_SECRET_KEY 必须设置为至少 32 个字符的随机密钥")
+
+        seata_config = self._config.get('seata', {}) or {}
+        if seata_config.get('enabled'):
+            seata_mode = str(seata_config.get('mode', 'local')).lower()
+            if seata_mode != 'distributed':
+                raise ConfigurationError(
+                    "生产环境启用 Seata 时只允许 mode=distributed；"
+                    "实验性 HTTP/local 模式不能提供跨服务一致性"
+                )
     
     def get_config(self) -> Dict[str, Any]:
         """获取完整配置"""

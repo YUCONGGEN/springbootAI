@@ -3,8 +3,7 @@
 集成SQLAlchemy实现企业级数据库操作
 """
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship, scoped_session
+from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship, scoped_session
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 import logging

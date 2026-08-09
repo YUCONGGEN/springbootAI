@@ -3,6 +3,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .coverage
+coverage.xml
+tests_performance/results/*.json
 htmlcov/
 build/
 dist/
@@ -11,3 +13,17 @@ dist/
 *.log
 logs/
 .DS_Store
+.env
+.env.*
+!.env.example
+keys
+*.pem
+*.key
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+Thumbs.db

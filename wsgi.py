@@ -14,7 +14,8 @@ try:
 except ImportError:
     # 如果example_all不可用，提供一个最小ASGI应用占位
     from fastapi import FastAPI
-    app = FastAPI(title="SpringPy", version="1.3.0")
+    from spring import __version__
+    app = FastAPI(title="SpringPy", version=__version__)
 
     @app.get("/")
     async def root():

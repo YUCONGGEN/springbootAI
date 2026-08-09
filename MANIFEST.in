@@ -4,10 +4,6 @@ include requirements.txt
 include pyproject.toml
 
 graft spring
-graft example_all
-graft tests
-graft test_cloud_app
-graft docs
 graft sql
 
 # 排除开发/构建产物

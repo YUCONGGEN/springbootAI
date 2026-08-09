@@ -29,6 +29,7 @@ logs/
 .coverage
 htmlcov/
 .coverage.*
+tests_performance/results/*.json
 
 # 排除环境变量文件
 .env

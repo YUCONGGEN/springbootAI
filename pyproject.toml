@@ -1,52 +1,55 @@
 [build-system]
-requires = ["setuptools>=68", "wheel>=0.37"]
+requires = ["setuptools>=77", "wheel>=0.37"]
 build-backend = "setuptools.build_meta"
 
 # ========================================
 # SpringPy 项目元数据与依赖声明（PEP 621）
 # 本文件是依赖的单一真实来源，类似 Spring Boot 的 pom.xml
 # 版本锁定策略：所有直接依赖使用 == 精确锁定
-# Sentinel/OpenTelemetry/Seata HTTP-AT/API Gateway/DDL Auto 均为内嵌实现，无需外部依赖
+# 实验性 HTTP 补偿协调器不提供 Seata AT 语义；生产分布式事务需要真实协调器
 # ========================================
 
 [project]
 name = "springpy"
-version = "1.5.0"
+version = "1.8.0"
 description = "Python版Spring Boot框架，集成PyMyBatis ORM"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "YuConggen", email = "1516933915@qq.com" }
 ]
 keywords = ["spring", "springboot", "mybatis", "orm", "web", "framework", "python"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Database",
-    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Topic :: Internet :: WWW/HTTP :: ASGI :: Application",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 # ========================================
 # 核心依赖 - 类似 Spring Boot Starter Web/Core
 # 安装：pip install springpy
 # ========================================
 dependencies = [
-    "fastapi==0.128.8",
+    "fastapi==0.141.1",
     "uvicorn==0.39.0",
+    "websockets==15.0.1",
     "pyyaml==6.0.3",
-    "python-dotenv==1.2.1",
+    "python-dotenv==1.2.2",
     "DBUtils==3.1.2",
-    "cryptography==48.0.1",
+    "cryptography==50.0.0",
     "bcrypt==5.0.0",
     "pyjwt==2.13.0",
     "pydantic==2.13.4",
+    "requests==2.33.0",
+    "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]
@@ -84,10 +87,30 @@ logging = ["loguru==0.7.3"]
 ast = ["sqlglot==27.28.1"]
 
 # ========================================
+# Excel 注解驱动读写 - 类似 alibaba EasyExcel
+# 安装：pip install springpy[excel]
+# ========================================
+excel = ["openpyxl==3.1.5"]
+
+# ========================================
+# SpringPy AI 模块 - 对齐 Spring AI（ChatClient/Advisor/ETL/Tools）
+# 安装：pip install springpy[ai]
+# AI 模块采用"可选依赖 + 降级"设计：未安装仍可用（降级原生 HTTP + FakeChatModel）
+# 依赖清单同步自 requirements-ai.txt（所有版本号 == 已测试验证）
+# ========================================
+ai = [
+    "langchain-openai==0.3.27",
+    "langchain-core==0.3.51",
+    "langchain-text-splitters==0.3.8",
+    "langchain-community==0.3.24",
+    "numpy==2.0.2",
+]
+
+# ========================================
 # 开发依赖
 # ========================================
 dev = [
-    "pytest==8.4.2",
+    "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "redis==7.0.1",
     "sqlglot==27.28.1",
@@ -106,6 +129,21 @@ full = [
     "nacos-sdk-python==2.0.11",
     "prometheus-client==0.26.0",
     "loguru==0.7.3",
+    "requests==2.33.0",
+    "httpx==0.28.1",
+    "openpyxl==3.1.5",
+    "langchain-openai==0.3.27",
+    "langchain-core==0.3.51",
+    "langchain-text-splitters==0.3.8",
+    "langchain-community==0.3.24",
+    "numpy==2.0.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "integration: requires real Docker-backed middleware services",
+    "seata_integration: requires a compatible Seata SDK and real Seata Server",
 ]
 
 [project.urls]
@@ -116,7 +154,8 @@ Repository = "https://github.com/YUCONGGEN/springboot_cloud_python.git"
 springpy = "spring.main:run_cli"
 
 [tool.setuptools.packages.find]
-exclude = ["tests", "example*", "test_cloud_app"]
+include = ["spring*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 spring = ["*.py", "**/*.py", "**/*.xml", "**/*.yml", "**/*.yaml"]

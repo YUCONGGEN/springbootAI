@@ -1,7 +1,7 @@
 """
-轻量 API 网关 (Embedded API Gateway)
+轻量异步 API 网关 (Embedded API Gateway)
 
-无需 Spring Cloud Gateway / WebFlux 的内嵌API网关，基于 ASGI/WSGI 反向代理：
+无需 Spring Cloud Gateway / WebFlux 的内嵌 API 网关，基于异步 ASGI 反向代理：
 - 路由转发（service-id -> instance URL via discovery）
 - 负载均衡（支持轮询/随机/权重）
 - 全局过滤器（认证、日志、追踪头注入、限流）
@@ -14,7 +14,8 @@ Usage (Starlette/FastAPI-based):
     gateway = GatewayRouter(discovery_client=discovery_client)
     gateway.route("/users/**", service_id="user-service", strip_prefix=True)
     gateway.route("/orders/**", service_id="order-service")
-    app.mount("/api", gateway)
+    app.add_route("/api/{path:path}", gateway.handle_asgi,
+                  methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 """
 
 import time
@@ -22,8 +23,13 @@ import logging
 import threading
 import re
 import random
+import inspect
 from typing import Dict, List, Optional, Callable, Any, Tuple
 from dataclasses import dataclass, field
+
+import httpx
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 logger = logging.getLogger("Spring.Cloud.Gateway")
 
@@ -78,7 +84,11 @@ class AuthenticationFilter(GatewayFilter):
         for ep in self.exclude_paths:
             if ctx.request_path.startswith(ep):
                 return True
-        token = ctx.request_headers.get(self.token_header, "")
+        token = next(
+            (value for key, value in ctx.request_headers.items()
+             if key.lower() == self.token_header.lower()),
+            "",
+        )
         if not token:
             ctx.response_status = 401
             ctx.response_headers["X-Gateway-Error"] = "Missing Authorization"
@@ -172,7 +182,7 @@ class GatewayRouter:
     """
     API 网关路由
 
-    支持WSGI/ASGI双模式，可直接挂载到 Starlette/FastAPI/Werkzeug 应用上。
+    作为异步 Starlette/FastAPI endpoint 使用。上游 I/O 不会阻塞事件循环。
 
     Usage:
         gateway = GatewayRouter(discovery_client=nacos_discovery)
@@ -180,16 +190,58 @@ class GatewayRouter:
         app.add_route("/api/{path:path}", gateway.handle_asgi, methods=["GET","POST","PUT","DELETE"])
     """
 
-    def __init__(self, discovery_client=None, default_filters: List[GatewayFilter] = None):
+    _HOP_BY_HOP_HEADERS = {
+        'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
+        'te', 'trailer', 'transfer-encoding', 'upgrade',
+    }
+
+    def __init__(self, discovery_client=None, default_filters: List[GatewayFilter] = None,
+                 timeout: float = 10.0, max_body_size: int = 10 * 1024 * 1024,
+                 transport: Optional[httpx.AsyncBaseTransport] = None):
         self.discovery = discovery_client
         self.routes: List[Route] = []
-        self.filters: List[GatewayFilter] = default_filters or [
-            LoggingFilter(),
-            TracingFilter(),
-        ]
+        self.filters: List[GatewayFilter] = (
+            list(default_filters) if default_filters is not None
+            else [LoggingFilter(), TracingFilter()]
+        )
         self._rr_counters: Dict[str, int] = {}
         self._rr_lock = threading.Lock()
         self._path_pattern_cache: Dict[str, re.Pattern] = {}
+        self.timeout = float(timeout)
+        self.max_body_size = int(max_body_size)
+        self._transport = transport
+        self._client: Optional[httpx.AsyncClient] = None
+        self._client_lock = threading.Lock()
+
+    def install(self, app, path: str = "/{path:path}",
+                methods: Optional[List[str]] = None) -> "GatewayRouter":
+        """Register the gateway route and its HTTP-client shutdown hook."""
+        app.add_api_route(
+            path,
+            self.handle_asgi,
+            methods=methods or ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        )
+        app.router.add_event_handler("shutdown", self.aclose)
+        return self
+
+    def _get_client(self) -> httpx.AsyncClient:
+        # Construction has no await points.  A short process-local lock avoids
+        # leaking duplicate connection pools during the first concurrent hit.
+        with self._client_lock:
+            if self._client is None:
+                self._client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(self.timeout),
+                    follow_redirects=False,
+                    transport=self._transport,
+                )
+            return self._client
+
+    async def aclose(self) -> None:
+        with self._client_lock:
+            client = self._client
+            self._client = None
+        if client is not None:
+            await client.aclose()
 
     def add_filter(self, flt: GatewayFilter):
         self.filters.append(flt)
@@ -269,28 +321,24 @@ class GatewayRouter:
             path = route.prefix.rstrip('/') + '/' + path.lstrip('/')
         return path
 
-    def handle_asgi(self, scope, receive, send):
-        """ASGI 处理器（适配 Starlette/FastAPI）"""
-        import json
-        if scope['type'] != 'http':
-            return
+    async def _run_filter(self, flt: GatewayFilter, method: str,
+                          ctx: FilterContext) -> Any:
+        result = getattr(flt, method)(ctx)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
-        path = scope['path']
-        method = scope['method']
+    async def handle_asgi(self, request: Request) -> Response:
+        """转发一个 Starlette/FastAPI 请求。"""
+        path = request.url.path
+        method = request.method
         route = self.match_route(path)
         if route is None:
-            self._asgi_response(send, 404, {"content-type": "application/json"},
-                                json.dumps({"error": "No route matched", "path": path}).encode())
-            return
+            return JSONResponse({"error": "No route matched", "path": path}, status_code=404)
 
-        headers = {k.decode(): v.decode() for k, v in scope.get('headers', [])}
-        query = scope.get('query_string', b'').decode()
-        query_dict = {}
-        if query:
-            for pair in query.split('&'):
-                if '=' in pair:
-                    k, v = pair.split('=', 1)
-                    query_dict[k] = v
+        headers = dict(request.headers)
+        query_items = list(request.query_params.multi_items())
+        query_dict = dict(query_items)
 
         ctx = FilterContext(
             route=route,
@@ -302,130 +350,85 @@ class GatewayRouter:
 
         # 执行前置过滤器
         for flt in self.filters:
-            if not flt.pre_filter(ctx):
-                self._asgi_response(send, ctx.response_status or 403,
-                                    {**ctx.response_headers, "content-type": "application/json"},
-                                    json.dumps({"error": "Gateway filter blocked",
-                                                "details": ctx.response_headers}).encode())
-                return
+            if not await self._run_filter(flt, 'pre_filter', ctx):
+                return JSONResponse(
+                    {"error": "Gateway filter blocked", "details": ctx.response_headers},
+                    status_code=ctx.response_status or 403,
+                    headers=ctx.response_headers,
+                )
 
         target_uri = self._resolve_uri(route)
         if not target_uri:
-            self._asgi_response(send, 503, {"content-type": "application/json"},
-                                json.dumps({"error": "Service unavailable",
-                                            "service": route.service_id}).encode())
-            return
+            return JSONResponse(
+                {"error": "Service unavailable", "service": route.service_id},
+                status_code=503,
+            )
 
         forward_path = self.rewrite_path(route, path)
         ctx.attributes['forward_uri'] = target_uri + forward_path
 
-        # 简单HTTP转发（使用urllib，避免引入额外依赖）
-        try:
-            target_url = target_uri + forward_path
-            if query_dict:
-                target_url += '?' + '&'.join(f"{k}={v}" for k, v in query_dict.items())
-
-            import urllib.request
-            import urllib.error
-            req = urllib.request.Request(target_url, method=method)
-            for k, v in ctx.request_headers.items():
-                if k.lower() not in ('host', 'content-length'):
-                    req.add_header(k, v)
-
-            # 读取body
-            body = b''
-            async def read_body():
-                nonlocal body
-                while True:
-                    msg = await receive()
-                    if msg['type'] == 'http.request':
-                        body += msg.get('body', b'')
-                        if not msg.get('more_body', False):
-                            break
-                return body
-
-            # 同步获取body（简化实现）
+        content_length = request.headers.get('content-length')
+        if self.max_body_size > 0 and content_length:
             try:
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 简单fallback: 使用空body处理GET/DELETE
-                    if method in ('POST', 'PUT', 'PATCH'):
-                        body = self._read_body_sync(receive)
-                else:
-                    body = loop.run_until_complete(read_body())
-            except Exception:
+                if int(content_length) > self.max_body_size:
+                    return JSONResponse({"error": "Request body too large"}, status_code=413)
+            except ValueError:
                 pass
 
-            if body:
-                req.data = body
+        if self.max_body_size > 0:
+            chunks = []
+            body_size = 0
+            async for chunk in request.stream():
+                body_size += len(chunk)
+                if body_size > self.max_body_size:
+                    return JSONResponse({"error": "Request body too large"}, status_code=413)
+                chunks.append(chunk)
+            body = b''.join(chunks)
+        else:
+            body = await request.body()
 
-            try:
-                resp = urllib.request.urlopen(req, timeout=10)
-                resp_body = resp.read()
-                resp_status = resp.status
-                resp_headers = dict(resp.headers)
-            except urllib.error.HTTPError as e:
-                resp_status = e.code
-                resp_body = e.read()
-                resp_headers = dict(e.headers)
-            except Exception as e:
-                resp_status = 502
-                resp_body = json.dumps({"error": "Bad gateway", "detail": str(e)}).encode()
-                resp_headers = {"content-type": "application/json"}
+        request_headers = {
+            key: value for key, value in ctx.request_headers.items()
+            if key.lower() not in self._HOP_BY_HOP_HEADERS | {'host', 'content-length'}
+        }
+        try:
+            target_url = target_uri + forward_path
+            upstream = await self._get_client().request(
+                method,
+                target_url,
+                params=query_items,
+                headers=request_headers,
+                content=body,
+            )
 
-            ctx.response_status = resp_status
-            ctx.response_headers.update({k: str(v) for k, v in resp_headers.items() if k.lower() not in ('transfer-encoding',)})
+            ctx.response_status = upstream.status_code
+            response_headers = {
+                key: value for key, value in upstream.headers.items()
+                if key.lower() not in self._HOP_BY_HOP_HEADERS | {'content-length'}
+            }
+            ctx.response_headers.update(response_headers)
 
             # 执行后置过滤器
             for flt in self.filters:
                 try:
-                    flt.post_filter(ctx)
+                    await self._run_filter(flt, 'post_filter', ctx)
                 except Exception:
-                    pass
+                    logger.exception("[Gateway] post filter failed")
 
-            self._asgi_response(send, resp_status, ctx.response_headers, resp_body)
-        except Exception as e:
-            logger.error(f"[Gateway] Proxy error: {e}")
-            self._asgi_response(send, 500, {"content-type": "application/json"},
-                                json.dumps({"error": "Gateway internal error", "detail": str(e)}).encode())
-
-    def _read_body_sync(self, receive):
-        """同步读取body（简化实现）"""
-        body = b''
-        try:
-            while True:
-                msg = receive()
-                if hasattr(msg, '__await__'):
-                    # can't easily do this in sync mode; return empty
-                    break
-                if msg.get('type') == 'http.request':
-                    body += msg.get('body', b'')
-                    if not msg.get('more_body', False):
-                        break
+            return Response(
+                content=upstream.content,
+                status_code=upstream.status_code,
+                headers=ctx.response_headers,
+            )
+        except httpx.TimeoutException as exc:
+            logger.warning(f"[Gateway] Upstream timeout: {exc}")
+            return JSONResponse({"error": "Gateway timeout"}, status_code=504)
+        except httpx.HTTPError as exc:
+            logger.warning(f"[Gateway] Upstream request failed: {exc}")
+            return JSONResponse({"error": "Bad gateway"}, status_code=502)
         except Exception:
-            pass
-        return body
-
-    def _asgi_response(self, send, status: int, headers: Dict[str, str], body: bytes):
-        """发送ASGI响应"""
-        import asyncio
-        async def _respond():
-            await send({
-                'type': 'http.response.start',
-                'status': status,
-                'headers': [(k.encode(), v.encode() if isinstance(v, str) else v) for k, v in headers.items()],
-            })
-            await send({
-                'type': 'http.response.body',
-                'body': body,
-            })
-        try:
-            loop = asyncio.get_event_loop()
-            loop.create_task(_respond())
-        except RuntimeError:
-            # No running loop; create one
-            asyncio.run(_respond())
+            logger.exception("[Gateway] Proxy error")
+            return JSONResponse({"error": "Gateway internal error"}, status_code=500)
 
     def get_routes(self) -> List[Dict]:
         """获取所有路由信息"""

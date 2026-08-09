@@ -29,9 +29,16 @@ services:
     image: nacos/nacos-server:v2.5.1
     environment:
       MODE: standalone
+      PREFER_HOST_MODE: hostname
       NACOS_AUTH_ENABLE: "false"
     ports:
       - "8848:8848"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
   rabbitmq:
     image: rabbitmq:3-management-alpine

@@ -13,6 +13,7 @@ from prometheus_client import (
 )
 from prometheus_client.exposition import start_http_server
 import logging
+import os
 import time
 
 logger = logging.getLogger("Spring.Monitoring.Prometheus")
@@ -37,8 +38,21 @@ class PrometheusMetrics:
         self.namespace = namespace
         self.subsystem = subsystem
         self._registry = CollectorRegistry()
+        self._metric_registry = self._registry
+        if os.getenv('PROMETHEUS_MULTIPROC_DIR'):
+            from prometheus_client import multiprocess
+            multiprocess.MultiProcessCollector(self._registry)
+            # Metrics write their values to multiprocess files and must not also
+            # register live collectors in the exposition registry.
+            self._metric_registry = None
         self._metrics: dict = {}
         self._initialized = True
+
+    def configure(self, namespace: str, subsystem: str) -> None:
+        if self._metrics and (namespace != self.namespace or subsystem != self.subsystem):
+            raise RuntimeError("Prometheus namespace/subsystem cannot change after metrics are created")
+        self.namespace = namespace
+        self.subsystem = subsystem
     
     def create_counter(self, name: str, documentation: str, labelnames: list = None) -> Counter:
         """
@@ -60,7 +74,7 @@ class PrometheusMetrics:
                 labelnames=labelnames or [],
                 namespace=self.namespace,
                 subsystem=self.subsystem,
-                registry=self._registry,
+                registry=self._metric_registry,
             )
         return self._metrics[key]
     
@@ -84,7 +98,7 @@ class PrometheusMetrics:
                 labelnames=labelnames or [],
                 namespace=self.namespace,
                 subsystem=self.subsystem,
-                registry=self._registry,
+                registry=self._metric_registry,
             )
         return self._metrics[key]
     
@@ -111,7 +125,7 @@ class PrometheusMetrics:
                 buckets=buckets or Histogram.DEFAULT_BUCKETS,
                 namespace=self.namespace,
                 subsystem=self.subsystem,
-                registry=self._registry,
+                registry=self._metric_registry,
             )
         return self._metrics[key]
     
@@ -138,7 +152,7 @@ class PrometheusMetrics:
                 objectives=objectives or Summary.DEFAULT_OBJECTIVES,
                 namespace=self.namespace,
                 subsystem=self.subsystem,
-                registry=self._registry,
+                registry=self._metric_registry,
             )
         return self._metrics[key]
     
@@ -176,12 +190,10 @@ def init_prometheus(config: dict) -> None:
     Args:
         config: 配置字典，包含namespace, subsystem, port等
     """
-    global prometheus_metrics
-    prometheus_metrics = PrometheusMetrics(
+    prometheus_metrics.configure(
         namespace=config.get('namespace', 'spring'),
-        subsystem=config.get('subsystem', 'python')
+        subsystem=config.get('subsystem', 'python'),
     )
-    
-    # 启动指标暴露服务器
-    port = config.get('port', 8000)
-    prometheus_metrics.start_server(port)
+    # 默认通过主应用 /actuator/prometheus 暴露，避免多 worker 争抢端口。
+    if config.get('standalone_server', False):
+        prometheus_metrics.start_server(config.get('port', 8000))

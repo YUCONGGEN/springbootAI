@@ -121,6 +121,37 @@ def global_transactional_decorator(annotation: GlobalTransactional):
     - 使用Seata事务管理器进行事务管理
     """
     def decorator(func: Callable) -> Callable:
+        def begin_transaction():
+            return seata_manager.begin_transaction(
+                timeout=annotation.timeout,
+                name=annotation.name or func.__name__,
+            )
+
+        def commit_transaction(tx_id: str, duration: float) -> None:
+            if duration * 1000 > annotation.timeout:
+                raise TimeoutError(f"Transaction timeout after {duration:.2f}s")
+            if not seata_manager.commit_transaction(tx_id):
+                raise RuntimeError(f"Global transaction commit failed: {tx_id}")
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                if seata_manager.is_in_transaction():
+                    logger.warning("[GlobalTransactional] Nested transaction detected, skipping")
+                    return await func(*args, **kwargs)
+                tx_id = begin_transaction()
+                start_time = time.monotonic()
+                try:
+                    result = await func(*args, **kwargs)
+                    commit_transaction(tx_id, time.monotonic() - start_time)
+                    return result
+                except Exception:
+                    if seata_manager.is_in_transaction():
+                        seata_manager.rollback_transaction(tx_id)
+                    raise
+
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             # 检查是否已经在事务中
@@ -129,32 +160,26 @@ def global_transactional_decorator(annotation: GlobalTransactional):
                 return func(*args, **kwargs)
             
             # 开启分布式事务
-            tx_id = seata_manager.begin_transaction(
-                timeout=annotation.timeout,
-                name=annotation.name or func.__name__
-            )
+            tx_id = begin_transaction()
             
             logger.info(f"[GlobalTransactional] Begin transaction: {tx_id}")
             
-            start_time = time.time()
+            start_time = time.monotonic()
             
             try:
                 result = func(*args, **kwargs)
                 
                 # 检查执行时间是否超时
-                duration = time.time() - start_time
-                if duration * 1000 > annotation.timeout:
-                    raise Exception(f"Transaction timeout after {duration:.2f}s")
-                
-                # 提交事务
-                seata_manager.commit_transaction(tx_id)
+                duration = time.monotonic() - start_time
+                commit_transaction(tx_id, duration)
                 logger.info(f"[GlobalTransactional] Commit transaction: {tx_id}, duration={duration:.4f}s")
                 
                 return result
             
             except Exception as e:
                 # 异常触发回滚
-                seata_manager.rollback_transaction(tx_id)
+                if seata_manager.is_in_transaction():
+                    seata_manager.rollback_transaction(tx_id)
                 logger.error(f"[GlobalTransactional] Rollback transaction: {tx_id}, error={str(e)}")
                 raise
         return wrapper

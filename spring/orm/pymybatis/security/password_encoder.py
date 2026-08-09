@@ -1,9 +1,9 @@
 """
 PyMyBatis密码加密模块
 
-实现密码字段的加密存储和验证，支持多种加密算法：
-- MD5
-- SHA-256
+实现密码字段的安全哈希存储和验证，支持多种算法：
+- 旧 MD5 哈希只读兼容（新编码升级为 PBKDF2-SHA256）
+- PBKDF2-SHA256
 - BCrypt
 """
 
@@ -26,7 +26,7 @@ class PasswordEncoder:
     密码加密器
 
     核心功能：
-    1. 支持多种加密算法（MD5/SHA256/BCrypt）
+    1. 支持 BCrypt、PBKDF2-SHA256 和旧 MD5 哈希迁移
     2. 自动添加随机盐值（Salt）
     3. 密码验证
     4. 支持配置加密算法
@@ -136,7 +136,7 @@ class PasswordEncoder:
 
     def _encode_md5(self, password: str, salt: Optional[str] = None) -> str:
         """
-        使用MD5加密密码（不推荐用于生产环境，仅用于兼容）
+        兼容旧 ``algorithm=md5`` 配置，但新密码使用 PBKDF2-SHA256。
 
         Args:
             password: 明文密码
@@ -148,13 +148,7 @@ class PasswordEncoder:
         if salt is None:
             salt = self._generate_salt(16).hex()
 
-        # MD5 + Salt
-        md5 = hashlib.md5()
-        md5.update(salt.encode('utf-8'))
-        md5.update(password.encode('utf-8'))
-        hashed = md5.hexdigest()
-
-        return f"{salt}${hashed}"
+        return f"pbkdf2_sha256${self._encode_sha256(password, salt)}"
 
     def matches(self, raw_password: str, encoded_password: str) -> bool:
         """
@@ -230,7 +224,7 @@ class PasswordEncoder:
 
     def _matches_md5(self, raw_password: str, encoded_password: str) -> bool:
         """
-        使用MD5验证密码
+        验证迁移模式密码；兼容读取旧 MD5，新的编码使用 PBKDF2-SHA256。
 
         Args:
             raw_password: 明文密码
@@ -240,13 +234,16 @@ class PasswordEncoder:
             是否匹配
         """
         parts = encoded_password.split('$')
+        if len(parts) == 3 and parts[0] == 'pbkdf2_sha256':
+            return self._matches_sha256(raw_password, '$'.join(parts[1:]))
         if len(parts) != 2:
             return False
 
         salt = parts[0]
         expected_hash = parts[1]
 
-        md5 = hashlib.md5()
+        # 仅验证已存在的旧哈希；成功登录后应使用 encode() 重新哈希。
+        md5 = hashlib.md5(usedforsecurity=False)
         md5.update(salt.encode('utf-8'))
         md5.update(raw_password.encode('utf-8'))
         hashed = md5.hexdigest()

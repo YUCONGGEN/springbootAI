@@ -113,6 +113,74 @@ class Id(Column):
                          nullable=False, **kwargs)
 
 
+class Version(Column):
+    """``@Version`` 乐观锁字段（对齐 JPA ``javax.persistence.Version``）。
+
+    标记该字段为乐观锁版本号：DDL 生成 ``INTEGER NOT NULL DEFAULT 0``；
+    更新时配合 ``OptimisticLockExecutor`` 在 WHERE 子句追加 ``version = ?`` 并自增。
+
+    用法（两种形式，与 ``Column``/``Id`` 一致）::
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            version = Version()           # 类属性描述符形式
+            def __init__(self, id=None, version=0): ...
+
+        # 或函数装饰器形式
+        @version_column()
+        def version(self): ...
+
+    与 JPA 的差异（已标注）：
+    - JPA/Hibernate 由 ORM 自动在 UPDATE 时追加 version 检查并自增；
+      本框架内嵌 PyMyBatis 不自动注入 version 子句，需通过 ``OptimisticLockExecutor``
+      显式执行乐观锁更新（见本文件末尾），或在 XML/注解 SQL 中手写 version 条件。
+    """
+    def __init__(self, name: str = "", **kwargs):
+        kwargs.pop('primary_key', None)
+        kwargs.pop('auto_increment', None)
+        # 版本字段非空、默认 0
+        kwargs.setdefault('nullable', False)
+        kwargs.setdefault('default', 0)
+        super().__init__(name=name, primary_key=False, auto_increment=False, **kwargs)
+        # 版本标记，供 _build_column_meta 识别
+        self.version = True
+
+
+class Transient:
+    """``@Transient`` 瞬态字段标记（对齐 JPA ``javax.persistence.Transient``）。
+
+    标记该字段**不持久化**：DDL 自动建表与实体解析均跳过该字段。
+
+    用法（两种形式，与 ``ExcelIgnore`` 一致）::
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            display_name = Transient()    # 类属性描述符形式：不落库
+            def __init__(self, id=None, display_name=None): ...
+
+        # 或函数装饰器形式
+        @transient_field()
+        def display_name(self): ...
+
+    实现为独立标记类（非 ``Column`` 子类），因为瞬态字段根本不是列。
+    """
+    def __init__(self, default: Any = None):
+        self.default = default
+        self.attr_name: str = ""
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        """类属性描述符形式时，Python 自动回填字段名（镜像 ``ExcelIgnore``）。"""
+        self.attr_name = name
+
+    def __call__(self, target):
+        """函数装饰器形式：``@Transient()``，把 ``__transient__`` 标记挂到目标。"""
+        setattr(target, '__transient__', True)
+        self.attr_name = getattr(target, '__name__', '')
+        return target
+
+
 class Table:
     """表注解"""
     def __init__(self, name: str = "", indexes: List['Index'] = None, comment: str = ""):
@@ -152,11 +220,64 @@ def id_column(auto_increment: bool = True, **kwargs):
     return decorator
 
 
+def version_column(**kwargs):
+    """``@Version`` 函数装饰器形式（镜像 ``column()`` / ``id_column()``）。
+
+    用法::
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            @version_column()
+            def version(self): ...
+    """
+    col = Version(**kwargs)
+    def decorator(f):
+        setattr(f, '__column__', col)
+        return f
+    return decorator
+
+
+def transient_field():
+    """``@Transient`` 函数装饰器形式（镜像 ``ExcelIgnore.__call__``）。
+
+    用法::
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            @transient_field()
+            def display_name(self): ...
+    """
+    def decorator(f):
+        setattr(f, '__transient__', True)
+        return f
+    return decorator
+
+
 def _camel_to_snake(name: str) -> str:
     """驼峰转下划线"""
     import re
     s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
     return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+
+def _is_transient_field(cls: Type, attr_name: str) -> bool:
+    """检查字段是否标记为 ``@Transient``（对齐 Excel ``_has_explicit_properties`` 反射范式）。
+
+    判定规则（取 MRO 中最近声明）：
+      1. 类属性为 ``Transient`` 实例（描述符形式）。
+      2. 类属性带 ``__transient__`` 标记（``@transient_field()`` 函数装饰器形式）。
+    """
+    for cls_base in cls.__mro__:
+        if attr_name in cls_base.__dict__:
+            cval = cls_base.__dict__[attr_name]
+            if isinstance(cval, Transient):
+                return True
+            if getattr(cval, '__transient__', False) is True:
+                return True
+            return False  # 最近声明非瞬态，子类覆盖
+    return False
 
 
 class EntityTable:
@@ -252,6 +373,12 @@ class DdlAutoManager:
         # 处理 dataclass
         if is_dataclass(cls):
             for df in dataclass_fields(cls):
+                # @Transient 字段不持久化，跳过（与普通类分支一致）
+                if _is_transient_field(cls, df.name):
+                    continue
+                # dataclass 字段默认值若直接是 Transient 实例，也跳过
+                if isinstance(df.default, Transient):
+                    continue
                 col_meta = self._get_field_meta(df)
                 columns.append(col_meta)
         else:
@@ -265,6 +392,9 @@ class DdlAutoManager:
                 pass
             cls_annotations = getattr(cls, '__annotations__', {})
             for attr_name, default_val in init_fields.items():
+                # @Transient 字段不持久化，跳过
+                if _is_transient_field(cls, attr_name):
+                    continue
                 # 优先取 __init__ 注解，其次取类注解
                 py_type = init_hints.get(attr_name) or cls_annotations.get(attr_name)
                 if py_type is None:
@@ -392,6 +522,7 @@ class DdlAutoManager:
             'precision': 0,
             'scale': 0,
             'column_definition': '',
+            'version': False,      # @Version 乐观锁标记
         }
         if col_info and isinstance(col_info, Column):
             if col_info.name:
@@ -408,6 +539,18 @@ class DdlAutoManager:
             info['precision'] = col_info.precision
             info['scale'] = col_info.scale
             info['column_definition'] = col_info.column_definition
+            # @Version 乐观锁字段：标记并强制 INTEGER 类型 + 默认 0
+            if isinstance(col_info, Version) or getattr(col_info, 'version', False):
+                info['version'] = True
+                info['nullable'] = False
+                if info['default'] is None:
+                    info['default'] = 0
+                # 版本号统一用整型（与 JPA Version 语义一致）
+                if self.dialect == 'sqlite':
+                    info['sql_type'] = 'INTEGER'
+                else:
+                    info['sql_type'] = 'INTEGER'
+                return info
         else:
             info['name'] = _camel_to_snake(attr_name)
 
@@ -843,3 +986,226 @@ def init_ddl_auto(connection_pool, config: dict = None) -> Optional[DdlAutoManag
 def get_ddl_manager() -> Optional[DdlAutoManager]:
     """获取全局DDL管理器"""
     return _global_ddl_manager
+
+
+# ==================== JPA @Version 乐观锁执行器 ====================
+
+class OptimisticLockError(Exception):
+    """乐观锁冲突异常：UPDATE 影响行数为 0，说明版本号已变更或记录不存在。"""
+
+
+def _find_version_column(entity_class: Type) -> Optional[dict]:
+    """解析实体类，返回 ``@Version`` 列元数据 dict（无则 None）。
+
+    复用 ``DdlAutoManager._parse_entity`` 解析逻辑，避免重复实现字段扫描。
+    """
+    # 用一个临时 manager 仅做解析（不执行 DDL）
+    tmp = DdlAutoManager.__new__(DdlAutoManager)
+    tmp.dialect = 'sqlite'
+    tmp.mode = DdlAutoMode.NONE
+    try:
+        et = tmp._parse_entity(entity_class)
+    except Exception:
+        return None
+    for col in et.columns:
+        if col.get('version'):
+            return col
+    return None
+
+
+class OptimisticLockExecutor:
+    """``@Version`` 乐观锁更新执行器（对齐 JPA/Hibernate 乐观锁语义）。
+
+    本框架内嵌 PyMyBatis **不自动**在 UPDATE 时注入 version 检查子句（与 JPA/Hibernate
+    的差异，已在 ``Version`` 注解文档标注）。本执行器提供等价的显式乐观锁更新：
+    生成 ``UPDATE table SET ... , version = version + 1 WHERE <pk> = ? AND version = ?``，
+    根据影响行数判断是否冲突。
+
+    用法::
+
+        from spring.orm import OptimisticLockExecutor, Version, Id, entity
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            version = Version()
+            def __init__(self, id=None, name=None, version=0):
+                self.id = id; self.name = name; self.version = version
+
+        executor = OptimisticLockExecutor(connection_pool, dialect="mysql")
+        # 冲突时抛 OptimisticLockError
+        executor.update(entity_class=User, entity=user_obj,
+                        set_fields={"name": "new_name"})
+        # 或探测式（不抛错，返回是否成功）
+        ok = executor.try_update(entity_class=User, entity=user_obj,
+                                 set_fields={"name": "new_name"})
+
+    Args:
+        connection_pool: 数据库连接池（需支持 ``connection()`` 上下文管理器）。
+        dialect:         SQL 方言（mysql/postgresql/sqlite），影响标识符引用。
+    """
+
+    def __init__(self, connection_pool: Any, dialect: str = "mysql"):
+        self.pool = connection_pool
+        self.dialect = dialect.lower()
+
+    def _quote(self, identifier: str) -> str:
+        if self.dialect == 'mysql':
+            return f"`{identifier}`"
+        return f'"{identifier}"'
+
+    def _find_pk(self, entity_class: Type) -> Optional[dict]:
+        """返回主键列元数据。"""
+        for col in self._parse_columns(entity_class):
+            if col.get('primary_key'):
+                return col
+        return None
+
+    def _parse_columns(self, entity_class: Type) -> List[dict]:
+        """解析实体类的全部列元数据（复用 ``DdlAutoManager._parse_entity``）。
+
+        列元数据含 ``py_name``（Python 属性名）与 ``name``（SQL 列名），供
+        ``set_fields`` 的属性名 -> 列名翻译使用，避免 ``Column(name=...)`` 自定义列名时
+        生成错误 SQL（与 JPA 实体元数据语义一致）。
+        """
+        tmp = DdlAutoManager.__new__(DdlAutoManager)
+        tmp.dialect = self.dialect
+        tmp.mode = DdlAutoMode.NONE
+        try:
+            et = tmp._parse_entity(entity_class)
+        except Exception:
+            return []
+        return list(et.columns)
+
+    def _column_py_to_sql_map(self, entity_class: Type) -> Dict[str, str]:
+        """构造 ``{py_name: sql_column_name}`` 映射，用于 ``set_fields`` 翻译。"""
+        mapping: Dict[str, str] = {}
+        for col in self._parse_columns(entity_class):
+            py = col.get('py_name') or col.get('name')
+            mapping[py] = col.get('name') or py
+        return mapping
+
+    def update(
+        self,
+        entity_class: Type,
+        entity: Any,
+        set_fields: Dict[str, Any],
+    ) -> int:
+        """乐观锁更新：冲突时抛 ``OptimisticLockError``。
+
+        Args:
+            entity_class: 实体类（带 ``@Version`` 与主键）。
+            entity:       实体实例（提供主键值与当前 version）。
+            set_fields:   要更新的字段 -> 值映射（不含 version，version 自动 +1）。
+        Returns:
+            新版本号（旧 version + 1）。
+        """
+        version_col = _find_version_column(entity_class)
+        if version_col is None:
+            raise ValueError(
+                f"{entity_class.__name__} 未声明 @Version 字段，无法乐观锁更新"
+            )
+        # 注意：必须在 try_update 之前捕获 old_version——try_update 成功后会回写
+        # entity.version = old_version + 1，事后再读会得到已自增的值。
+        old_version = getattr(entity, version_col['py_name'], 0) or 0
+        ok = self.try_update(entity_class, entity, set_fields)
+        if not ok:
+            raise OptimisticLockError(
+                f"乐观锁更新失败：{entity_class.__name__} 版本已变更或记录不存在"
+            )
+        return old_version + 1
+
+    def try_update(
+        self,
+        entity_class: Type,
+        entity: Any,
+        set_fields: Dict[str, Any],
+    ) -> bool:
+        """乐观锁更新（探测式）：成功返回 True，冲突/记录不存在返回 False。"""
+        version_col = _find_version_column(entity_class)
+        if version_col is None:
+            raise ValueError(f"{entity_class.__name__} 未声明 @Version 字段，无法乐观锁更新")
+        pk_col = self._find_pk(entity_class)
+        if pk_col is None:
+            raise ValueError(f"{entity_class.__name__} 未找到主键字段")
+
+        table_name = self._resolve_table_name(entity_class)
+        old_version = getattr(entity, version_col['py_name'], 0) or 0
+        pk_value = getattr(entity, pk_col['py_name'], None)
+        if pk_value is None:
+            raise ValueError("实体主键值为空，无法乐观锁更新")
+
+        # 构造 UPDATE ... SET ..., version = version + 1 WHERE pk = ? AND version = ?
+        # set_fields 的键为 Python 属性名，需按实体元数据翻译为真实 SQL 列名
+        col_map = self._column_py_to_sql_map(entity_class)
+        set_parts = [f"{self._quote(self._col_sql_name(f, col_map))} = ?" for f in set_fields]
+        set_parts.append(f"{self._quote(version_col['name'])} = {self._quote(version_col['name'])} + 1")
+        sql = (
+            f"UPDATE {self._quote(table_name)} SET {', '.join(set_parts)} "
+            f"WHERE {self._quote(pk_col['name'])} = ? AND {self._quote(version_col['name'])} = ?"
+        )
+        params = list(set_fields.values()) + [pk_value, old_version]
+
+        affected = self._execute_dml(sql, params)
+        # 同步回写实体上的新版本号，便于后续操作
+        if affected > 0:
+            try:
+                setattr(entity, version_col['py_name'], old_version + 1)
+            except Exception:
+                pass
+        return affected > 0
+
+    def _col_sql_name(self, field_name: str, col_map: Dict[str, str]) -> str:
+        """Python 属性名 -> SQL 列名。
+
+        优先查实体元数据映射（``Column(name=...)`` 自定义列名）；未命中时回退 snake_case，
+        兼容未声明 ``Column`` 的简单字段。
+        """
+        if field_name in col_map:
+            return col_map[field_name]
+        return _camel_to_snake(field_name)
+
+    def _resolve_table_name(self, entity_class: Type) -> str:
+        table_meta = getattr(entity_class, '__table__', None)
+        if isinstance(table_meta, Table) and table_meta.name:
+            return table_meta.name
+        tn = getattr(entity_class, '__tablename__', "")
+        return tn or _camel_to_snake(entity_class.__name__)
+
+    def _execute_dml(self, sql: str, params: list) -> int:
+        """执行 DML，返回影响行数。兼容 DBUtils 连接池与原生 connection。"""
+        conn = None
+        cursor = None
+        try:
+            if hasattr(self.pool, 'connection'):
+                conn = self.pool.connection()
+            else:
+                conn = self.pool
+            cursor = conn.cursor()
+            affected = cursor.execute(sql, params)
+            conn.commit()
+            # 不同驱动返回语义不一：
+            # - DBUtils/MySQLdb: execute 返回 rowcount (int)
+            # - sqlite3: execute 返回 cursor 自身（非 int）
+            # - psycopg2: execute 返回 None
+            if not isinstance(affected, int):
+                affected = getattr(cursor, 'rowcount', 0)
+            return int(affected or 0)
+        except Exception:
+            try:
+                if conn is not None:
+                    conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn is not None and hasattr(self.pool, 'connection'):
+                try:
+                    conn.close()
+                except Exception:
+                    pass

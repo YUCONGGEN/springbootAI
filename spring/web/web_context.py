@@ -1,4 +1,5 @@
 from typing import Type, Any, Dict, Callable, List, Optional, get_args, get_origin, Union
+import asyncio
 import json
 import logging
 from datetime import datetime, date
@@ -6,6 +7,7 @@ from decimal import Decimal
 from fastapi import FastAPI, Request, Response
 from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from spring.context.application_context import ApplicationContext
 from spring.annotations.core import (
     RestController,
@@ -46,19 +48,46 @@ class _JsonEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+class _SyncHandlerOverloaded(RuntimeError):
+    """Raised when the bounded synchronous-handler queue cannot accept work."""
+
+
 class WebApplicationContext:
     def __init__(self, application_context: ApplicationContext, static_dir: str = None,
                  interceptor_registry: Any = None):
         self.application_context = application_context
-        self.fastapi_app = FastAPI()
+        # ---- Swagger/OpenAPI 配置 ----
+        from spring.web.swagger import SwaggerConfig
+        try:
+            config = application_context.get_config()
+        except (AttributeError, TypeError):
+            config = {}
+        self.swagger_config = SwaggerConfig.from_config(config)
+        self.fastapi_app = FastAPI(**self.swagger_config.to_fastapi_kwargs())
+        # 收集所有 Controller 类（用于 @Tag/@SecurityScheme 全局元数据）
+        self._controller_classes: List[Type] = []
+        # 收集方法级 @Parameter 元数据：{operation_id 或 path:method: [Parameter]}
+        self._method_param_meta: Dict[str, list] = {}
         self._routes: List[APIRoute] = []
         self._exception_handlers: Dict[Type[Exception], Callable] = {}
         self._static_dir = static_dir
         self._logger = logging.getLogger("Spring.Web")
         self._interceptor_registry = interceptor_registry
         self._interceptors_registered = False
+        thread_pool = self._get_thread_pool_config()
+        self._sync_max_workers = max(1, int(thread_pool.get('max_workers', 40)))
+        self._sync_max_queue = max(0, int(thread_pool.get('max_queue', 100)))
+        self._sync_queue_timeout = max(
+            0.001, float(thread_pool.get('queue_timeout', 0.1))
+        )
+        self._sync_capacity = asyncio.Semaphore(
+            self._sync_max_workers + self._sync_max_queue
+        )
 
     def init(self) -> None:
+        self.fastapi_app.router.add_event_handler(
+            'startup', self._configure_sync_thread_pool
+        )
         self._register_controllers()
         self._register_interceptors()
         self._register_exception_handlers()
@@ -66,6 +95,56 @@ class WebApplicationContext:
         self._register_static_files()
         self._register_health_endpoints()
         self._register_shutdown_handlers()
+        self._configure_swagger()
+
+    def _configure_swagger(self) -> None:
+        """在路由注册完成后，自定义 ``app.openapi()`` 注入全局 securitySchemes、
+        ``@Schema`` 模型描述与 ``@Parameter`` 参数描述。"""
+        from spring.web.swagger import (
+            configure_swagger, collect_security_schemes, register_schema, Schema,
+        )
+        # 收集全局 @SecurityScheme
+        security_schemes = collect_security_schemes(self._controller_classes)
+        # 注册 @Schema 标注的模型类
+        for cls in self._controller_classes:
+            for ann in (getattr(cls, '__spring_annotations__', []) or []):
+                if isinstance(ann, Schema) and getattr(ann, '_original_class', None):
+                    register_schema(ann._original_class, ann)
+        configure_swagger(
+            self.fastapi_app,
+            self.swagger_config,
+            security_schemes=security_schemes,
+            method_param_meta=self._method_param_meta,
+        )
+
+    def _get_thread_pool_config(self) -> Dict[str, Any]:
+        try:
+            config = self.application_context.get_config()
+        except (AttributeError, TypeError):
+            return {}
+        server = config.get('server', {}) if isinstance(config, dict) else {}
+        value = server.get('thread_pool', server.get('thread-pool', {}))
+        return value if isinstance(value, dict) else {}
+
+    async def _configure_sync_thread_pool(self) -> None:
+        """Set AnyIO's per-worker thread limit after the ASGI loop starts."""
+        from anyio.to_thread import current_default_thread_limiter
+
+        current_default_thread_limiter().total_tokens = self._sync_max_workers
+
+    async def _run_sync_handler(self, handler: Callable, call_params: Dict[str, Any]) -> Any:
+        try:
+            await asyncio.wait_for(
+                self._sync_capacity.acquire(), timeout=self._sync_queue_timeout
+            )
+        except asyncio.TimeoutError as exc:
+            raise _SyncHandlerOverloaded(
+                "Synchronous request capacity exhausted"
+            ) from exc
+        try:
+            return await run_in_threadpool(handler, **call_params)
+        finally:
+            self._sync_capacity.release()
 
     def _register_interceptors(self) -> None:
         """Attach managed ``HandlerInterceptor`` beans to the HTTP lifecycle."""
@@ -127,15 +206,36 @@ class WebApplicationContext:
             self._logger.info(f"Found controller: {bean_name}")
             controller_instance = self.application_context.get_bean(bean_name)
             controller_class = controller_instance.__class__
+            self._controller_classes.append(controller_class)
 
             class_mapping = self._get_class_mapping(controller_class)
             class_path = class_mapping.get('path', '')
             self._logger.info(f"Controller path: {class_path}")
 
-            for method_name, method in inspect.getmembers(controller_instance):
-                if not method_name.startswith('_') and inspect.ismethod(method):
-                    self._logger.info(f"Registering method: {method_name}")
-                    self._register_handler(controller_instance, method.__func__, class_path)
+            # 按方法定义顺序注册路由（遍历 MRO 的 __dict__，Python 3.7+ 保留定义顺序）。
+            # 对齐 Spring MVC 静态路径优先的体验：开发者可将静态路径（如 /list）声明在
+            # 动态路径（如 /{user_id}）之前，避免被动态路径拦截。
+            # 注意：不能用 inspect.getmembers（按字母序），否则 /{user_id} 会拦截 /list。
+            for method_name in self._iter_handler_names(controller_class):
+                method = getattr(controller_instance, method_name)
+                self._logger.info(f"Registering method: {method_name}")
+                self._register_handler(controller_instance, method.__func__, class_path)
+
+    @staticmethod
+    def _iter_handler_names(controller_class: Type):
+        """按定义顺序遍历 Controller 及其 MRO 上的 handler 方法名（跳过 `_` 开头）。
+
+        遍历 ``__mro__`` 的 ``__dict__`` 以保留源码定义顺序（Python 3.7+ 类命名空间有序），
+        同时覆盖继承的 handler；子类同名方法覆盖父类。
+        """
+        seen = set()
+        for klass in controller_class.__mro__:
+            for name, member in vars(klass).items():
+                if name.startswith('_') or name in seen:
+                    continue
+                if inspect.isfunction(member) or inspect.ismethod(member):
+                    seen.add(name)
+                    yield name
 
     def _get_class_mapping(self, controller_class: Type) -> Dict[str, Any]:
         annotations = getattr(controller_class, '__spring_annotations__', [])
@@ -154,6 +254,13 @@ class WebApplicationContext:
         if not annotations:
             return
 
+        # 收集 Swagger/OpenAPI 注解元数据（@Operation/@ApiResponse/@SecurityRequirement）
+        from spring.web.swagger import collect_openapi_metadata, Parameter
+        controller_class = controller_instance.__class__
+        openapi_meta = collect_openapi_metadata(method, controller_class)
+        # 收集方法级 @Parameter 元数据，供 configure_swagger 后处理注入
+        method_params = [a for a in (getattr(method, '__spring_annotations__', []) or []) if isinstance(a, Parameter)]
+
         for annotation in annotations:
             if isinstance(annotation, (RequestMapping, GetMapping, PostMapping, PutMapping, PatchMapping, DeleteMapping)):
                 paths = annotation.path if isinstance(annotation.path, list) else [annotation.path]
@@ -166,7 +273,11 @@ class WebApplicationContext:
                         path = prefix.rstrip('/') + '/' + path.lstrip('/')
                     endpoint = self._create_endpoint(controller_instance, method, path)
                     for http_method in methods:
-                        self._add_route(http_method.lower(), path, endpoint)
+                        self._add_route(http_method.lower(), path, endpoint, openapi_meta)
+                        # 记录 @Parameter 元数据（key = path:method，与后处理一致）
+                        if method_params:
+                            key = f"{path}:{http_method.lower()}"
+                            self._method_param_meta[key] = method_params
 
     def _create_endpoint(self, controller_instance: Any, method: Callable, path: str) -> Callable:
         from fastapi import Path as FastPath, Query as FastQuery, Body as FastBody
@@ -337,10 +448,16 @@ class WebApplicationContext:
 
                     if requires_authentication:
                         call_params['_spring_request'] = request
-                    result = getattr(controller_instance, method.__name__)(**call_params)
-
-                    if inspect.iscoroutine(result):
-                        result = await result
+                    handler = getattr(controller_instance, method.__name__)
+                    if inspect.iscoroutinefunction(handler):
+                        result = await handler(**call_params)
+                    else:
+                        # FastAPI normally offloads sync endpoints automatically.  SpringPy
+                        # wraps every controller in an async adapter, so it must preserve
+                        # that behavior explicitly for blocking DB/HTTP/AI workloads.
+                        result = await self._run_sync_handler(handler, call_params)
+                        if inspect.isawaitable(result):
+                            result = await result
 
                     if not isinstance(result, Result):
                         result = Result.success(data=result)
@@ -352,6 +469,16 @@ class WebApplicationContext:
                         )
                     return self._result_response(result)
 
+                except _SyncHandlerOverloaded as e:
+                    return JSONResponse(
+                        status_code=503,
+                        headers={'Retry-After': '1'},
+                        content={
+                            'code': 503,
+                            'message': str(e),
+                            'data': None,
+                        },
+                    )
                 except Exception as e:
                     # 记录详细错误日志
                     import traceback
@@ -436,17 +563,21 @@ class WebApplicationContext:
             return str(value)
         return value
 
-    def _add_route(self, http_method: str, path: str, endpoint: Callable) -> None:
+    def _add_route(self, http_method: str, path: str, endpoint: Callable,
+                   openapi_meta: Optional[Dict[str, Any]] = None) -> None:
+        # 将 Swagger 注解元数据传给 FastAPI 路由装饰器（tags/summary/description/
+        # operation_id/deprecated/responses/security）
+        kwargs = dict(openapi_meta) if openapi_meta else {}
         if http_method == 'get':
-            self.fastapi_app.get(path)(endpoint)
+            self.fastapi_app.get(path, **kwargs)(endpoint)
         elif http_method == 'post':
-            self.fastapi_app.post(path)(endpoint)
+            self.fastapi_app.post(path, **kwargs)(endpoint)
         elif http_method == 'put':
-            self.fastapi_app.put(path)(endpoint)
+            self.fastapi_app.put(path, **kwargs)(endpoint)
         elif http_method == 'patch':
-            self.fastapi_app.patch(path)(endpoint)
+            self.fastapi_app.patch(path, **kwargs)(endpoint)
         elif http_method == 'delete':
-            self.fastapi_app.delete(path)(endpoint)
+            self.fastapi_app.delete(path, **kwargs)(endpoint)
 
     def _register_exception_handlers(self) -> None:
         for bean_name in self.application_context.get_bean_names():
@@ -565,7 +696,7 @@ class WebApplicationContext:
         return self.fastapi_app
 
     def _register_health_endpoints(self) -> None:
-        """注册健康检查端点"""
+        """注册健康检查端点 + Actuator 运维端点。"""
         try:
             from spring.web.health import configure_health_checks, health_router
             configure_health_checks(self.application_context)
@@ -573,6 +704,14 @@ class WebApplicationContext:
             self._logger.info("Health check endpoints registered")
         except Exception as e:
             self._logger.warning(f"Failed to register health check endpoints: {e}")
+        # Actuator 标准运维端点（/env /loggers /metrics /beans /configprops /mappings /threaddump）
+        try:
+            from spring.web.actuator import actuator_router, configure_actuator
+            configure_actuator(self.application_context)
+            self.fastapi_app.include_router(actuator_router, prefix="/actuator")
+            self._logger.info("Actuator endpoints registered")
+        except Exception as e:
+            self._logger.warning(f"Failed to register actuator endpoints: {e}")
 
     def _register_shutdown_handlers(self) -> None:
         def close_resources() -> None:
@@ -590,6 +729,14 @@ class WebApplicationContext:
                 rabbitmq_client.close()
             except ImportError:
                 pass
+
+            try:
+                from spring.cloud.feign import FeignClientFactory
+                FeignClientFactory.close_all()
+            except ImportError:
+                pass
+
+            self.application_context.bean_factory.destroy_all()
 
         self.fastapi_app.router.add_event_handler('shutdown', close_resources)
 

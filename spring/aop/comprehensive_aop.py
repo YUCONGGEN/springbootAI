@@ -8,6 +8,7 @@ import time
 import functools
 import threading
 import hashlib
+import secrets
 import re
 import logging
 import inspect
@@ -25,6 +26,12 @@ from spring.annotations.core import (
     Retryable,
 )
 from spring.utils.redis_client import redis_client
+
+# Bean Validation 方法级切面（@BeanValidate）—— 纯标准库模块，无可选依赖
+from spring.validation.aop import (
+    BeanValidate as _BeanValidate,
+    bean_validate_decorator as _bean_validate_decorator,
+)
 
 logger = logging.getLogger("Spring.AOP")
 
@@ -278,7 +285,7 @@ def idempotent_decorator(annotation: Idempotent):
                 param_value = _resolve_dynamic_key(annotation.key, func, args, kwargs)
                 key = f"idempotent:{annotation.prefix}:{param_value}"
             else:
-                params_hash = hashlib.md5(f"{args}{kwargs}".encode()).hexdigest()
+                params_hash = hashlib.sha256(f"{args}{kwargs}".encode()).hexdigest()
                 key = f"idempotent:{annotation.prefix}:{params_hash}"
             
             now = time.time()
@@ -669,7 +676,7 @@ def trace_decorator(annotation: Trace):
             # 获取或生成 trace_id
             trace_id = getattr(_trace_context, 'trace_id', None)
             if not trace_id:
-                trace_id = hashlib.md5(f"{time.time()}-{threading.current_thread().ident}".encode()).hexdigest()
+                trace_id = secrets.token_hex(16)
             
             _trace_context.trace_id = trace_id
             
@@ -869,6 +876,8 @@ ANNOTATION_DECORATORS = {
     Validate: validate_decorator,
     Trace: trace_decorator,
     Retryable: _retryable_decorator,
+    # Bean Validation 方法级切面：受管 Bean 方法调用前校验参数对象
+    _BeanValidate: _bean_validate_decorator,
 }
 
 

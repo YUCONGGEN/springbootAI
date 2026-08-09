@@ -7,8 +7,9 @@ import logging
 import threading
 import queue
 import platform
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from spring.utils.redis_client import redis_client
 from spring.cloud.discovery import nacos_client
 
@@ -31,6 +32,14 @@ def configure_health_checks(application_context) -> None:
 # 避免某个组件（如 Nacos/RabbitMQ 未配置但尝试连接默认地址）卡死整个 /actuator/health 端点，
 # 进而拖垮 Docker HEALTHCHECK 与运维监控。
 _CHECK_TIMEOUT_SECONDS = 2.0
+
+_COMPONENT_CHECKS = {
+    'redis': lambda: _check_redis(),
+    'database': lambda: _check_database(),
+    'nacos': lambda: _check_nacos(),
+    'rabbitmq': lambda: _check_rabbitmq(),
+    'seata': lambda: _check_seata(),
+}
 
 
 def _run_with_timeout(func, timeout: float = _CHECK_TIMEOUT_SECONDS):
@@ -78,6 +87,23 @@ def _run_with_timeout(func, timeout: float = _CHECK_TIMEOUT_SECONDS):
         return {'status': 'DOWN', 'enabled': True, 'reason': 'health check returned no result'}
 
 
+def _collect_component_health() -> dict:
+    """并发执行各组件检查，使探针耗时接近单个检查的最大超时。"""
+    with ThreadPoolExecutor(max_workers=len(_COMPONENT_CHECKS)) as executor:
+        futures = {
+            name: executor.submit(_run_with_timeout, check)
+            for name, check in _COMPONENT_CHECKS.items()
+        }
+        return {name: future.result() for name, future in futures.items()}
+
+
+def _enabled_down_components(components: dict) -> list:
+    return [
+        name for name, status in components.items()
+        if status.get('enabled', False) and status.get('status') == 'DOWN'
+    ]
+
+
 @health_router.get('/health')
 def health_check():
     """
@@ -93,29 +119,9 @@ def health_check():
         'components': {}
     }
     
-    # 检查Redis
-    redis_status = _run_with_timeout(_check_redis)
-    health_status['components']['redis'] = redis_status
-    if redis_status['status'] == 'DOWN':
+    health_status['components'] = _collect_component_health()
+    if _enabled_down_components(health_status['components']):
         health_status['status'] = 'DEGRADED'
-
-    # 检查数据库
-    db_status = _run_with_timeout(_check_database)
-    health_status['components']['database'] = db_status
-    if db_status['status'] == 'DOWN':
-        health_status['status'] = 'DEGRADED'
-
-    # 检查Nacos
-    nacos_status = _run_with_timeout(_check_nacos)
-    health_status['components']['nacos'] = nacos_status
-
-    # 检查RabbitMQ
-    rabbitmq_status = _run_with_timeout(_check_rabbitmq)
-    health_status['components']['rabbitmq'] = rabbitmq_status
-
-    # 检查Seata
-    seata_status = _run_with_timeout(_check_seata)
-    health_status['components']['seata'] = seata_status
     
     status_code = 200 if health_status['status'] == 'UP' else 503
     return JSONResponse(content=health_status, status_code=status_code)
@@ -145,21 +151,33 @@ def readiness_check():
     Returns:
         JSON格式的就绪状态
     """
-    # 检查核心组件
-    redis_status = _run_with_timeout(_check_redis)
-    
-    # 如果Redis不可用（且启用了），应用可能未就绪
-    if redis_status['status'] == 'DOWN' and redis_status.get('enabled', False):
+    components = _collect_component_health()
+    unavailable = _enabled_down_components(components)
+    if unavailable:
         return JSONResponse(content={
             'status': 'NOT_READY',
             'timestamp': time.time(),
-            'reason': 'Redis is unavailable'
+            'reason': f"Required components unavailable: {', '.join(unavailable)}",
+            'components': components,
         }, status_code=503)
     
     return JSONResponse(content={
         'status': 'READY',
-        'timestamp': time.time()
+        'timestamp': time.time(),
+        'components': components,
     }, status_code=200)
+
+
+@health_router.get('/prometheus')
+def prometheus_metrics():
+    config = _application_context.get_config() if _application_context is not None else {}
+    if not config.get('prometheus', {}).get('enabled', False):
+        return JSONResponse({'detail': 'Prometheus metrics are disabled'}, status_code=404)
+    from spring.monitoring.prometheus import CONTENT_TYPE_LATEST, prometheus_metrics as metrics
+    return Response(
+        content=metrics.generate_metrics_data(),
+        headers={'Content-Type': CONTENT_TYPE_LATEST},
+    )
 
 
 @health_router.get('/info')
@@ -284,6 +302,9 @@ def _check_database() -> dict:
 def _check_nacos() -> dict:
     """检查Nacos健康状态"""
     try:
+        config = _application_context.get_config() if _application_context is not None else {}
+        if not config.get('discovery', {}).get('enabled', False):
+            return {'status': 'DISABLED', 'enabled': False, 'reason': 'Nacos not configured'}
         if nacos_client.is_healthy():
             services = nacos_client.get_services()
             return {
@@ -291,12 +312,6 @@ def _check_nacos() -> dict:
                 'enabled': True,
                 'server_addr': nacos_client.server_addr,
                 'service_count': len(services) if services else 0
-            }
-        if nacos_client._client is None:
-            return {
-                'status': 'DISABLED',
-                'enabled': False,
-                'reason': 'Nacos not configured'
             }
         return {
             'status': 'DOWN',
@@ -315,6 +330,9 @@ def _check_nacos() -> dict:
 def _check_rabbitmq() -> dict:
     """检查RabbitMQ健康状态"""
     try:
+        config = _application_context.get_config() if _application_context is not None else {}
+        if not config.get('rabbitmq', {}).get('enabled', False):
+            return {'status': 'DISABLED', 'enabled': False, 'reason': 'RabbitMQ not configured'}
         from spring.messaging.rabbitmq import rabbitmq_client
         channel = rabbitmq_client._channel
         if channel:
@@ -327,12 +345,7 @@ def _check_rabbitmq() -> dict:
                 'host': rabbitmq_client.host,
                 'port': rabbitmq_client.port
             }
-        else:
-            return {
-                'status': 'DISABLED',
-                'enabled': False,
-                'reason': 'RabbitMQ not configured'
-            }
+        return {'status': 'DOWN', 'enabled': True, 'reason': 'RabbitMQ channel is unavailable'}
     except ImportError:
         return {
             'status': 'DISABLED',
@@ -351,6 +364,21 @@ def _check_seata() -> dict:
     """检查Seata健康状态"""
     from spring.cloud.seata import seata_manager
     try:
+        config = _application_context.get_config() if _application_context is not None else {}
+        seata_config = config.get('seata', {}) or {}
+        if not seata_config.get('enabled', False):
+            return {'status': 'DISABLED', 'enabled': False, 'reason': 'Seata not configured'}
+        mode = str(seata_config.get('mode', 'local')).lower()
+        if mode == 'http':
+            return {
+                'status': 'DOWN', 'enabled': True,
+                'reason': 'Experimental HTTP compensation mode is not production-ready',
+            }
+        if mode == 'local':
+            return {
+                'status': 'DOWN', 'enabled': True,
+                'reason': 'Local mode does not provide distributed transaction guarantees',
+            }
         if seata_manager._seata_client_initialized:
             return {
                 'status': 'UP',
@@ -359,12 +387,10 @@ def _check_seata() -> dict:
                 'application_id': seata_manager.application_id,
                 'transaction_group': seata_manager.transaction_group
             }
-        else:
-            return {
-                'status': 'DISABLED',
-                'enabled': False,
-                'reason': 'Seata not configured or Seata SDK not available'
-            }
+        return {
+            'status': 'DOWN', 'enabled': True,
+            'reason': 'Distributed Seata client is not initialized',
+        }
     except Exception as e:
         return {
             'status': 'DOWN',

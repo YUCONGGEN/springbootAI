@@ -8,6 +8,7 @@ import json
 import inspect
 from dataclasses import asdict, is_dataclass
 from typing import Dict, Any, Optional, Type, Callable
+from starlette.concurrency import run_in_threadpool
 from spring.cloud.load_balancer import LoadBalancer
 
 logger = logging.getLogger("Spring.Cloud.Feign")
@@ -24,6 +25,8 @@ class FeignClientProxy:
         fallback: Type = None,
         fallback_factory: Type = None,
         timeout: float = 30,
+        pool_connections: int = 20,
+        pool_maxsize: int = 100,
     ):
         self.service_name = service_name
         self.path = path
@@ -32,6 +35,24 @@ class FeignClientProxy:
         self.fallback_factory = fallback_factory
         self.timeout = timeout
         self._load_balancer = LoadBalancer()
+        self._session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=max(1, int(pool_connections)),
+            pool_maxsize=max(1, int(pool_maxsize)),
+            max_retries=0,
+            pool_block=True,
+        )
+        self._session.mount("http://", adapter)
+        self._session.mount("https://", adapter)
+
+    def close(self) -> None:
+        self._session.close()
+
+    def __enter__(self) -> "FeignClientProxy":
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
     
     def _get_base_url(self) -> str:
         """获取基础URL"""
@@ -87,7 +108,7 @@ class FeignClientProxy:
         json_data: Any = None,
         data: Any = None,
         headers: Optional[Dict[str, str]] = None,
-        timeout: float = 30,
+        timeout: Optional[float] = None,
         fallback_method: Optional[str] = None,
         call_args: tuple = (),
         call_kwargs: Optional[dict] = None,
@@ -116,14 +137,14 @@ class FeignClientProxy:
             pass
 
         try:
-            response = requests.request(
+            response = self._session.request(
                 method.upper(),
                 url,
                 params=params,
                 json=self._jsonable(json_data) if json_data is not None else None,
                 data=data,
                 headers=req_headers,
-                timeout=timeout,
+                timeout=self.timeout if timeout is None else timeout,
             )
             response.raise_for_status()
             if not response.content:
@@ -135,6 +156,10 @@ class FeignClientProxy:
         except Exception as error:
             logger.error("Feign %s request failed: %s, error: %s", method, url, error)
             return self._call_fallback(fallback_method, error, call_args, call_kwargs)
+
+    async def arequest(self, method: str, endpoint: str, **kwargs) -> Any:
+        """Execute the synchronous requests client without blocking the ASGI loop."""
+        return await run_in_threadpool(self.request, method, endpoint, **kwargs)
     
     def get(self, endpoint: str, params: Dict[str, Any] = None, headers: Dict[str, str] = None) -> Any:
         """
@@ -151,7 +176,9 @@ class FeignClientProxy:
         url = self._build_url(endpoint)
         
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=30)
+            response = self._session.get(
+                url, params=params, headers=headers, timeout=self.timeout
+            )
             response.raise_for_status()
             
             try:
@@ -187,7 +214,9 @@ class FeignClientProxy:
         url = self._build_url(endpoint)
         
         try:
-            response = requests.post(url, data=data, json=json_data, headers=headers, timeout=30)
+            response = self._session.post(
+                url, data=data, json=json_data, headers=headers, timeout=self.timeout
+            )
             response.raise_for_status()
             
             try:
@@ -222,7 +251,9 @@ class FeignClientProxy:
         url = self._build_url(endpoint)
         
         try:
-            response = requests.put(url, data=data, json=json_data, headers=headers, timeout=30)
+            response = self._session.put(
+                url, data=data, json=json_data, headers=headers, timeout=self.timeout
+            )
             response.raise_for_status()
             
             try:
@@ -255,7 +286,9 @@ class FeignClientProxy:
         url = self._build_url(endpoint)
         
         try:
-            response = requests.delete(url, params=params, headers=headers, timeout=30)
+            response = self._session.delete(
+                url, params=params, headers=headers, timeout=self.timeout
+            )
             response.raise_for_status()
             
             try:
@@ -305,6 +338,12 @@ class FeignClientFactory:
             client: Feign客户端代理
         """
         cls._clients[service_name] = client
+
+    @classmethod
+    def close_all(cls) -> None:
+        for client in cls._clients.values():
+            client.close()
+        cls._clients.clear()
 
 
 def create_feign_client(service_name: str, path: str = "", url: str = "", 
@@ -404,10 +443,26 @@ def create_declared_feign_client(client_class: Type, annotation: Any) -> Any:
                 )
             call.__name__ = name
             call.__doc__ = getattr(original, '__doc__', None)
+            if inspect.iscoroutinefunction(original):
+                async def async_call(self, *args, **kwargs):
+                    return await run_in_threadpool(call, self, *args, **kwargs)
+                async_call.__name__ = name
+                async_call.__doc__ = call.__doc__
+                return async_call
             return call
 
         generated[method_name] = make_call(method_name, endpoint_path, http_method, method, parameters)
 
+    original_destroy = getattr(client_class, 'destroy', None)
+
+    def destroy(self):
+        try:
+            if callable(original_destroy):
+                original_destroy(self)
+        finally:
+            proxy.close()
+
+    generated['destroy'] = destroy
     implementation = type(f"{client_class.__name__}FeignProxy", (client_class,), generated)
     instance = implementation()
     instance.__feign_proxy__ = proxy

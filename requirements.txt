@@ -1,16 +1,17 @@
 # ========================================
 # SpringPy 核心依赖（精确锁定版本）
 # 所有版本号 == 已测试验证，禁止使用 >= 范围
-# 推荐 Python: 3.9+（最低 3.9，已测试 3.9.6）
+# 推荐 Python: 3.10+（CI 测试 3.10/3.12）
 # ========================================
 
 # Web框架
-fastapi==0.128.8
+fastapi==0.141.1
 uvicorn==0.39.0
+websockets==15.0.1
 
 # 配置文件
 pyyaml==6.0.3
-python-dotenv==1.2.1
+python-dotenv==1.2.2
 
 # Redis - 分布式锁、限流、熔断持久化存储
 redis==7.0.1
@@ -28,7 +29,7 @@ sqlglot==27.28.1
 
 # 认证授权
 pyjwt==2.13.0
-cryptography==48.0.1
+cryptography==50.0.0
 bcrypt==5.0.0
 
 # 监控指标
@@ -38,7 +39,8 @@ prometheus-client==0.26.0
 loguru==0.7.3
 
 # HTTP 客户端（Feign）
-requests==2.32.5
+requests==2.33.0
+httpx==0.28.1
 
 # RabbitMQ 消息队列
 pika==1.4.4
@@ -50,5 +52,6 @@ nacos-sdk-python==2.0.11
 pydantic==2.13.4
 
 # 测试依赖
-pytest==8.4.2
+pytest==9.1.1
 pytest-cov==7.1.0
+openpyxl==3.1.5

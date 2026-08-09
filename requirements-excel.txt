@@ -1,0 +1,19 @@
+# ========================================
+# SpringPy Excel 模块可选依赖（精确锁定版本）
+# ========================================
+# Excel 模块采用"可选依赖 + 降级"设计：
+#   - 未安装本文件任何依赖时，注解声明（@ExcelProperty/@ExcelIgnore/@excel_sheet）仍可用
+#   - 仅在实际 read/write 时需要 openpyxl，未安装会抛 ExcelDependencyError 提示安装
+#
+# 安装方式（按需）：
+#   pip install -r requirements-excel.txt   # 全量
+#   pip install springpy[excel]             # 经 extras 安装（推荐）
+#   pip install openpyxl==3.1.5             # 仅核心引擎
+#
+# 推荐 Python: 3.10+（与框架 requires-python 一致）
+# 所有版本号 == 已测试验证，禁止使用 >= 范围
+# ========================================
+
+# Excel 读写引擎（注解驱动的 .xlsx 读写、样式、多 sheet、大数字防丢精度）
+# 已测试：openpyxl 3.1.5（Python 3.11.9）
+openpyxl==3.1.5

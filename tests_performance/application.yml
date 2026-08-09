@@ -1,0 +1,47 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+  cors:
+    allow_origins: []
+    allow_credentials: false
+  thread_pool:
+    max_workers: ${SYNC_MAX_WORKERS:40}
+    max_queue: ${SYNC_MAX_QUEUE:100}
+    queue_timeout: ${SYNC_QUEUE_TIMEOUT:0.1}
+
+startup:
+  fail_fast: false
+
+spring:
+  profiles:
+    active: benchmark
+
+benchmark:
+  features:
+    conditional: enabled
+
+database:
+  enabled: false
+
+redis:
+  enabled: false
+
+discovery:
+  enabled: false
+
+rabbitmq:
+  enabled: false
+
+seata:
+  enabled: false
+
+prometheus:
+  enabled: true
+  standalone_server: false
+
+jwt:
+  secret_key: benchmark-only-secret-not-for-production
+  algorithm: HS256
+
+logging:
+  level: WARNING

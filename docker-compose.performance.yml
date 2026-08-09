@@ -1,0 +1,81 @@
+name: springpy-performance
+
+services:
+  app:
+    image: springpy-performance-app:local
+    build:
+      context: .
+      dockerfile: tests_performance/Dockerfile
+    init: true
+    environment:
+      SYNC_MAX_WORKERS: ${APP_SYNC_WORKERS:-40}
+      SYNC_MAX_QUEUE: ${APP_SYNC_QUEUE:-100}
+      SYNC_QUEUE_TIMEOUT: ${APP_SYNC_QUEUE_TIMEOUT:-0.1}
+      GATEWAY_UPSTREAM: http://127.0.0.1:8080
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+    command:
+      - python
+      - -m
+      - uvicorn
+      - tests_performance.benchmark_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --workers
+      - ${APP_WORKERS:-2}
+      - --no-access-log
+    ports:
+      - "${APP_PORT:-8088}:8080"
+    volumes:
+      - ./tests_performance/results:/results
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/actuator/health/liveness', timeout=2)"
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  k6:
+    image: grafana/k6:2.0.0
+    init: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      SPRINGPY_BASE_URL: ${SPRINGPY_BASE_URL:-http://app:8080}
+      SPRINGPY_PROFILE: ${SPRINGPY_PROFILE:-smoke}
+      SPRINGPY_WORKLOAD: ${SPRINGPY_WORKLOAD:-mixed}
+      SPRINGPY_RESULTS_FILE: ${SPRINGPY_RESULTS_FILE:-/results/summary.json}
+      SPRINGPY_RATE: ${SPRINGPY_RATE:-}
+      SPRINGPY_DURATION: ${SPRINGPY_DURATION:-}
+      SPRINGPY_START_RPS: ${SPRINGPY_START_RPS:-}
+      SPRINGPY_TARGET_RPS: ${SPRINGPY_TARGET_RPS:-}
+      SPRINGPY_STAGE_DURATION: ${SPRINGPY_STAGE_DURATION:-}
+      SPRINGPY_MAX_VUS: ${SPRINGPY_MAX_VUS:-}
+      SPRINGPY_P95_MS: ${SPRINGPY_P95_MS:-500}
+      SPRINGPY_P99_MS: ${SPRINGPY_P99_MS:-1000}
+      SPRINGPY_FAIL_RATE: ${SPRINGPY_FAIL_RATE:-0.01}
+      SPRINGPY_CSV_ROWS: ${SPRINGPY_CSV_ROWS:-50}
+      SPRINGPY_CONDITIONAL_EVALUATIONS: ${SPRINGPY_CONDITIONAL_EVALUATIONS:-100}
+      SPRINGPY_DATA_ROWS: ${SPRINGPY_DATA_ROWS:-100}
+      SPRINGPY_BINDING_ITERATIONS: ${SPRINGPY_BINDING_ITERATIONS:-25}
+      SPRINGPY_I18N_MESSAGES: ${SPRINGPY_I18N_MESSAGES:-100}
+      SPRINGPY_WEBSOCKET_TIMEOUT_MS: ${SPRINGPY_WEBSOCKET_TIMEOUT_MS:-3000}
+      SPRINGPY_SWAGGER_PATH: ${SPRINGPY_SWAGGER_PATH:-/openapi.json}
+      SPRINGPY_SWAGGER_DOCS_PATH: ${SPRINGPY_SWAGGER_DOCS_PATH:-/docs}
+      SPRINGPY_SWAGGER_REDOC_PATH: ${SPRINGPY_SWAGGER_REDOC_PATH:-/redoc}
+      SPRINGPY_MAX_DROPPED: ${SPRINGPY_MAX_DROPPED:-0}
+      SPRINGPY_MAX_OVERLOAD: ${SPRINGPY_MAX_OVERLOAD:-0}
+      SPRINGPY_CUSTOM_PATH: ${SPRINGPY_CUSTOM_PATH:-/}
+      SPRINGPY_CUSTOM_METHOD: ${SPRINGPY_CUSTOM_METHOD:-GET}
+      SPRINGPY_CUSTOM_BODY: ${SPRINGPY_CUSTOM_BODY:-}
+      SPRINGPY_AUTH_TOKEN: ${SPRINGPY_AUTH_TOKEN:-}
+      SPRINGPY_EXPECTED_STATUS: ${SPRINGPY_EXPECTED_STATUS:-200}
+    volumes:
+      - ./tests_performance/k6:/scripts:ro
+      - ./tests_performance/results:/results
+    command: ["run", "/scripts/load.js"]

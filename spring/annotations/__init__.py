@@ -72,6 +72,23 @@ from .cloud import (
     GlobalTransactional,
 )
 
+# 缓存增强注解（@CachePut / @CacheEvict / @CacheConfig / @Caching），对齐 Spring Cache
+from .cache import (
+    CachePut,
+    CacheEvict,
+    CacheConfig,
+    Caching,
+)
+
+# 条件装配注解（@Conditional / @ConditionalOnProperty / ...），对齐 Spring Boot
+from .conditional import (
+    Conditional,
+    ConditionalOnProperty,
+    ConditionalOnBean,
+    ConditionalOnMissingBean,
+    ConditionalOnClass,
+)
+
 # 可选导入：消息队列注解（需要pika）
 try:
     from .messaging import (
@@ -154,6 +171,17 @@ __all__ = [
     "GlobalTransactional",
     "Valid",
     "Validated",
+    # 缓存增强注解
+    "CachePut",
+    "CacheEvict",
+    "CacheConfig",
+    "Caching",
+    # 条件装配注解
+    "Conditional",
+    "ConditionalOnProperty",
+    "ConditionalOnBean",
+    "ConditionalOnMissingBean",
+    "ConditionalOnClass",
     # 消息队列注解
     "RabbitListener",
     "RabbitTemplate",

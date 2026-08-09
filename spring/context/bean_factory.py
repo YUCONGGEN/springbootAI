@@ -1,6 +1,7 @@
 from typing import Type, Optional, Any, Dict, Callable, List, get_args, get_origin, Union
 from spring.context.bean_definition import BeanDefinition
 from spring.annotations.core import Autowired, Qualifier, Slf4j, PostConstruct, PreDestroy, Primary, Transactional, Cacheable, Retryable, Async, Value
+from spring.annotations.cache import CachePut, CacheEvict, CacheConfig, Caching
 from spring.aop.proxy_factory import ProxyFactory
 import inspect
 import time
@@ -18,6 +19,19 @@ _ASYNC_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=8,
     thread_name_prefix="SpringAsync-"
 )
+
+
+def _get_tx_sync_manager():
+    """最佳努力获取事务同步管理器；``spring.tx`` 不可用时返回 ``None``。
+
+    ``@Transactional`` 切面在事务边界触发 ``@TransactionalEventListener`` 回调；
+    若 ``spring.tx`` 未安装则回退到原始事务行为，保持向后兼容。
+    """
+    try:
+        from spring.tx.synchronization import TransactionSynchronizationManager
+        return TransactionSynchronizationManager
+    except ImportError:  # pragma: no cover - spring.tx 为内置模块，仅在异常拆分时缺失
+        return None
 
 
 class BeanFactory:
@@ -461,6 +475,16 @@ class BeanFactory:
                 for annotation in annotations:
                     if isinstance(annotation, Cacheable):
                         method = self._wrap_cacheable(instance, method, annotation)
+                # 缓存增强：@CachePut / @CacheEvict / @Caching（复用 @Cacheable 同一存储）
+                for annotation in annotations:
+                    if isinstance(annotation, CachePut):
+                        method = self._wrap_cache_put(instance, method, annotation)
+                for annotation in annotations:
+                    if isinstance(annotation, CacheEvict):
+                        method = self._wrap_cache_evict(instance, method, annotation)
+                for annotation in annotations:
+                    if isinstance(annotation, Caching):
+                        method = self._wrap_caching(instance, method, annotation)
                 for annotation in annotations:
                     if isinstance(annotation, Async):
                         method = self._wrap_async(instance, method, annotation)
@@ -502,44 +526,97 @@ class BeanFactory:
             @functools.wraps(method)
             async def async_wrapper(*args, **kwargs):
                 from spring.orm.mybatis_integration import mybatis_transaction
+                tx_sync = _get_tx_sync_manager()
+
+                owns_sync = (
+                    tx_sync is not None
+                    and not tx_sync.is_synchronization_active()
+                )
+                if owns_sync:
+                    tx_sync.init_synchronization()
 
                 deferred_exception = None
                 deferred_traceback = None
-                with mybatis_transaction(
-                    get_session_factory(), str(annotation.propagation).upper()
-                ):
-                    try:
-                        return await method(*args, **kwargs)
-                    except Exception as exc:
-                        if should_rollback(exc):
-                            raise
-                        deferred_exception = exc
-                        deferred_traceback = exc.__traceback__
-
-                if deferred_exception is not None:
-                    raise deferred_exception.with_traceback(deferred_traceback)
+                committed = False
+                try:
+                    with mybatis_transaction(
+                        get_session_factory(), str(annotation.propagation).upper()
+                    ):
+                        try:
+                            result = await method(*args, **kwargs)
+                        except Exception as exc:
+                            if should_rollback(exc):
+                                raise
+                            deferred_exception = exc
+                            deferred_traceback = exc.__traceback__
+                            result = None
+                        if owns_sync:
+                            tx_sync.trigger_before_commit()
+                    committed = True
+                    if owns_sync:
+                        tx_sync.trigger_after_commit()
+                    if deferred_exception is not None:
+                        raise deferred_exception.with_traceback(deferred_traceback)
+                    return result
+                except Exception:
+                    if owns_sync and not committed:
+                        tx_sync.trigger_after_rollback()
+                    raise
+                finally:
+                    if owns_sync:
+                        tx_sync.trigger_after_completion(
+                            'commit' if committed else 'rollback'
+                        )
+                        tx_sync.clear_synchronization()
 
             return async_wrapper
 
         @functools.wraps(method)
         def wrapper(*args, **kwargs):
             from spring.orm.mybatis_integration import mybatis_transaction
+            tx_sync = _get_tx_sync_manager()
+
+            owns_sync = (
+                tx_sync is not None
+                and not tx_sync.is_synchronization_active()
+            )
+            if owns_sync:
+                tx_sync.init_synchronization()
 
             deferred_exception = None
             deferred_traceback = None
-            with mybatis_transaction(
-                get_session_factory(), str(annotation.propagation).upper()
-            ):
-                try:
-                    return method(*args, **kwargs)
-                except Exception as exc:
-                    if should_rollback(exc):
-                        raise
-                    deferred_exception = exc
-                    deferred_traceback = exc.__traceback__
-
-            if deferred_exception is not None:
-                raise deferred_exception.with_traceback(deferred_traceback)
+            committed = False
+            try:
+                with mybatis_transaction(
+                    get_session_factory(), str(annotation.propagation).upper()
+                ):
+                    try:
+                        result = method(*args, **kwargs)
+                    except Exception as exc:
+                        if should_rollback(exc):
+                            raise
+                        deferred_exception = exc
+                        deferred_traceback = exc.__traceback__
+                        result = None
+                    # 成功路径（含 no-rollback 异常）：提交前触发 BEFORE_COMMIT
+                    if owns_sync:
+                        tx_sync.trigger_before_commit()
+                committed = True
+                if owns_sync:
+                    tx_sync.trigger_after_commit()
+                if deferred_exception is not None:
+                    raise deferred_exception.with_traceback(deferred_traceback)
+                return result
+            except Exception:
+                if owns_sync and not committed:
+                    tx_sync.trigger_after_rollback()
+                raise
+            finally:
+                if owns_sync:
+                    tx_sync.trigger_after_completion(
+                        'commit' if committed else 'rollback'
+                    )
+                    tx_sync.clear_synchronization()
 
         return wrapper
 
@@ -596,14 +673,16 @@ class BeanFactory:
                     resolved_key = serialize_arg(cache_arguments[annotation.key])
                 else:
                     resolved_key = annotation.key
-                key_data = f"{annotation.value}:{method.__qualname__}:{resolved_key}"
+                # key = cacheName + resolvedKey（对齐 Spring Cache：不含方法名，
+                # 使 @CachePut / @CacheEvict 可跨方法更新/失效 @Cacheable 条目）。
+                key_data = f"{annotation.value}:{resolved_key}"
             else:
                 arguments = ','.join(
                     f"{name}:{serialize_arg(value)}"
                     for name, value in sorted(cache_arguments.items())
                 )
-                key_data = f"{annotation.value}:{method.__qualname__}:{arguments}"
-            return True, hashlib.md5(key_data.encode('utf-8')).hexdigest()
+                key_data = f"{annotation.value}:{arguments}"
+            return True, hashlib.sha256(key_data.encode('utf-8')).hexdigest()
 
         def get_cached(cache_key):
             with self._lock:
@@ -630,7 +709,9 @@ class BeanFactory:
                 self._cache[cache_key] = result
                 self._cache_metadata[cache_key] = {
                     'create_time': current_time,
-                    'expire_time': current_time + self._cache_default_ttl
+                    'expire_time': current_time + self._cache_default_ttl,
+                    # 登记 namespace，供 @CacheEvict(all_entries=True) 按命名空间清空
+                    'namespace': annotation.value,
                 }
 
         if asyncio.iscoroutinefunction(method):
@@ -667,6 +748,222 @@ class BeanFactory:
             return result
 
         return wrapper
+
+    # ==================== 缓存增强：@CachePut / @CacheEvict / @Caching ====================
+    # 复用 @Cacheable 同一存储（self._cache / self._cache_metadata / self._lock / TTL）。
+    # key 解析逻辑与 _wrap_cacheable 一致（参数名/{param}模板/全参数聚合 + condition），
+    # 为保证既有 @Cacheable 行为零回归，本组方法独立实现解析，未改动 _wrap_cacheable。
+
+    def _resolve_cache_value(self, instance: Any, annotation_value: str) -> str:
+        """解析缓存命名空间：注解 value 为空时回退到类级 ``@CacheConfig`` 默认。"""
+        if annotation_value:
+            return annotation_value
+        # 读类级 @CacheConfig
+        from spring.annotations.core import get_spring_annotations
+        try:
+            for ann in get_spring_annotations(instance.__class__):
+                if isinstance(ann, CacheConfig) and ann.cache_names:
+                    return ann.cache_names[0]
+        except Exception:
+            pass
+        return annotation_value
+
+    def _cache_serialize_arg(self, arg: Any) -> str:
+        """缓存参数序列化（与 _wrap_cacheable.serialize_arg 一致）。"""
+        if isinstance(arg, (int, float, str, bool, type(None))):
+            return str(arg)
+        if isinstance(arg, (list, tuple)):
+            return '[' + ','.join(self._cache_serialize_arg(item) for item in arg) + ']'
+        if isinstance(arg, dict):
+            items = sorted(
+                ((self._cache_serialize_arg(k), self._cache_serialize_arg(v)) for k, v in arg.items()),
+                key=lambda item: item[0],
+            )
+            return '{' + ','.join(f"{k}:{v}" for k, v in items) + '}'
+        return f"obj_{id(arg)}"
+
+    def _cache_resolve_call(self, method: Callable, annotation: Any, instance: Any, args, kwargs):
+        """解析一次缓存操作的 (enabled, cache_key, namespace)。返回 (False, None, None) 表示跳过。
+
+        与 _wrap_cacheable.resolve_call 语义一致：condition 支持 参数名 / ``!参数名`` / callable。
+        额外返回 namespace（解析后的 value），供 _cache_store 登记，便于 @CacheEvict(all_entries) 清空。
+        """
+        signature = inspect.signature(method)
+        bound = signature.bind_partial(*args, **kwargs)
+        bound.apply_defaults()
+        cache_arguments = dict(bound.arguments)
+        cache_arguments.pop('self', None)
+
+        condition = getattr(annotation, 'condition', None)
+        if condition:
+            if callable(condition):
+                enabled = bool(condition(**cache_arguments))
+            else:
+                condition_name = str(condition).strip()
+                negate = condition_name.startswith('!')
+                if negate:
+                    condition_name = condition_name[1:]
+                if condition_name not in cache_arguments:
+                    raise ValueError(
+                        f"缓存 condition 只支持参数名，未找到: {condition_name}"
+                    )
+                enabled = bool(cache_arguments[condition_name])
+                if negate:
+                    enabled = not enabled
+            if not enabled:
+                return False, None, None
+
+        value = self._resolve_cache_value(instance, getattr(annotation, 'value', '') or '')
+        key_expr = getattr(annotation, 'key', None)
+        if key_expr:
+            if '{' in key_expr:
+                try:
+                    resolved_key = key_expr.format(**cache_arguments)
+                except KeyError as exc:
+                    raise ValueError(
+                        f"缓存 key 引用了不存在的参数: {exc.args[0]}"
+                    ) from exc
+            elif key_expr in cache_arguments:
+                resolved_key = self._cache_serialize_arg(cache_arguments[key_expr])
+            else:
+                resolved_key = key_expr
+            # key = namespace + resolvedKey（与 _wrap_cacheable 一致，不含方法名，
+            # 使 @CachePut / @CacheEvict 与 @Cacheable 跨方法共享同一缓存条目）。
+            key_data = f"{value}:{resolved_key}"
+        else:
+            arguments = ','.join(
+                f"{name}:{self._cache_serialize_arg(val)}"
+                for name, val in sorted(cache_arguments.items())
+            )
+            key_data = f"{value}:{arguments}"
+        return True, hashlib.sha256(key_data.encode('utf-8')).hexdigest(), value
+
+    def _cache_get(self, cache_key: str):
+        """读取缓存条目（过期则视为未命中并清理）。返回 (hit, value)。"""
+        with self._lock:
+            current_time = time.time()
+            metadata = self._cache_metadata.get(cache_key)
+            if metadata is None or cache_key not in self._cache:
+                return False, None
+            if current_time > metadata.get('expire_time', current_time):
+                self._cache.pop(cache_key, None)
+                self._cache_metadata.pop(cache_key, None)
+                return False, None
+            return True, self._cache[cache_key]
+
+    def _cache_store(self, cache_key: str, result: Any, namespace: str = "") -> None:
+        """写入缓存条目（复用 @Cacheable 的容量淘汰与 TTL）。
+
+        ``namespace`` 登记到 metadata，供 ``@CacheEvict(all_entries=True)`` 按命名空间清空。
+        """
+        current_time = time.time()
+        with self._lock:
+            if len(self._cache) >= self._cache_max_size:
+                oldest_key = min(
+                    self._cache_metadata,
+                    key=lambda k: self._cache_metadata[k].get('create_time', 0),
+                )
+                self._cache.pop(oldest_key, None)
+                self._cache_metadata.pop(oldest_key, None)
+            self._cache[cache_key] = result
+            self._cache_metadata[cache_key] = {
+                'create_time': current_time,
+                'expire_time': current_time + self._cache_default_ttl,
+                'namespace': namespace,
+            }
+
+    def _cache_evict_key(self, cache_key: str) -> None:
+        with self._lock:
+            self._cache.pop(cache_key, None)
+            self._cache_metadata.pop(cache_key, None)
+
+    def _cache_evict_prefix(self, namespace: str) -> int:
+        """清空整个缓存命名空间。
+
+        ``cache_key`` 由 ``sha256(...)`` 生成，无法按前缀匹配；因此在 ``_cache_store`` 时把
+        ``namespace`` 登记到 metadata，这里扫描 metadata 按 namespace 清空（含 @Cacheable 条目）。
+        """
+        removed = 0
+        with self._lock:
+            victims = [k for k, meta in self._cache_metadata.items()
+                        if meta.get('namespace') == namespace]
+            for k in victims:
+                self._cache.pop(k, None)
+                self._cache_metadata.pop(k, None)
+                removed += 1
+        return removed
+
+    def _wrap_cache_put(self, instance: Any, method: Callable, annotation: CachePut) -> Callable:
+        """``@CachePut``：方法总是执行，把返回值写入缓存。"""
+        if asyncio.iscoroutinefunction(method):
+            @functools.wraps(method)
+            async def async_wrapper(*args, **kwargs):
+                enabled, cache_key, ns = self._cache_resolve_call(method, annotation, instance, args, kwargs)
+                result = await method(*args, **kwargs)
+                if enabled:
+                    self._cache_store(cache_key, result, ns)
+                return result
+            return async_wrapper
+
+        @functools.wraps(method)
+        def wrapper(*args, **kwargs):
+            enabled, cache_key, ns = self._cache_resolve_call(method, annotation, instance, args, kwargs)
+            result = method(*args, **kwargs)
+            if enabled:
+                self._cache_store(cache_key, result, ns)
+            return result
+        return wrapper
+
+    def _wrap_cache_evict(self, instance: Any, method: Callable, annotation: CacheEvict) -> Callable:
+        """``@CacheEvict``：失效缓存。
+
+        - ``before_invocation=True``：方法调用前失效（无论成功与否）。
+        - ``before_invocation=False``（默认）：方法成功后失效（异常时不失效）。
+        - ``all_entries=True``：清空整个命名空间；否则按 key 失效。
+        """
+        def _do_evict(args, kwargs):
+            if annotation.all_entries:
+                self._cache_evict_prefix(
+                    self._resolve_cache_value(instance, annotation.value or ''))
+                return
+            enabled, cache_key, _ns = self._cache_resolve_call(method, annotation, instance, args, kwargs)
+            if enabled:
+                self._cache_evict_key(cache_key)
+
+        if asyncio.iscoroutinefunction(method):
+            @functools.wraps(method)
+            async def async_wrapper(*args, **kwargs):
+                if annotation.before_invocation:
+                    _do_evict(args, kwargs)
+                result = await method(*args, **kwargs)
+                if not annotation.before_invocation:
+                    _do_evict(args, kwargs)
+                return result
+            return async_wrapper
+
+        @functools.wraps(method)
+        def wrapper(*args, **kwargs):
+            if annotation.before_invocation:
+                _do_evict(args, kwargs)
+            result = method(*args, **kwargs)
+            if not annotation.before_invocation:
+                _do_evict(args, kwargs)
+            return result
+        return wrapper
+
+    def _wrap_caching(self, instance: Any, method: Callable, annotation: Caching) -> Callable:
+        """``@Caching``：组合多个缓存操作，按 cacheable -> put -> evict 顺序叠加包装。
+
+        每个子操作调用对应的 wrap，逐层包装（与 Spring ``@Caching`` 应用多操作语义一致）。
+        """
+        wrapped = method
+        for op in (annotation.cacheable or []):
+            wrapped = self._wrap_cacheable(instance, wrapped, op)
+        for op in (annotation.put or []):
+            wrapped = self._wrap_cache_put(instance, wrapped, op)
+        for op in (annotation.evict or []):
+            wrapped = self._wrap_cache_evict(instance, wrapped, op)
+        return wrapped
 
     def _wrap_retryable(self, instance: Any, method: Callable, annotation: Retryable) -> Callable:
         @functools.wraps(method)

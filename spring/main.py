@@ -17,6 +17,7 @@ class SpringApplication:
         self.web_context: Optional[WebApplicationContext] = None
         self.logger = SpringLogger()
         self._discovery_registered = False
+        self._background_started = False
 
     def run(self, **kwargs) -> None:
         banner = BannerPrinter()
@@ -177,16 +178,31 @@ class SpringApplication:
         
         self.application_context.refresh()
 
+        self.logger.info(f"Registered {self.application_context.bean_factory.get_bean_count()} beans")
+
+    def _on_app_startup(self) -> None:
+        """在 ASGI worker 已启动后创建后台线程并注册服务。"""
+        if self._background_started:
+            return
+        config = self.application_context.get_config()
+        fail_fast = self._should_fail_fast(config)
         if config.get('rabbitmq', {}).get('enabled', False):
             try:
                 from spring.messaging.rabbitmq import rabbitmq_client
                 rabbitmq_client.start_consuming_background()
-            except Exception as e:
+            except Exception as exc:
                 if fail_fast:
-                    raise RuntimeError("RabbitMQ消费者启动失败") from e
-                self.logger.warning(f"Failed to start RabbitMQ consumers: {e}")
-        
-        self.logger.info(f"Registered {self.application_context.bean_factory.get_bean_count()} beans")
+                    raise RuntimeError("RabbitMQ消费者启动失败") from exc
+                self.logger.warning(f"Failed to start RabbitMQ consumers: {exc}")
+        port = config.get('server', {}).get('port', 8080)
+        self._register_discovery_service(port)
+        self._background_started = True
+
+    def _configure_web_lifecycle(self) -> None:
+        app = self.web_context.fastapi_app
+        app.router.add_event_handler('startup', self._on_app_startup)
+        app.router.add_event_handler('shutdown', self._deregister_discovery_service)
+        app.router.add_event_handler('shutdown', self._on_app_shutdown)
 
     @staticmethod
     def _should_fail_fast(config: dict) -> bool:
@@ -233,12 +249,7 @@ class SpringApplication:
         self.logger.info("Initializing web context...")
         self.web_context = WebApplicationContext(self.application_context)
         self.web_context.init()
-        self.web_context.fastapi_app.router.add_event_handler(
-            'shutdown', self._deregister_discovery_service
-        )
-        self.web_context.fastapi_app.router.add_event_handler(
-            'shutdown', self._on_app_shutdown
-        )
+        self._configure_web_lifecycle()
 
         # 注册优雅退出信号处理
         try:
@@ -258,8 +269,6 @@ class SpringApplication:
 
         banner = BannerPrinter()
         banner.print_startup_info(port)
-
-        self._register_discovery_service(port)
 
         self.web_context.run(host=host, port=port)
 
@@ -336,11 +345,7 @@ def create_app(main_class: Type):
     application._prepare_context()
     application.web_context = WebApplicationContext(application.application_context)
     application.web_context.init()
-    config = application.application_context.get_config()
-    application._register_discovery_service(config.get('server', {}).get('port', 8080))
-    application.web_context.fastapi_app.router.add_event_handler(
-        'shutdown', application._deregister_discovery_service
-    )
+    application._configure_web_lifecycle()
     asgi_app = application.web_context.get_app()
     asgi_app.state.spring_application = application
     return asgi_app

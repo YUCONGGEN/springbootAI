@@ -24,6 +24,7 @@ from spring.annotations.core import (
     EventListener,
 )
 from spring.annotations.cloud import EnableFeignClients, FeignClient
+from spring.annotations.conditional import all_conditions_match as _all_conditions_match
 from spring.config.config_loader import ConfigLoader, set_global_config_loader
 from spring.event import ApplicationEventPublisher
 import inspect
@@ -61,6 +62,23 @@ class ApplicationContext:
         self.bean_factory.register_instance(
             'application_event_publisher', self.event_publisher
         )
+        # 事务事件发布器（@TransactionalEventListener）；spring.tx 缺失时为 None，降级为普通事件
+        self.tx_event_publisher = None
+        try:
+            from spring.tx import TransactionalEventPublisher
+            self.tx_event_publisher = TransactionalEventPublisher()
+            tx_publisher_definition = BeanDefinition(
+                bean_class=TransactionalEventPublisher,
+                bean_name='transactional_event_publisher',
+            )
+            self.bean_factory.register_bean_definition(
+                'transactional_event_publisher', tx_publisher_definition
+            )
+            self.bean_factory.register_instance(
+                'transactional_event_publisher', self.tx_event_publisher
+            )
+        except ImportError:  # pragma: no cover
+            pass
         self.scanner = ComponentScanner(self)
         self._scheduler = None
         self._started = False
@@ -164,6 +182,8 @@ class ApplicationContext:
     def _register_component(self, component_class: Type) -> None:
         if not self._matches_active_profile(component_class):
             return
+        if not self._matches_conditions(component_class):
+            return
 
         annotations = getattr(component_class, '__spring_annotations__', [])
         explicit_name = next(
@@ -197,6 +217,15 @@ class ApplicationContext:
                 active_profile = self.config_loader.get_active_profile()
                 return active_profile in annotation.value
         return True
+
+    def _matches_conditions(self, component_class: Type) -> bool:
+        """求类上条件装配注解（@Conditional / @ConditionalOnProperty / ...）的合取。
+
+        与 ``_matches_active_profile`` 并列，在 ``_register_component`` 阶段执行：
+        任一条件为假则跳过该 Bean 的注册。条件注解的 ``matches(ctx)`` 接收本上下文，
+        可访问 ``self.config_loader`` 与 ``self.bean_factory``。
+        """
+        return _all_conditions_match(component_class, self)
 
     def _generate_bean_name(self, cls: Type) -> str:
         name = cls.__name__
@@ -340,14 +369,22 @@ class ApplicationContext:
         prefix = properties_annotation.prefix
         config = self.config_loader.get_prefix_config(prefix)
 
-        for key, value in config.items():
-            # 同时支持 kebab-case（yml 惯例，如 silver-threshold）与
-            # snake_case（Python 惯例，如 silver_threshold）
-            attr_name = key.replace('-', '_')
-            if hasattr(instance, attr_name):
-                setattr(instance, attr_name, value)
-            elif hasattr(instance, key):
-                setattr(instance, key, value)
+        # 松散绑定（kebab/camel/snake 等价匹配）+ 嵌套绑定 + 类型强转
+        try:
+            from spring.config.binding import (
+                ConfigurationPropertiesBinder, validate_configuration_properties,
+            )
+            ConfigurationPropertiesBinder.bind(instance, config)
+            # @Validated 触发 Bean Validation；违反约束抛 ValidationError
+            validate_configuration_properties(instance)
+        except ImportError:  # pragma: no cover - binding 为内置模块
+            # 回退到原扁平绑定（兼容 spring.config.binding 缺失场景）
+            for key, value in config.items():
+                attr_name = key.replace('-', '_')
+                if hasattr(instance, attr_name):
+                    setattr(instance, attr_name, value)
+                elif hasattr(instance, key):
+                    setattr(instance, key, value)
 
     def _autowire_value_annotations(self) -> None:
         for bean_name in self.bean_factory.get_bean_names():
@@ -438,37 +475,72 @@ class ApplicationContext:
 
     def _register_event_listeners(self) -> None:
         self.event_publisher.clear()
+        if self.tx_event_publisher is not None:
+            self.tx_event_publisher.clear()
+        # 事务事件监听器注解类型（spring.tx 缺失时为 None）
+        try:
+            from spring.tx import TransactionalEventListener as _TxEventListener
+        except ImportError:  # pragma: no cover
+            _TxEventListener = None
+
         for bean_name in self.bean_factory.get_bean_names():
             instance = self.bean_factory.get_bean(bean_name)
             for name, method in inspect.getmembers(instance.__class__):
                 if name.startswith('_') or not inspect.isfunction(method):
                     continue
                 for annotation in getattr(method, '__spring_annotations__', []):
-                    if not isinstance(annotation, EventListener):
-                        continue
-                    event_type = annotation.event_type
-                    if event_type is None:
-                        parameters = [
-                            (parameter_name, parameter)
-                            for parameter_name, parameter in inspect.signature(method).parameters.items()
-                            if parameter_name != 'self'
-                        ]
-                        if parameters:
-                            parameter_name, parameter = parameters[0]
-                            try:
-                                event_type = get_type_hints(method).get(parameter_name)
-                            except (NameError, TypeError):
-                                event_type = parameter.annotation
-                            if not isinstance(event_type, type):
-                                event_type = None
-                    self.event_publisher.add_listener(
-                        getattr(instance, name),
-                        event_type=event_type,
-                        order=annotation.order,
-                    )
+                    if isinstance(annotation, EventListener):
+                        event_type = annotation.event_type
+                        if event_type is None:
+                            parameters = [
+                                (parameter_name, parameter)
+                                for parameter_name, parameter in inspect.signature(method).parameters.items()
+                                if parameter_name != 'self'
+                            ]
+                            if parameters:
+                                parameter_name, parameter = parameters[0]
+                                try:
+                                    event_type = get_type_hints(method).get(parameter_name)
+                                except (NameError, TypeError):
+                                    event_type = parameter.annotation
+                                if not isinstance(event_type, type):
+                                    event_type = None
+                        self.event_publisher.add_listener(
+                            getattr(instance, name),
+                            event_type=event_type,
+                            order=annotation.order,
+                        )
+                    elif _TxEventListener is not None and isinstance(annotation, _TxEventListener):
+                        # 事务事件监听器：注册到 TransactionalEventPublisher，按阶段触发
+                        event_type = annotation.event_type
+                        if event_type is None:
+                            parameters = [
+                                (parameter_name, parameter)
+                                for parameter_name, parameter in inspect.signature(method).parameters.items()
+                                if parameter_name != 'self'
+                            ]
+                            if parameters:
+                                parameter_name, parameter = parameters[0]
+                                try:
+                                    event_type = get_type_hints(method).get(parameter_name)
+                                except (NameError, TypeError):
+                                    event_type = parameter.annotation
+                                if not isinstance(event_type, type):
+                                    event_type = None
+                        self.tx_event_publisher.add_listener(
+                            getattr(instance, name),
+                            event_type=event_type,
+                            phase=annotation.phase,
+                            fallback_execution=annotation.fallback_execution,
+                            order=annotation.order,
+                        )
 
     def publish_event(self, event: Any):
-        return self.event_publisher.publish_event(event)
+        # 普通监听器立即触发；事务监听器按事务阶段触发（无事务时按 fallback_execution 决定）
+        self.event_publisher.publish_event(event)
+        if self.tx_event_publisher is not None:
+            return self.tx_event_publisher.publish_event(event)
+        return event
 
     def get_event_publisher(self) -> ApplicationEventPublisher:
         return self.event_publisher
@@ -505,5 +577,7 @@ class ApplicationContext:
     def destroy(self) -> None:
         self.bean_factory.destroy_all()
         self.event_publisher.clear()
+        if self.tx_event_publisher is not None:
+            self.tx_event_publisher.clear()
         if ApplicationContext._current_context is self:
             ApplicationContext._current_context = None

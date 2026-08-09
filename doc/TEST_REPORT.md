@@ -1,11 +1,17 @@
 # SpringPy 框架综合测试报告
 
-**测试日期**: 2026-08-08  
-**测试环境**: macOS + Python 3.9.6 + Docker  
-**框架版本**: SpringPy 1.7.0 / PyMyBatis 1.4.0 / SpringPy AI 1.3.0  
-**测试结果**: ✅ **702 个用例全部通过**（15 个测试套件，0 失败）；example_all 集成测试 **5/5 套件通过**（模块导入 25、XML Mapper 11、注解组合 4、组件扫描 26、HTTP API 36/36，含 9 个兼容性探针与 ORM MySQL 6/6）
+**测试日期**: 2026-08-08（Excel 模块补充测试 2026-08-09；TOP5 注解模块测试 2026-08-09；P0/P1/P2 八大模块测试 2026-08-09；Swagger/OpenAPI 模块测试 2026-08-09）
+**测试环境**: macOS + Python 3.9.6 + Docker ｜ Excel/TOP5/八大模块/Swagger 补充测试：Windows + Python 3.11.9 + openpyxl 3.1.5
+**框架版本**: SpringPy 1.8.0 / PyMyBatis 1.4.0 / SpringPy AI 1.3.0 / SpringPy Excel 1.0.0 / SpringPy Validation 1.0.0 / SpringPy CSV 1.0.0 / SpringPy Data 1.0.0 / SpringPy i18n 1.0.0 / SpringPy WebSocket 1.0.0 / SpringPy Swagger 1.0.0
+**测试结果**: ✅ **1246 个用例全部通过**（29 个测试套件，0 失败）；example_all 集成测试 4/5 套件通过（HTTP API 套件需 MySQL/Docker 环境，Windows 无 Docker 时跳过，非框架回归问题）
 
-> 本报告整合三大类测试/质量文档：① 主框架全面测试（702 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringPy 1.5.0 / PyMyBatis 1.4.0）。
+> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringPy 1.5.0 / PyMyBatis 1.4.0）。
+>
+> **2026-08-09 TOP5 注解模块增量**：补齐 Bean Validation / JPA @Version·@Transient / 条件装配 / 缓存增强 / CSV 注解 5 个模块的测试套件（共 166 用例），并修复 4 处生产代码缺陷（见第六节）。
+>
+> **2026-08-09 P0/P1/P2 八大模块增量**：实现缺失注解模块分析中推荐的 P0 三项（Spring Data Repository 抽象 / Actuator 运维端点 / 多数据源读写分离）、P1 三项（事务事件监听 / 配置松散绑定与校验 / 测试切片）、P2 两项（i18n 国际化 / WebSocket 实时通信），共 342 用例。修复 `_test_helpers.py` 全局 mock 污染（仅对 stub 模块注入 mock 属性，不再覆盖真实已安装模块）与 `test_test_slicing` 的 Result 包装期望（见第六节）。
+>
+> **2026-08-09 Swagger/OpenAPI 模块增量**：实现注解驱动 API 文档（`@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`/`@Schema`/`@SecurityScheme`/`@SecurityRequirement` + Swagger 2 别名 `@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam`），对齐 SpringDoc OpenAPI 3，共 43 用例。`WebApplicationContext` 注册路由时同步注入 OpenAPI 元数据，全局 `securitySchemes`/`@Schema`/`@Parameter` 通过自定义 `app.openapi()` 后处理注入。**浏览器网页端到端实测**：启动真实 uvicorn 服务器访问 `/docs`，验证 13 项（页面加载/分组/注解渲染/Try it out 实调/Authorize 弹窗等）全通过，3 张截图存档。**实测发现并修复路由注册顺序问题**：`_register_controllers` 原用 `inspect.getmembers`（字母序）导致 `/{user_id}` 拦截 `/list`，改为按方法定义顺序遍历 `__mro__.__dict__`，对齐 Spring MVC 静态路径优先体验；145 个 web 相关用例回归通过。
 
 ---
 
@@ -46,7 +52,7 @@
 | 3 | test_aop_annotations_full.py | 53 | AOP高级注解（@RateLimit/@CircuitBreaker/@Idempotent/@AuditLog/@FeatureToggle/@Lock/@Metrics/@Synchronized/@Validate/@Trace/@LogExecutionTime/@Transactional/@Cacheable/@Retryable/@Async/@Scheduled/@AsyncResult） | ✅ 全部通过 |
 | 4 | test_security_full.py | 74 | 安全功能（@PreAuthorize/@Secured/@Authenticate/JWT生成验证/密码加密SHA256-MD5-BCrypt/安全上下文/SQL注入检测） | ✅ 全部通过 |
 | 5 | test_orm_pymybatis_full.py | 60 | ORM/PyMyBatis（@Select/@Insert/@Update/@Delete/@Param/@Result/@ResultMap/@Options/DDL Auto类型映射/实体解析/建表/验证/dataclass支持） | ✅ 全部通过 |
-| 6 | test_cloud_embedded_full.py | 83 | Cloud内嵌功能（Sentinel限流熔断/OpenTelemetry追踪/Seata HTTP-AT事务/API Gateway/LoadBalancer/Cloud注解） | ✅ 全部通过 |
+| 6 | test_cloud_embedded_full.py | 83 | Cloud内嵌功能（Sentinel限流熔断/OpenTelemetry追踪/实验性HTTP补偿/API Gateway/LoadBalancer/Cloud注解） | ✅ 全部通过 |
 | 7 | test_di_config_event_full.py | 53 | DI/配置/事件（ConfigLoader/BeanRegistry/ApplicationEventPublisher/EventListener/Retry装饰器/Backoff） | ✅ 全部通过 |
 
 ### 契约/生产就绪/韧性测试套件（5 个文件，123 个用例）
@@ -70,6 +76,47 @@
 | # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
 |---|---------|--------|---------|------|
 | 14 | test_ai_module.py | 87 | SpringPy AI（核心抽象/ChatClient链式API/Provider配置/会话记忆InMemory+Redis/VectorStore余弦检索/ETL切片/ToolRegistry函数调用/Advisor-RAG+Memory+Logger+顺序/AI注解/AutoConfig装配/RAG流水线/多轮对话 + 企业级缺口：Function Calling闭环/熔断重试韧性/真流式SSE+async/Prometheus观测/RedisVectorStore持久化 + 类型化配置绑定AIProperties：env覆盖/类型转换/嵌套递归 + Redis封装复用：框架RedisClient接口统一/原生降级/TTL修复/全局单例自动复用 + P1 企业级修复：AI_ALLOW_FAKE生产开关/熔断指标provider透传/流式重试降级/RedisVectorStore max_scan分页/AICircuitBreaker Redis持久化跨实例共享 + 优化修复：流式记忆持久化/统一HTTP重试瞬态分类/RAG Prompt注入加固 + 多厂商LangChain化：DeepSeek/Moonshot/ZhipuAI 经 OpenAICompatChatModel 接入 LangChain 优先+HTTP降级/工具注入/流式/自动装配 + LangChain优先切片委托：TokenTextSplitter/CharacterTextSplitter 经 langchain-text-splitters 实现并补齐 chunk_index，未装自动降级内置 + LangChainVectorStore 向量库适配器） | ✅ 全部通过 |
+
+### SpringPy Excel 模块测试套件（1 个文件，42 个用例）
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 15 | test_excel_module.py | 42 | SpringPy Excel（注解元数据解析：@ExcelProperty/@ExcelIgnore/@excel_sheet/order/index覆盖/无注解回退/函数装饰器形式/全忽略抛错；转换器：int/float/bool/str/date/Decimal双向转换+按类型自动选择+Optional[T]+显式覆盖+日期格式注入+自定义Converter round-trip；读写round-trip：完整写读/大数字字符串保留17位防丢精度/@ExcelIgnore跳过/表头顺序/纯__init__模型回退/便捷函数/空行跳过；多sheet：写多sheet/doReadAll/按名称索引读/不存在sheet抛错；配置与降级：表头非首行/流式构建器返回self/无head抛错/openpyxl缺失抛ExcelDependencyError/注解无需openpyxl；样式与格式：冻结表头+表头加粗/num_format应用/自定义列宽） | ✅ 全部通过 |
+
+### SpringPy TOP5 注解模块测试套件（5 个文件，166 个用例）
+
+> 2026-08-09 新增。补齐缺失注解模块分析中推荐的 TOP5：Bean Validation 字段约束、JPA @Version/@Transient、条件装配、缓存增强、CSV 注解。每个模块独立测试套件，均 ≥10 用例。
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 16 | test_validation_module.py | 30 | Bean Validation（14 个约束单值校验：NotNull/NotBlank/NotEmpty/Size/Min/Max/Positive族/Pattern/Email/AssertTrue/False + 非法参数抛错 + 自定义消息；BeanValidator 反射收集：类属性描述符/函数装饰器/多约束叠加；多字段校验/分组/validate_or_raise/is_valid/None对象；@BeanValidate 方法级 AOP：显式参数名/自动探测类型/列表参数/None跳过/groups透传/裸方法透传/注册到 comprehensive_aop） | ✅ 全部通过 |
+| 17 | test_jpa_version_transient.py | 20 | JPA @Version/@Transient（注解基础：Version 是 Column 子类/默认非空 DEFAULT 0/Transient 独立标记/函数装饰器形式；DDL 解析：version 列生成/瞬态字段跳过/MySQL·SQLite 方言/DEFAULT 0；乐观锁执行器：try_update 成功自增 version/冲突抛 OptimisticLockError/无 @Version 抛错/无主键抛错/主键空抛错/MySQL 引号） | ✅ 全部通过 |
+| 18 | test_conditional_annotations.py | 45 | 条件装配（@Conditional：类/实例/callable/构造异常/求值异常/无 matches 默认 True；@ConditionalOnProperty：having_value 匹配/缺失 match_if_missing/无 having_value/无 config_loader/get 异常；@ConditionalOnBean/@ConditionalOnMissingBean：名称/类型/子类/value 别名/无 factory；@ConditionalOnClass：类类型/模块/属性路径/缺失；all_conditions_match 合取；ApplicationContext._matches_conditions 集成） | ✅ 全部通过 |
+| 19 | test_cache_annotations.py | 25 | 缓存增强（元数据：CachePut/CacheEvict/CacheConfig/Caching 构造；@Cacheable 回归：命中/miss/condition 跳过；@CachePut：总是执行+写缓存+跨方法更新 @Cacheable 条目/condition 参数名/取反/callable；@CacheEvict：按 key 跨方法失效/all_entries 清空/异常不失效/before_invocation 时序；@CacheConfig 默认命名空间回退/显式覆盖；@Caching 组合 put+evict/cacheable→put→evict 顺序） | ✅ 全部通过 |
+| 20 | test_csv_module.py | 46 | CSV 注解（元数据：@CsvProperty/@CsvIgnore/@csv_file 描述符+函数装饰器/header 回退；parse_csv_columns：order 排序/index 覆盖/ignore/全忽略抛错/回退 __init__/类型注解；转换器：int/float/bool tokens/date/Decimal/自定义/CsvConverter 别名；CsvReader：表头匹配/位置匹配/跳空行/自定义分隔符/类型转换/大数 Decimal/date_format/自定义转换器/文件路径/转换错误；CsvWriter：表头顺序/无表头/big_number/date_format/dict/分隔符/None·bool/文件路径；round-trip：完整/无表头位置/流式链） | ✅ 全部通过 |
+
+### SpringPy P0/P1/P2 八大模块测试套件（8 个文件，342 个用例）
+
+> 2026-08-09 新增。补齐缺失注解模块分析中推荐的 P0 三项 / P1 三项 / P2 两项，覆盖 Spring Data Repository 抽象、Actuator 运维端点、多数据源读写分离、事务事件监听、配置松散绑定与校验、测试切片、i18n 国际化、WebSocket 实时通信。每个模块独立测试套件，均 ≥10 用例。
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 21 | test_data_repository.py | 55 | P0-1 Spring Data Repository 抽象（Pageable/Sort/Page 值对象：页码/页大小/排序方向/offset/不可变/空排序；PagingAndSortingRepository CRUD：save 单条+批量/find_by_id/find_all/exists_by_id/count/delete_by_id/delete_all/动态 Specification 条件查询；分页查询：Page content/总页数/has_next/has_previous/first·last/空结果；排序查询：单字段升序降序/多字段混合/Specification+Sort 组合；分页+排序+条件组合；Specification 复合：and/or/not/空条件；count + Specification；Lambda Specification 工厂；实体元数据复用 ORM Column/@entity） | ✅ 全部通过 |
+| 22 | test_actuator.py | 29 | P0-2 Actuator 运维端点（/actuator 索引：端点列表/链接；/actuator/health：UP/DOWN 状态/组件明细；/actuator/info：应用信息；/actuator/env：配置项脱敏/密码·密钥掩码；/actuator/loggers：列出/动态修改级别；/actuator/metrics：指标列表/单指标值；/actuator/thresholds：阈值；端点禁用；FastAPI 路由注册） | ✅ 全部通过 |
+| 23 | test_datasource_routing.py | 34 | P0-3 多数据源读写分离（@DS/@Master/@Slave 注解元数据；DynamicDataSourceContextHolder ContextVar 线程安全：set/get/clear/嵌套 token 恢复；DynamicRoutingDataSource：master/slave 池管理/get_connection 路由/无匹配抛错/默认 master；@DS AOP：方法级路由/类级路由/方法覆盖类/同库不同组；@Master/@Slave 便捷注解；异步函数路由；事务内路由固定；多数据源独立隔离） | ✅ 全部通过 |
+| 24 | test_transactional_events.py | 32 | P1-4 事务事件监听（@TransactionalEventListener 元数据：phase BEFORE_COMMIT/AFTER_COMMIT/AFTER_ROLLBACK/AFTER_COMPLETION；TransactionSynchronizationManager 注册/解绑/状态查询；TransactionalEventPublisher publish：BEFORE_COMMIT 立即触发/AFTER_COMMIT 提交后触发/AFTER_ROLLBACK 回滚后触发；无事务时 AFTER_COMMIT 立即触发；嵌套事务同步；@Transactional 集成：提交触发 AFTER_COMMIT/回滚触发 AFTER_ROLLBACK；监听器异常隔离；多监听器顺序） | ✅ 全部通过 |
+| 25 | test_config_binding.py | 22 | P1-5 配置松散绑定与校验（松散绑定：kebab-case/camelCase/snake_case/SCREAMING_SNAKE 互转；嵌套 @NestedConfigurationProperties：对象/列表/字典；类型转换：int/float/bool/list/dict；@ConfigurationProperties prefix 提取；@Validated + Bean Validation 集成：NotNull/Min/Max/NotBlank 校验失败抛错；ConfigurationBinder bind：类/实例/默认值/缺失 key；ApplicationContext 集成：松散+嵌套绑定通过上下文） | ✅ 全部通过 |
+| 26 | test_test_slicing.py | 19 | P1-6 测试切片（SpringBootTest：全量上下文装配/Bean 获取/事件发布/配置注入/重复 close；WebMvcTest：Controller 路由注册/@PathVariable/@PostMapping body/Mock 依赖注入/无 Mock 模式/空 controllers 抛错/返回 FastAPI/Result 包装响应/重复 close；DataJpaTest：内存 SQLite 建表/Repository CRUD/find_all/连接池与原生连接/多实体/空 entities 抛错/重复 close） | ✅ 全部通过 |
+| 27 | test_i18n_module.py | 88 | P2-7 i18n 国际化（Locale：大小写规范化/parse 下划线·BCP47/空 locale/to_string Java 风格/to_language_tag BCP47/相等哈希/matches 前缀/预定义常量；properties 解析：KV/分隔符变体/注释/续行/转义/Unicode/UTF-8 中文；StaticMessageSource：增删查/locale 回退语言/默认 locale/精确覆盖/字典参数/MessageFormat 类型子模式剥离/格式失败容错/批量/useCodeAsDefault；父级委派：parent fallback/child override/DelegatingMessageSource；MessageSourceResolvable：首匹配 code/default/raise/dict args；ResourceBundleMessageSource：默认 bundle/精确 locale/语言回退/默认回退/YAML bundle/多 basename；LocaleResolver：AcceptHeader 解析 q 值/SupportedLocales/Fixed/Session/Cookie；LocaleContextHolder ContextVar；MessageSourceAccessor；中间件集成：Accept-Language 设置 locale context/request state；自动配置） | ✅ 全部通过 |
+| 28 | test_websocket_module.py | 63 | P2-8 WebSocket 实时通信（WebSocketSession：send_text/send_bytes/close/is_closed/属性；SessionRegistry 注册/解绑/按用户/广播；@ServerEndpoint：on_open/on_message/on_close/on_error/路径注册/AnnotatedEndpointHandler 反射调度；@MessageMapping/@SendTo/@SendToUser/@SubscribeMapping 元数据/collect_message_mappings/MessageMappingModel；InMemoryBroker：subscribe/unsubscribe/publish 到订阅者/send_to_user/broadcast/SimpMessageSendingOperations；MessageEndpointDispatcher：路由消息到 @MessageMapping 方法/@SendTo 广播/@SendToUser 单播；WebSocketRouter：add_endpoint/install 到 FastAPI/Starlette 集成/TestClient echo round-trip/连接关闭清理） | ✅ 全部通过 |
+
+### SpringPy Swagger / OpenAPI 模块测试套件（1 个文件，43 个用例）
+
+> 2026-08-09 新增。对齐 SpringDoc OpenAPI 3 注解体系 + Swagger 2 别名，注解驱动 API 文档。复用 FastAPI 自带 OpenAPI 生成，无新增第三方依赖。
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 29 | test_swagger_module.py | 43 | Swagger/OpenAPI 注解驱动 API 文档（注解元数据：@Tag/@Api/@Operation/@ApiOperation/@ApiResponse 可重复/@ApiResponses/@Parameter/@ApiParam/@Schema/@ApiModel/@SecurityScheme bearer+apiKey/@SecurityRequirement；collect_openapi_metadata：类@Tag+方法@Operation 组合/@ApiResponse 收集/@SecurityRequirement 收集/operation_id+deprecated/无注解空/方法 tag 叠加类 tag；collect_security_schemes：bearer/apiKey/无；SwaggerConfig：默认值/kebab-case/snake_case/disabled/contact+license/to_fastapi_kwargs 启用+禁用+contact+license kwargs；集成 TestClient：openapi title+version/docs 可访问/docs 禁用 404/@Tag 出现/@Operation summary+description/operation_id+deprecated/@ApiResponse 状态码/JWT securitySchemes/security requirement on route/apiKey securityScheme/@Schema 后处理/@Parameter 后处理 description+example/别名注解/Swagger UI HTML 含标题/多 Controller tags）+ **浏览器网页端到端实测**（启动真实 uvicorn 服务器访问 /docs：页面加载/@Tag 分组/@Operation summary+description/@ApiResponse/@Parameter 默认值/operation_id 锚点/Try it out 参数编辑/Execute 实际调用成功响应/Authorize 弹窗 BearerAuth-JWT/@SecurityRequirement 锁图标/Contact-License 渲染，13 项全通过，3 张截图存档） | ✅ 全部通过 |
 
 ---
 
@@ -187,7 +234,7 @@
 | Cloud注解 | 10 | @EnableDiscoveryClient/@NacosValue/@RefreshScope/@EnableFeignClients/@FeignClient/@SentinelResource/@EnableGateway/@LoadBalanced/@GlobalTransactional/fallback |
 | Sentinel限流 | 10 | QPS限流/异常比例熔断/异常数熔断/熔断恢复/装饰器/统计/FlowRule/DegradeRule/成功计数/reset |
 | OpenTelemetry追踪 | 10 | Span创建/嵌套Span/W3C格式/Header注入/异常记录/装饰器/属性/持续时间/SpanKind/SpanStatus |
-| Seata HTTP-AT | 10 | 开启事务/提交/回滚/XID传播/嵌套事务/多分支提交/多分支回滚/无活动事务/分支ID/@GlobalTransactional |
+| 实验性 HTTP 补偿 | 10 | 开启事务/提交/回滚/XID传播/嵌套事务/多分支提交/多分支回滚/无活动事务/分支ID/@GlobalTransactional；不代表 Seata AT 一致性 |
 | API Gateway | 10 | 精确匹配/通配符/不匹配/strip_prefix/add_prefix/路由列表/URI路由/多路由优先级/service_id |
 | LoadBalancer | 3 | 轮询/随机/空列表 |
 
@@ -262,13 +309,13 @@
 
 | 指标 | 数值 |
 |------|------|
-| 测试套件总数 | 15 |
-| 测试用例总数 | 707 |
-| 通过用例 | 707 |
+| 测试套件总数 | 29 |
+| 测试用例总数 | 1246 |
+| 通过用例 | 1246 |
 | 失败用例 | 0 |
 | 通过率 | 100% |
 | 每个套件最少用例数 | 10（达到下限要求） |
-| 每个套件最多用例数 | 83（Cloud内嵌） |
+| 每个套件最多用例数 | 88（i18n 模块） |
 
 **最低用例数核验**（用户要求“每个用例不低于10个”）：
 
@@ -277,17 +324,31 @@
 | test_annotations_contract.py | 11 | ✅ |
 | test_pymybatis_contract.py | 10 | ✅ |
 | test_connection_resilience.py | 11 | ✅ |
+| test_jpa_version_transient.py | 20 | ✅ |
 | test_annotation_combinations.py | 28 | ✅ |
+| test_validation_module.py | 30 | ✅ |
 | test_core_annotations_full.py | 38 | ✅ |
 | test_production_readiness.py | 42 | ✅ |
+| test_excel_module.py | 42 | ✅ |
+| test_conditional_annotations.py | 45 | ✅ |
+| test_csv_module.py | 46 | ✅ |
+| test_cache_annotations.py | 25 | ✅ |
 | test_security.py | 49 | ✅ |
 | test_aop_annotations_full.py | 53 | ✅ |
 | test_di_config_event_full.py | 53 | ✅ |
 | test_web_annotations_full.py | 54 | ✅ |
 | test_orm_pymybatis_full.py | 60 | ✅ |
-| test_ai_module.py | 87 | ✅ |
 | test_security_full.py | 74 | ✅ |
 | test_cloud_embedded_full.py | 83 | ✅ |
+| test_ai_module.py | 87 | ✅ |
+| test_test_slicing.py | 19 | ✅ |
+| test_config_binding.py | 22 | ✅ |
+| test_actuator.py | 29 | ✅ |
+| test_transactional_events.py | 32 | ✅ |
+| test_datasource_routing.py | 34 | ✅ |
+| test_websocket_module.py | 63 | ✅ |
+| test_data_repository.py | 55 | ✅ |
+| test_i18n_module.py | 88 | ✅ |
 
 ---
 
@@ -306,7 +367,21 @@
 | 注解契约 | 全部注解 | 11用例 | ✅ |
 | 组合注解 | 8类组合场景 | 28用例 | ✅ |
 | SpringPy AI | 4注解+12模块+5企业能力+类型化配置绑定+Redis封装统一+LangChain切片委托+向量库适配器 | 87用例 | ✅ |
-| **合计** | **88注解+28模块** | **707用例** | **✅ 100%** |
+| Bean Validation | 14约束+@BeanValidate | 30用例 | ✅ |
+| JPA @Version/@Transient | @Version/@Transient+OptimisticLockExecutor | 20用例 | ✅ |
+| 条件装配 | @Conditional/@ConditionalOnProperty/OnBean/OnMissingBean/OnClass | 45用例 | ✅ |
+| 缓存增强 | @CachePut/@CacheEvict/@CacheConfig/@Caching | 25用例 | ✅ |
+| CSV 注解 | @CsvProperty/@CsvIgnore/@csv_file+EasyCsv | 46用例 | ✅ |
+| Spring Data Repository | Pageable/Sort/Page+PagingAndSortingRepository+Specification | 55用例 | ✅ |
+| Actuator 运维端点 | /health·/env·/loggers·/metrics·/info·/thresholds | 29用例 | ✅ |
+| 多数据源读写分离 | @DS/@Master/@Slave+DynamicRoutingDataSource+ContextVar | 34用例 | ✅ |
+| 事务事件监听 | @TransactionalEventListener+TransactionSynchronizationManager | 32用例 | ✅ |
+| 配置松散绑定与校验 | @NestedConfigurationProperties+松散绑定+@Validated | 22用例 | ✅ |
+| 测试切片 | @SpringBootTest/@WebMvcTest/@DataJpaTest | 19用例 | ✅ |
+| i18n 国际化 | MessageSource/LocaleResolver/LocaleContextHolder+中间件 | 88用例 | ✅ |
+| WebSocket 实时通信 | @ServerEndpoint/@MessageMapping/@SendTo+InMemoryBroker | 63用例 | ✅ |
+| Swagger/OpenAPI 文档 | @Tag/@Operation/@ApiResponse/@Schema/@SecurityScheme | 43用例 | ✅ |
+| **合计** | **130+注解+42模块** | **1246用例** | **✅ 100%** |
 
 ---
 
@@ -329,6 +404,39 @@
    - **切片器委托 langchain-text-splitters**：`TokenTextSplitter`/`CharacterTextSplitter` 的 `split()` 在安装 `langchain-text-splitters` 时优先委托其 `RecursiveCharacterTextSplitter`/`CharacterTextSplitter`（自动按 `\n\n`/`\n`/空格/标点逐级切分，语义更佳），并把切片结果映射回框架 `TextDocument` 并补齐 `chunk_index` 元数据；未安装时自动降级内置实现，保证开箱即用。overlap 夹紧（`min(overlap, chunk_size-1)`）以兼容 LangChain 约束与框架默认 `chunk_size=30` 场景。已测试 `langchain-text-splitters==0.3.8`（兼容 `langchain-core==0.3.51`），写入 `requirements-ai.txt`。
    - **LangChainVectorStore 向量库适配器**：新增薄适配器，包装 langchain 生态成熟的 `VectorStore`（FAISS/Chroma 等，`add_texts`/`similarity_search_by_vector`），映射为框架统一的 `VectorStore` 接口，不自行实现向量索引与检索。新增测试用 stub 模拟 langchain store 验证 add/add_texts/similarity_search/count 委托与 metadata 透传，以及未传 store 时静默空。
    - 相关文档同步：AI_MODULE.md 的 §6（ETL）新增 LangChain 优先说明与 §6.1 向量存储适配器，模块组成表同步；TEST_REPORT.md 统计更新为 707 用例。
+10. **新增 SpringPy Excel 模块（spring/excel/，42 用例）**：对齐 alibaba EasyExcel 的注解驱动 Excel 读写。**复用项目既有范式不重复造轮子**——字段级 `@ExcelProperty`/`@ExcelIgnore` 镜像 ORM 层 `Column`/`Id` 的元数据描述符范式（`cls.__dict__`+MRO 反射、`__excel_property__` 标记），类级 `@excel_sheet` 镜像 `@entity`。模块组成 7 文件：annotations（注解+列模型解析）、converters（`Converter` 接口+内置 int/float/bool/str/date/Decimal 转换器，按 `__init__` 类型注解自动选择，支持 `Optional[T]`）、reader（表头映射/类型转换/多 sheet/`head_row_number`）、writer（表头/顺序/样式/大数字防丢精度/多 sheet/冻结表头/自适应列宽）、easy_excel（`EasyExcel` 流式构建入口+`read_excel`/`write_excel` 便捷函数）、style（默认表头/内容样式）、exceptions（`ExcelError` 异常族）。功能：注解映射、无注解纯 `__init__` 模型自动回退、自定义转换器、长 ID/大数 >15 位按字符串写入避免 Excel 精度截断、多 sheet 读写、表头非首行、`num_format`/`width`。**可选依赖降级**：注解声明无需 openpyxl，未安装时 read/write 抛 `ExcelDependencyError` 提示 `pip install springpy[excel]`。**打包**：pyproject.toml 新增 `excel` 与 `ai` 两个 optional-dependencies extra（`pip install springpy[excel]` / `pip install springpy[ai]`），`full` 同步纳入；新增 `requirements-excel.txt`。测试 42 用例覆盖注解元数据解析/转换器双向/读写 round-trip/多 sheet/配置降级/样式格式，Python 3.11.9 + openpyxl 3.1.5 全部通过。使用报告见 [EXCEL_MODULE.md](EXCEL_MODULE.md)。
+
+11. **新增 TOP5 注解模块测试套件（5 文件，166 用例，2026-08-09）**：补齐缺失注解模块分析中推荐的 TOP5，全部复用既有范式（描述符/`SpringAnnotation`/`comprehensive_aop` 分发/ORM 反射），不引入第三方库：
+    - **Bean Validation（test_validation_module.py，30 用例）**：14 个字段约束（`@NotNull`/`@NotBlank`/`@NotEmpty`/`@Size`/`@Min`/`@Max`/`@Positive`族/`@Pattern`/`@Email`/`@AssertTrue`/`@AssertFalse`）作为 `Constraint` 描述符，`BeanValidator` 按 MRO 反射收集并校验，`@BeanValidate` 方法级 AOP 注册到 `comprehensive_aop`（对齐 Jakarta `@Validated`）。
+    - **JPA @Version/@Transient（test_jpa_version_transient.py，20 用例）**：`Version` 继承 `Column`（DDL 生成 `INTEGER NOT NULL DEFAULT 0`），`Transient` 独立标记跳过持久化，`OptimisticLockExecutor` 在 UPDATE 的 WHERE 追加 `version=?` 并自增。
+    - **条件装配（test_conditional_annotations.py，45 用例）**：`@Conditional`/`@ConditionalOnProperty`/`@ConditionalOnBean`/`@ConditionalOnMissingBean`/`@ConditionalOnClass`，每个注解实现 `matches(ctx)`，由 `ApplicationContext._matches_conditions` 在组件注册阶段合取求值。
+    - **缓存增强（test_cache_annotations.py，25 用例）**：`@CachePut`/`@CacheEvict`/`@CacheConfig`/`@Caching` 复用 `@Cacheable` 同一进程内存储，支持跨方法更新/失效、`all_entries` 命名空间清空、`before_invocation` 时序、`condition`（参数名/取反/callable）。
+    - **CSV 注解（test_csv_module.py，46 用例）**：`@CsvProperty`/`@CsvIgnore`/`@csv_file` 镜像 Excel 注解范式，转换器复用 `spring.excel.converters`（DRY），`EasyCsv` 流式入口 + `read_csv`/`write_csv` 便捷函数，使用标准库 `csv` 无可选依赖。
+12. **修复 TOP5 模块测试过程中发现的 4 处生产代码缺陷**：
+    - **`@BeanValidate` 方法级 AOP 未生效（test_validation_module.py）**：原 `TestBeanValidateAop` 在裸类上调用被注解方法，因 `@BeanValidate` 仅登记元数据、包裹发生在 `apply_annotations`（与 `@Validate`/`@Cacheable` 同路径），未模拟 IoC 包裹导致 4 用例失败。修正测试用 `apply_annotations` 模拟受管 Bean 包裹路径（对齐 Jakarta `@Validated` 需 `MethodValidationPostProcessor` 代理语义），并补 list 参数名/裸方法透传用例。
+    - **`OptimisticLockExecutor` 列名翻译缺失（spring/orm/ddl_auto.py）**：`set_fields` 的键为 Python 属性名，原 `_col_sql_name` 仅做 snake_case 转换，未查实体 `Column(name=...)` 元数据，导致自定义列名时生成 `SET name=?`（实际列名 `user_name`）报 "no such column"。新增 `_parse_columns`/`_column_py_to_sql_map` 按实体元数据翻译属性名→列名；并修复 `_execute_dml` 对 sqlite3（execute 返回 cursor）的 rowcount 取值；修复 `update` 在 `try_update` 自增实体 version 后再读 `old_version` 导致返回值 +2 的时序 Bug。`spring.orm` 补导出 `version_column`/`transient_field` 直接别名。
+    - **`@Conditional` 构造被误判为装饰器（spring/annotations/conditional.py）**：`Conditional(MyCond)` 首参为类/可调用，被 `SpringAnnotation.__new__` 的"无括号装饰器"优化误判为装饰目标，导致 `__init__` 缺参报错。新增 `Conditional.__new__` 跳过该优化。
+    - **缓存 key 含 `method.__qualname__` 破坏跨方法共享（spring/context/bean_factory.py）**：`@Cacheable`/`@CachePut`/`@CacheEvict` 的 key 计算含 `method.__qualname__`，导致 `@CachePut`/`@CacheEvict` 无法更新/失效 `@Cacheable` 条目（与 Spring Cache 抽象语义相悖）。移除 `__qualname__`，key = `cacheName + resolvedKey`，使跨方法共享生效；`@CacheEvict(all_entries)` 按命名空间清空不受影响。既有 `@Cacheable` 测试零回归。
+
+13. **新增 P0/P1/P2 八大模块测试套件（8 文件，342 用例，2026-08-09）**：实现缺失注解模块分析中推荐的 P0 三项 / P1 三项 / P2 两项，全部复用既有范式（`SpringAnnotation`/`comprehensive_aop`/ORM 反射/`ApplicationContext`），不引入第三方库：
+    - **P0-1 Spring Data Repository 抽象（spring/data/，55 用例）**：`Pageable`/`Sort`/`Page` 值对象（不可变、offset 计算、分页边界）+ `PagingAndSortingRepository`（save/find_by_id/find_all/exists/count/delete + 分页/排序/动态条件）+ `Specification`（and/or/not 复合 + Lambda 工厂）。复用 ORM `Column`/`@entity` 元数据解析与连接池，对齐 Spring Data `PagingAndSortingRepository`/`JpaSpecificationExecutor`。
+    - **P0-2 Actuator 运维端点（spring/web/actuator.py，29 用例）**：扩展既有 `/health` 为完整运维端点族——`/actuator` 索引、`/health` 状态+组件明细、`/info` 应用信息、`/env` 配置脱敏（password/secret/key/token 掩码）、`/loggers` 列出+动态修改级别、`/metrics` 指标列表+单指标值、`/thresholds` 阈值。端点可禁用，对齐 Spring Boot Actuator。
+    - **P0-3 多数据源读写分离（spring/datasource/，34 用例）**：`@DS`/`@Master`/`@Slave` 注解 + `DynamicDataSourceContextHolder`（`ContextVar` 线程/协程安全，嵌套 token 恢复）+ `DynamicRoutingDataSource`（master/slave 池管理、路由、默认 master）。`@DS` AOP 方法级/类级路由，事务内路由固定，对齐 `dynamic-datasource-spring-boot-starter`。
+    - **P1-4 事务事件监听（spring/tx/，32 用例）**：`@TransactionalEventListener`（phase: BEFORE_COMMIT/AFTER_COMMIT/AFTER_ROLLBACK/AFTER_COMPLETION）+ `TransactionSynchronizationManager`（注册/解绑/状态查询）+ `TransactionalEventPublisher`。与 `@Transactional` 集成：提交触发 AFTER_COMMIT、回滚触发 AFTER_ROLLBACK；无事务时 AFTER_COMMIT 立即触发。对齐 Spring `@TransactionalEventListener`。
+    - **P1-5 配置松散绑定与校验（spring/config/binding.py，22 用例）**：`@NestedConfigurationProperties` 嵌套配置 + 松散绑定（kebab-case/camelCase/snake_case/SCREAMING_SNAKE 互转）+ 类型转换（int/float/bool/list/dict）+ `@Validated` 集成 Bean Validation（NotNull/Min/Max/NotBlank 校验失败抛错）。`ConfigurationBinder.bind` 支持类/实例/默认值/缺失 key。对齐 Spring Boot `@ConfigurationProperties` relaxed binding。
+    - **P1-6 测试切片（spring/test/，19 用例）**：`SpringBootTest`（全量上下文装配）、`WebMvcTest`（仅 Controller 切片 + Mock 依赖 + FastAPI TestClient）、`DataJpaTest`（内存 SQLite + DdlAutoManager 建表 + PagingAndSortingRepository 工厂）。复用 `ApplicationContext`/`WebApplicationContext`/`DdlAutoManager`，对齐 `@SpringBootTest`/`@WebMvcTest`/`@DataJpaTest`。
+    - **P2-7 i18n 国际化（spring/i18n/，88 用例）**：`Locale`（parse 下划线/BCP47、Java 风格 to_string、BCP47 to_language_tag、matches 前缀）+ `MessageSource`（Static/ResourceBundle/Delegating + 父级委派 + locale 回退）+ `LocaleResolver`（AcceptHeader q 值/Fixed/Session/Cookie）+ `LocaleContextHolder`（ContextVar）+ `MessageSourceAccessor` + properties 解析（续行/转义/Unicode/UTF-8）+ `LocaleResolverMiddleware`（Accept-Language 设置 locale context）+ 自动配置。对齐 Spring `MessageSource`/`LocaleResolver`。
+    - **P2-8 WebSocket 实时通信（spring/websocket/，63 用例）**：`@ServerEndpoint`（on_open/on_message/on_close/on_error + `AnnotatedEndpointHandler` 反射调度）+ `@MessageMapping`/`@SendTo`/`@SendToUser`/`@SubscribeMapping` + `InMemoryBroker`（subscribe/unsubscribe/publish/send_to_user/broadcast）+ `MessageEndpointDispatcher`（路由消息到 @MessageMapping 方法）+ `WebSocketRouter`（install 到 FastAPI/Starlette，TestClient echo round-trip）。对齐 Spring WebSocket `@MessageMapping`/`SimpMessagingTemplate`。
+14. **修复八大模块测试过程中发现的测试基础设施问题**：
+    - **`_test_helpers.py` 全局 mock 污染（tests/_test_helpers.py）**：原 `_install_module_mocks` 对所有模块（含真实已安装的 fastapi/starlette/pydantic/yaml）无条件覆盖属性为 `MagicMock`（如 `fastapi.FastAPI = MagicMock`、`yaml.safe_load = MagicMock`），导致后续需要真实模块的集成测试（`tests_runtime/`、`test_test_slicing`、`test_i18n_module`、`example_all`）在全量回归时被污染失败（7+ 用例）。新增 `_is_stub()` 守卫，仅对 `_MockModule` stub（缺失依赖）注入 mock 属性，真实已安装模块保持原样。修复后全量回归从 15 失败降至 1 失败（仅 `example_all/test_05_http_api`，需 MySQL/Docker，与原始代码同样失败，非框架回归）。
+    - **`test_test_slicing` Result 包装期望（tests/test_test_slicing.py）**：`WebMvcTest` 复用 `WebApplicationContext`，后者统一用 `Result.success(data=...)` 包装响应（`{code, message, data}`）。原测试断言 `resp.json() == {"id": 42}` 与 `isinstance(app, FastAPI)`（FastAPI 被 mock 污染），修正为断言 `resp.json()["data"]` 并配置 Mock 返回可序列化字符串避免 JSON 编码失败。
+    - **`example_all/test_05_http_api` 环境依赖确认**：该集成测试启动真实 uvicorn 服务器测试 36 个 HTTP API（含 ORM MySQL 端点）。`fail_fast: false` 时 `init_mybatis` 因无 MySQL 连接静默失败→`@Mapper` 未注册→`refresh()` 创建 `OrmController` 时 `Cannot resolve parameter 'user_mapper'`。已验证原始代码（`git stash` 回退 `application_context.py`/`bean_factory.py`）同样失败，确认为环境依赖（需 Docker MySQL），非八大模块引入的回归。
+15. **新增 Swagger / OpenAPI 注解驱动 API 文档模块（spring/web/swagger.py，43 用例，2026-08-09）**：对齐 SpringDoc OpenAPI 3 注解体系 + Swagger 2 别名，注解驱动 API 文档，复用 FastAPI 自带 OpenAPI 生成，无新增第三方依赖：
+    - **注解体系**：`@Tag`（类级分组，别名 `@Api`）/`@Operation`（方法级 summary/description/operation_id/deprecated/tags，别名 `@ApiOperation`）/`@ApiResponse`（可重复响应码描述）/`@ApiResponses`（聚合）/`@Parameter`（参数 description/example/required/deprecated，别名 `@ApiParam`）/`@Schema`（模型 title/description/example，别名 `@ApiModel`）/`@SecurityScheme`（全局 bearer/apiKey 安全方案）/`@SecurityRequirement`（方法级认证标记）。
+    - **配置驱动**（`SwaggerConfig.from_config`）：从 `application.yml` 的 `spring.swagger.*` 读取 title/description/version/contact/license/docs-url/redoc-url/openapi-url/enabled，支持松散绑定（kebab/snake）；`enabled=false` 时 docs/redoc/openapi 全部 404。
+    - **元数据注入**（`collect_openapi_metadata`）：`WebApplicationContext._register_handler` 注册路由时同步从 Controller 类+方法注解收集 OpenAPI 元数据，传给 FastAPI 路由装饰器（tags/summary/description/operation_id/deprecated/responses）；`security` 通过 `openapi_extra` 注入（FastAPI 路由装饰器不支持 security 参数）。
+    - **schema 后处理**（`configure_swagger`）：自定义 `app.openapi()`，注入全局 `securitySchemes`（JWT Bearer / API Key）、`@Schema` 模型描述（后处理 `components/schemas`）、`@Parameter` 参数描述（后处理 `paths.parameters`）。
+    - **集成验证**：TestClient 访问 `/openapi.json` 验证 title/version/tags/summary/description/responses/securitySchemes/security；`/docs` Swagger UI HTML 含标题；`enabled=false` 时 404；多 Controller tags 隔离；别名注解（`@Api`/`@ApiOperation`）等价生效。
 
 ---
 
@@ -617,7 +725,7 @@ python test_all_features.py
 - `ApplicationEvent`、`@EventListener` 和 `ApplicationEventPublisher` 已由 ApplicationContext 扫描、注册和发布。
 - ApplicationContext 会把实际配置路径绑定到稳定的全局 ConfigLoader，后续无参数 `ConfigLoader()` 复用同一配置。
 - Nacos Windows Docker 部署已覆盖 Java cgroup、外部 MySQL、Nacos 2.2+ token/identity 和客户端账号配置。
-- v1.5.0新增Cloud内嵌功能：Sentinel限流熔断引擎(QPS/异常比例/慢调用/热点参数)、OpenTelemetry原生分布式追踪(W3C traceparent)、Seata HTTP-AT分布式事务(无需外部Server)、轻量API Gateway网关(ASGI/WSGI反向代理)、ORM DDL自动建表(JPA ddl-auto风格，create/update/validate/create-drop)。
+- v1.5.0新增Cloud内嵌功能：Sentinel限流熔断引擎(QPS/异常比例/慢调用/热点参数)、OpenTelemetry原生分布式追踪(W3C traceparent)、实验性HTTP补偿协调器（不提供Seata AT语义）、轻量异步ASGI Gateway、ORM DDL自动建表(JPA ddl-auto风格，create/update/validate/create-drop)。
 - 全部27个Cloud新功能测试通过(含Sentinel 5项、Tracer 6项、Seata 5项、Gateway 4项、DDL Auto 7项)。
 - MySQL连接池支持Docker容器IP自动检测，所有中间件配置支持环境变量，零硬编码。
 
@@ -675,5 +783,5 @@ discovery:
 - 这是一套 Python 框架，不兼容 Java 字节码、Spring Bean 生命周期扩展点或 Java MyBatis 插件。
 - 本地事务支持全部七种 Spring 传播模式；`NESTED` 使用数据库 savepoint。`REQUIRES_NEW` 和 `NOT_SUPPORTED` 会临时占用第二条连接，生产连接池必须按嵌套深度预留容量。
 - ORM 源码存在两份是发布结构约束，修改后必须运行跨包源码一致性测试，禁止单边修复。
-- Sentinel、OpenTelemetry追踪、Seata HTTP-AT分布式事务均为内嵌实现，无需部署外部Server。生产环境如需更强大的治理能力，可对接外部Sentinel Dashboard或Seata Server。
+- Sentinel和OpenTelemetry追踪可内嵌运行。HTTP补偿协调器只用于开发演示；生产分布式事务必须使用真实Seata、Saga或Outbox，并完成故障恢复测试。
 - API Gateway为轻量内嵌网关，适合简单路由转发场景。复杂网关需求建议使用Kong/APISIX等专业网关。

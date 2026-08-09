@@ -13,6 +13,9 @@ WorkingDirectory=/opt/springpy
 EnvironmentFile=-/etc/springpy/env
 Environment="PYTHONPATH=/opt/springpy"
 Environment="PATH=/opt/springpy/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PROMETHEUS_MULTIPROC_DIR=/run/springpy-prometheus"
+RuntimeDirectory=springpy-prometheus
+RuntimeDirectoryMode=0750
 
 ExecStart=/opt/springpy/venv/bin/gunicorn \
     --config /opt/springpy/deploy/gunicorn/gunicorn.conf.py \

@@ -1,6 +1,10 @@
 name: Security Scan
 
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   schedule:
     - cron: '0 0 * * 0'
   workflow_dispatch:
@@ -21,19 +25,19 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install bandit pip-audit
+        pip install -r requirements-lock.txt
+        pip install bandit==1.9.4 pip-audit==2.10.1
 
     - name: pip-audit vulnerability scan
       run: |
         echo "Running pip-audit for dependency vulnerabilities..."
-        pip-audit || true
+        pip-audit -r requirements-lock.txt
         echo "pip-audit scan completed"
 
     - name: Bandit security static analysis
       run: |
-        echo "Running Bandit security scan on spring/ directory..."
-        bandit -r spring/ -f json -o bandit-report.json || true
+        echo "Failing on high-severity Bandit findings in spring/..."
+        bandit -r spring/ -lll -f json -o bandit-report.json
         echo "Bandit scan completed, report saved to bandit-report.json"
 
     - name: Check for hardcoded secrets

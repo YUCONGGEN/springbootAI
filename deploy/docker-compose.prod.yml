@@ -4,15 +4,15 @@ services:
     container_name: springpy-mysql
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme_root_pass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-springpy}
       MYSQL_USER: ${MYSQL_USER:-springpy}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme_db_pass}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
     ports:
       - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./sql:/docker-entrypoint-initdb.d
+      - ../sql:/docker-entrypoint-initdb.d:ro
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -34,13 +34,13 @@ services:
     image: redis:7-alpine
     container_name: springpy-redis
     restart: always
-    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme_redis_pass} --maxmemory 512mb --maxmemory-policy allkeys-lru --appendonly yes
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set} --maxmemory 512mb --maxmemory-policy allkeys-lru --appendonly yes
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis_pass}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -54,7 +54,7 @@ services:
     restart: always
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-changeme_rabbit_pass}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}
       RABBITMQ_VM_MEMORY_HIGH_WATERMARK: "0.4"
     ports:
       - "127.0.0.1:5672:5672"
@@ -77,15 +77,15 @@ services:
     environment:
       MODE: standalone
       NACOS_AUTH_ENABLE: "true"
-      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:-changeme_nacos_token_32_chars_min}
-      NACOS_AUTH_IDENTITY_KEY: serverIdentity
-      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_IDENTITY:-changeme_nacos_identity}
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:?NACOS_AUTH_TOKEN must be set}
+      NACOS_AUTH_IDENTITY_KEY: ${NACOS_IDENTITY_KEY:?NACOS_IDENTITY_KEY must be set}
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_IDENTITY:?NACOS_IDENTITY must be set}
       SPRING_DATASOURCE_PLATFORM: mysql
       MYSQL_SERVICE_HOST: mysql
       MYSQL_SERVICE_PORT: 3306
       MYSQL_SERVICE_DB_NAME: ${NACOS_DB_NAME:-nacos_config}
       MYSQL_SERVICE_USER: ${MYSQL_USER:-springpy}
-      MYSQL_SERVICE_PASSWORD: ${MYSQL_PASSWORD:-changeme_db_pass}
+      MYSQL_SERVICE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
     ports:
       - "127.0.0.1:8848:8848"
       - "127.0.0.1:9848:9848"

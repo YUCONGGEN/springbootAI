@@ -1,0 +1,81 @@
+name: Performance Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Load profile
+        required: true
+        default: smoke
+        type: choice
+        options: [smoke, baseline, stress, soak]
+      workload:
+        description: Benchmark workload
+        required: true
+        default: mixed
+        type: choice
+        options: [mixed, async, sync, gateway, echo, cpu]
+      rate:
+        description: RPS for smoke, baseline, or soak
+        required: false
+        default: ""
+        type: string
+      duration:
+        description: Duration for smoke, baseline, or soak
+        required: false
+        default: ""
+        type: string
+      target_rps:
+        description: Peak RPS for stress
+        required: false
+        default: "500"
+        type: string
+      workers:
+        description: Uvicorn worker count
+        required: false
+        default: "2"
+        type: string
+  schedule:
+    - cron: "30 18 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      APP_WORKERS: ${{ inputs.workers || '2' }}
+      SPRINGPY_PROFILE: ${{ inputs.profile || 'smoke' }}
+      SPRINGPY_WORKLOAD: ${{ inputs.workload || 'mixed' }}
+      SPRINGPY_RATE: ${{ inputs.rate || '' }}
+      SPRINGPY_DURATION: ${{ inputs.duration || '' }}
+      SPRINGPY_TARGET_RPS: ${{ inputs.target_rps || '500' }}
+      SPRINGPY_RESULTS_FILE: /results/github-${{ github.run_id }}.json
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start benchmark application
+        run: docker compose -p springpy-performance -f docker-compose.performance.yml up -d --build --wait app
+
+      - name: Run threshold-gated k6 profile
+        run: docker compose -p springpy-performance -f docker-compose.performance.yml run --rm --no-deps k6
+
+      - name: Collect application logs
+        if: failure()
+        run: docker compose -p springpy-performance -f docker-compose.performance.yml logs --no-color app
+
+      - name: Upload performance result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-${{ github.run_id }}
+          path: tests_performance/results/*.json
+          if-no-files-found: warn
+
+      - name: Stop benchmark application
+        if: always()
+        run: docker compose -p springpy-performance -f docker-compose.performance.yml down --remove-orphans

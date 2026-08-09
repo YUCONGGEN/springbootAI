@@ -202,7 +202,7 @@ class SqlCache:
             # 对参数进行排序后拼接，确保相同参数生成相同key
             sorted_params = sorted(params.items())
             key += str(sorted_params)
-        return hashlib.md5(key.encode()).hexdigest()
+        return hashlib.sha256(key.encode()).hexdigest()
 
     def get(self, sql: str, params: Optional[Dict[str, Any]]) -> Optional[Any]:
         """获取SQL查询缓存"""
@@ -294,7 +294,7 @@ class PrecompiledSqlCache:
 
     def _generate_key(self, sql: str) -> str:
         """生成预编译SQL缓存key"""
-        return hashlib.md5(sql.encode()).hexdigest()
+        return hashlib.sha256(sql.encode()).hexdigest()
 
     def get(self, sql: str) -> Optional[Any]:
         """获取预编译SQL缓存"""
@@ -329,7 +329,7 @@ class SecondLevelCache:
         if params:
             sorted_params = sorted(params.items())
             key += str(sorted_params)
-        return hashlib.md5(key.encode()).hexdigest()
+        return hashlib.sha256(key.encode()).hexdigest()
 
     def get(self, table_name: str, params: Dict[str, Any]) -> Optional[Any]:
         """获取二级缓存"""
