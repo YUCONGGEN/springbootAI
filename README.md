@@ -2,7 +2,7 @@
 
 SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力、内嵌的 PyMyBatis ORM，以及企业级 AI 模块（对齐 Spring AI 2.0：ChatClient/Advisor/Tools/RAG/Function Calling）。本指南为框架核心综合使用文档；**AI / ORM / Cloud / Excel 等模块的完整注解与功能说明已分离为独立文档**（见下方“模块文档”），本指南相应章节保留概览与跳转链接。
 
-- SpringBootAI 版本：`1.8.0`
+- SpringBootAI 版本：`1.8.1`
 - 内嵌 PyMyBatis 版本：`1.4.0`
 - Python：3.10+
 - 状态：Beta（企业试点）

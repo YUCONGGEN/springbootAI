@@ -73,53 +73,58 @@ class SpringLogger:
             colorize=True,
         )
         
-        # 创建日志目录
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
-        
         # 添加文件输出（按日期轮转）
-        loguru_logger.add(
-            os.path.join(self.log_dir, "application_{time:YYYY-MM-DD}.log"),
-            format=self.log_format,
-            level=self.level,
-            rotation=self.rotation,
-            retention=self.retention,
-            compression="zip",
-            encoding="utf-8",
-        )
-        
-        # 添加错误日志单独输出
-        loguru_logger.add(
-            os.path.join(self.log_dir, "error_{time:YYYY-MM-DD}.log"),
-            format=self.log_format,
-            level="ERROR",
-            rotation=self.rotation,
-            retention=self.retention,
-            compression="zip",
-            encoding="utf-8",
-        )
+        # 创建日志目录，失败则优雅降级（仅控制台日志），保证 import 永不因权限问题崩溃
+        try:
+            os.makedirs(self.log_dir, exist_ok=True)
+            loguru_logger.add(
+                os.path.join(self.log_dir, "application_{time:YYYY-MM-DD}.log"),
+                format=self.log_format,
+                level=self.level,
+                rotation=self.rotation,
+                retention=self.retention,
+                compression="zip",
+                encoding="utf-8",
+            )
+            # 添加错误日志单独输出
+            loguru_logger.add(
+                os.path.join(self.log_dir, "error_{time:YYYY-MM-DD}.log"),
+                format=self.log_format,
+                level="ERROR",
+                rotation=self.rotation,
+                retention=self.retention,
+                compression="zip",
+                encoding="utf-8",
+            )
+        except (PermissionError, OSError) as exc:
+            # 当前工作目录无写权限（如系统目录/只读位置），降级为仅控制台日志
+            loguru_logger.warning(
+                f"无法创建日志目录 {self.log_dir!r}，文件日志已禁用，仅使用控制台日志: {exc}"
+            )
     
     def _setup_std_logging(self):
         """配置标准logging（fallback）"""
         self._logger = logging.getLogger("Spring")
         self._logger.setLevel(getattr(logging, self.level))
         
-        # 创建日志目录
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
-        
-        # 添加控制台输出
+        # 添加控制台输出（始终启用）
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(logging.Formatter(self.log_format))
         self._logger.addHandler(console_handler)
-        
-        # 添加文件输出
-        file_handler = logging.FileHandler(
-            os.path.join(self.log_dir, "application.log"),
-            encoding="utf-8"
-        )
-        file_handler.setFormatter(logging.Formatter(self.log_format))
-        self._logger.addHandler(file_handler)
+
+        # 添加文件输出：目录创建失败则优雅降级，保证 import 永不崩溃
+        try:
+            os.makedirs(self.log_dir, exist_ok=True)
+            file_handler = logging.FileHandler(
+                os.path.join(self.log_dir, "application.log"),
+                encoding="utf-8"
+            )
+            file_handler.setFormatter(logging.Formatter(self.log_format))
+            self._logger.addHandler(file_handler)
+        except (PermissionError, OSError) as exc:
+            self._logger.warning(
+                f"无法创建日志目录 {self.log_dir!r}，文件日志已禁用，仅使用控制台日志: {exc}"
+            )
     
     def get_logger(self):
         """获取日志实例"""
