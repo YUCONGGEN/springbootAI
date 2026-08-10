@@ -2,8 +2,8 @@
 
 **测试日期**: 2026-08-10（历史基线 2026-08-08；Excel/TOP5/P0/P1/P2/Swagger 增量测试 2026-08-09）
 **测试环境**: macOS + Python 3.9.6 + Docker ｜ Excel/TOP5/八大模块/Swagger 补充测试：Windows + Python 3.11.9 + openpyxl 3.1.5
-**框架版本**: SpringBootAI 1.8.5 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
-**测试结果**: ✅ **1402 个核心用例全部通过**（32 个测试套件，0 失败）；本机当前 `example_all` 集成测试为 4/5 套件通过，失败的是需要真实中间件的 HTTP API 套件，因为本次运行时 Docker 没有运行。历史 Docker 环境报告见第二部分的 5/5 记录；两者不是同一次运行。
+**框架版本**: SpringBootAI 1.8.6 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
+**测试结果**: ✅ **1431 个核心用例全部通过**（34 个测试套件，0 失败）；本机当前 `example_all` 集成测试为 4/5 套件通过，失败的是需要真实中间件的 HTTP API 套件，因为本次运行时 Docker 没有运行。历史 Docker 环境报告见第二部分的 5/5 记录；两者不是同一次运行。
 
 ## 给新手：这份报告如何阅读和复现
 
@@ -49,6 +49,8 @@ python -X utf8 -m pytest tests_integration -q
 > **2026-08-10 v1.8.4 Banner 更新**：将 `spring/utils/banner.py` 的启动 ASCII art 从 "SpringBoot" 替换为 "springbootAI"（figlet standard 字体，由 pyfiglet 生成），对齐项目品牌名。仅修改 `SPRING_BANNER` 常量，`BannerPrinter` 方法不变。Trusted Publishing（GitHub Actions OIDC）发布到 PyPI，无需 API token。
 >
 > **2026-08-10 v1.8.5 配置读取细节修复**：彻底审查配置文件读取链路，修复 1 个与日志 bug 同类的单例配置 Bug + 3 个功能缺失 Bug + 6 个风险点，新增 58 用例（`tests/test_config_fixes_185.py`），全量 1402 用例通过。
+
+> **2026-08-10 v1.8.6 配置严格校验 + 统一异常捕获**：(1) 日志 `log_dir` 用户显式配置时 strict 校验——路径不合法/不可创建/不可写入抛 `LoggingConfigError`（含配置项/值/原因/修复建议），不再静默降级到默认目录。(2) 组件初始化统一异常处理——`init_jwt` 补上 `except Exception`（原仅捕获 `ImportError`，配置错误如 `algorithm: RS256` 的 `ValueError` 未捕获）；所有 `init_*` 的 `except Exception` 统一用 `_handle_init_error`，输出组件名/配置内容（脱敏）/错误原因/修复建议；非 fail_fast 模式也输出醒目 `[组件初始化失败]` 警告（不再静默）；`run()` 捕获 `ComponentInitError` 干净退出不输出框架 traceback。新增 29 用例（`tests/test_logging_config.py` +8, `tests/test_component_init_error.py` +21），全量 1431 用例通过。
 > - **Bug 1（DatabaseManager 单例配置不生效）**：`DatabaseManager` 单例的 `_initialized` 守卫导致 `init_database` 传入的 `db_url`/`echo` 被忽略，应用始终连接默认 `sqlite:///./test.db`。新增 `configure()` 方法原地更新参数并重置 engine，与 `SpringLogger.reconfigure()` 同类修复。触发条件：`database.orm` 为 `sqlalchemy` 或 `both`。
 > - **Bug 2（profile 特定配置文件未实现）**：`_load_config()` 只加载 `application.yml`，完全不加载 `application-{profile}.yml`。新增 `_deep_merge()` + `_resolve_profile_path()`，在占位符解析前合并 profile 配置（profile 覆盖主配置，未涉及键保留）。
 > - **Bug 3（嵌套占位符解析错误）**：正则 `[^}]+` 无法处理嵌套 `}`，`${A:${B:default}}` 解析为 `${B:default`（丢失尾部 `}`）。改为迭代解析最内层占位符（`_INNER_ENV_VAR_PATTERN`），新增 `_is_single_placeholder()` 用括号深度计数识别单个平衡占位符以支持类型推断。

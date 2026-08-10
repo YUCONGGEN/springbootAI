@@ -1,13 +1,30 @@
 from typing import Type, Optional
 import socket
 import signal
+import sys
 from spring.context.application_context import ApplicationContext
 from spring.web.web_context import WebApplicationContext
 from spring.utils.banner import BannerPrinter
 from spring.utils.logger import SpringLogger
-from spring.logging.loguru_logger import init_logging
+from spring.logging.loguru_logger import init_logging, LoggingConfigError
 from spring.orm.mybatis_integration import init_mybatis
 from spring.annotations.cloud import EnableDiscoveryClient
+
+
+class ComponentInitError(RuntimeError):
+    """组件初始化失败（配置错误/依赖缺失/连接失败等）。
+
+    携带已格式化的明确错误信息（含组件名/配置内容/错误原因/修复建议），
+    由 ``run()`` 捕获后干净退出，不输出框架 traceback。
+    """
+    pass
+
+
+# 配置中需要脱敏的敏感字段名（小写匹配）
+_SENSITIVE_CONFIG_KEYS = frozenset({
+    'password', 'secret_key', 'secret', 'token', 'api_key', 'apikey',
+    'access_key', 'secret_access_key', 'private_key',
+})
 
 
 class SpringApplication:
@@ -26,14 +43,114 @@ class SpringApplication:
         try:
             self._prepare_context()
             self._start_web_server(**kwargs)
+        except LoggingConfigError as e:
+            # 日志配置错误：错误信息已格式化（含配置项/值/原因/建议），
+            # 干净退出不输出框架 traceback，让用户一眼定位问题
+            print(f"\n应用启动失败（日志配置错误）:\n{e}\n", file=sys.stderr)
+            sys.exit(1)
+        except ComponentInitError as e:
+            # 组件初始化失败：错误信息已格式化（含组件名/配置/原因/建议），
+            # 干净退出不输出框架 traceback
+            print(f"\n应用启动失败（组件初始化失败）:\n{e}\n", file=sys.stderr)
+            sys.exit(1)
         except Exception as e:
             self.logger.error(f"Application failed to start: {str(e)}")
             raise
 
+    # ------------------------------------------------------------------
+    # 统一的组件初始化异常处理
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _mask_sensitive(config: dict) -> dict:
+        """脱敏配置中的敏感字段（密码/密钥等），用于错误输出。"""
+        if not config:
+            return {}
+        masked = {}
+        for k, v in config.items():
+            if k.lower() in _SENSITIVE_CONFIG_KEYS:
+                masked[k] = '***' if v else '(空)'
+            else:
+                masked[k] = v
+        return masked
+
+    @staticmethod
+    def _format_component_error(component: str, config: dict, exc: Exception) -> str:
+        """格式化组件初始化失败的明确错误信息。
+
+        输出格式统一为：组件名 + 配置内容（脱敏）+ 错误原因 + 修复建议，
+        让用户一眼定位是哪个组件、什么配置、为什么失败、怎么修。
+        """
+        masked = SpringApplication._mask_sensitive(config)
+        config_str = (
+            ', '.join(f'{k}={v!r}' for k, v in masked.items())
+            if masked else '(无配置)'
+        )
+        is_import_error = isinstance(exc, ImportError)
+        if is_import_error:
+            reason = f"依赖未安装（{type(exc).__name__}: {exc}）"
+            suggestions = [
+                f"安装 {component} 所需的 pip 依赖（查看文档确认包名）",
+                f"或设置 {component.lower()}.enabled=false 暂时禁用该组件",
+            ]
+        else:
+            reason = f"{type(exc).__name__}: {exc}"
+            suggestions = [
+                f"检查 {component} 相关配置项是否正确（上方「配置内容」）",
+                "确认依赖服务（如 Redis/MySQL/Nacos/RabbitMQ）已启动且网络可访问",
+                "确认所需 pip 依赖已安装且版本兼容",
+                f"或设置 startup.fail_fast=false 容忍 {component} 失败继续启动",
+            ]
+        lines = [
+            "=" * 64,
+            f"[组件初始化失败] {component}",
+            "-" * 64,
+            f"  配置内容: {config_str}",
+            f"  错误原因: {reason}",
+            "  修复建议:",
+        ]
+        for i, s in enumerate(suggestions, 1):
+            lines.append(f"    {i}. {s}")
+        lines.append("=" * 64)
+        return "\n".join(lines)
+
+    def _handle_init_error(self, component: str, config: dict, exc: Exception,
+                           fail_fast: bool) -> None:
+        """统一处理组件初始化异常。
+
+        - fail_fast=true：抛出 ``ComponentInitError``（携带格式化错误信息），
+          由 ``run()`` 捕获后干净退出。
+        - fail_fast=false：输出醒目的 ``[组件初始化失败]`` 警告到 stderr（不再静默），
+          然后继续启动（该组件功能可能不可用）。
+
+        Args:
+            component: 组件名（如 'Redis'、'JWT'、'Database'）
+            config: 该组件的配置字典（用于错误输出，敏感字段自动脱敏）
+            exc: 捕获的异常
+            fail_fast: 是否快速失败模式
+        """
+        msg = self._format_component_error(component, config, exc)
+        if fail_fast:
+            # 抛出 ComponentInitError，run() 会捕获并干净退出
+            raise ComponentInitError(msg) from exc
+        # 非 fail_fast：输出醒目警告到 stderr，继续启动
+        print(
+            f"\n[警告] {component} 初始化失败（fail_fast=false，继续启动，"
+            f"该组件功能可能不可用）:\n{msg}\n",
+            file=sys.stderr,
+        )
+
     def _init_enterprise_components(self) -> None:
-        """初始化企业级组件"""
+        """初始化企业级组件
+
+        所有 init_* 调用统一通过 ``_handle_init_error`` 处理异常：
+        - ImportError（依赖缺失）和 Exception（配置错误/连接失败）统一捕获
+        - fail_fast=true 时抛 ``ComponentInitError``（携带格式化错误信息）→ run() 干净退出
+        - fail_fast=false 时输出醒目的 ``[组件初始化失败]`` 警告到 stderr → 继续启动
+        不再有静默吞掉异常的情况，所有错误都输出明确的配置项/值/原因/建议。
+        """
         self.logger.info("Initializing enterprise components...")
-        
+
         # 从配置文件和环境变量加载配置
         config = self.application_context.get_config()
         fail_fast = self._should_fail_fast(config)
@@ -50,33 +167,28 @@ class SpringApplication:
             self.application_context._config = resolved
         except Exception as e:
             self.logger.debug(f"Secret resolution skipped: {e}")
-        
-        # 初始化日志
+
+        # 初始化日志（init_logging 内部已通过 strict 校验抛 LoggingConfigError，
+        # 由 run() 专门捕获，此处不再包裹 try/except）
         init_logging(config.get('logging', {}))
-        
+
         # 初始化Redis（延迟导入）
         if config.get('redis', {}).get('enabled', True):
             try:
                 from spring.utils.redis_client import init_redis
                 init_redis(config.get('redis', {}))
                 self.logger.info("Redis initialized")
-            except ImportError:
-                if fail_fast:
-                    raise RuntimeError("Redis已启用但redis依赖未安装")
-                self.logger.warning("Redis not available (redis package not installed)")
             except Exception as e:
-                if fail_fast:
-                    raise RuntimeError("Redis初始化失败") from e
-                self.logger.warning(f"Failed to initialize Redis: {e}")
-        
-        # 初始化JWT（延迟导入）
+                self._handle_init_error('Redis', config.get('redis', {}), e, fail_fast)
+
+        # 初始化JWT（延迟导入，JWT 为核心依赖，不区分 enabled）
         try:
             from spring.security.jwt_utils import init_jwt
             init_jwt(config.get('jwt', {}))
             self.logger.info("JWT initialized")
-        except ImportError:
-            raise RuntimeError("JWT核心依赖pyjwt未安装")
-        
+        except Exception as e:
+            self._handle_init_error('JWT', config.get('jwt', {}), e, fail_fast)
+
         # 初始化数据库（延迟导入）
         database_config = config.get('database', {})
         orm_mode = str(database_config.get('orm', 'mybatis')).lower()
@@ -85,15 +197,9 @@ class SpringApplication:
                 from spring.orm.database import init_database
                 init_database(config.get('database', {}))
                 self.logger.info("Database initialized")
-            except ImportError:
-                if fail_fast:
-                    raise RuntimeError("SQLAlchemy已启用但依赖未安装")
-                self.logger.warning("Database not available (sqlalchemy not installed)")
             except Exception as e:
-                if fail_fast:
-                    raise RuntimeError("SQLAlchemy数据库初始化失败") from e
-                self.logger.warning(f"Failed to initialize Database: {e}")
-        
+                self._handle_init_error('Database', config.get('database', {}), e, fail_fast)
+
         # 初始化Nacos服务发现（延迟导入）
         discovery_enabled = config.get('discovery', {}).get('enabled', False) or any(
             isinstance(item, EnableDiscoveryClient)
@@ -104,60 +210,36 @@ class SpringApplication:
                 from spring.cloud.discovery import init_discovery
                 init_discovery(config.get('discovery', {}))
                 self.logger.info("Service discovery initialized")
-            except ImportError:
-                if fail_fast:
-                    raise RuntimeError("服务发现已启用但Nacos依赖未安装")
-                self.logger.warning("Service discovery not available (nacos-sdk-python not installed)")
             except Exception as e:
-                if fail_fast:
-                    raise RuntimeError("服务发现初始化失败") from e
-                self.logger.warning(f"Failed to initialize Service Discovery: {e}")
-        
+                self._handle_init_error('Discovery', config.get('discovery', {}), e, fail_fast)
+
         # 初始化Seata分布式事务（延迟导入）
         if config.get('seata', {}).get('enabled', False):
             try:
                 from spring.cloud.seata import init_seata
                 init_seata(config.get('seata', {}))
                 self.logger.info("Seata distributed transaction initialized")
-            except ImportError:
-                if fail_fast:
-                    raise RuntimeError("Seata已启用但依赖未安装")
-                self.logger.warning("Seata not available")
             except Exception as e:
-                if fail_fast:
-                    raise RuntimeError("Seata初始化失败") from e
-                self.logger.warning(f"Failed to initialize Seata: {e}")
-        
+                self._handle_init_error('Seata', config.get('seata', {}), e, fail_fast)
+
         # 初始化RabbitMQ（延迟导入）
         if config.get('rabbitmq', {}).get('enabled', False):
             try:
                 from spring.messaging.rabbitmq import init_rabbitmq
                 init_rabbitmq(config.get('rabbitmq', {}))
                 self.logger.info("RabbitMQ initialized")
-            except ImportError:
-                if fail_fast:
-                    raise RuntimeError("RabbitMQ已启用但pika依赖未安装")
-                self.logger.warning("RabbitMQ not available (pika not installed)")
             except Exception as e:
-                if fail_fast:
-                    raise RuntimeError("RabbitMQ初始化失败") from e
-                self.logger.warning(f"Failed to initialize RabbitMQ: {e}")
-        
+                self._handle_init_error('RabbitMQ', config.get('rabbitmq', {}), e, fail_fast)
+
         # 初始化Prometheus监控（延迟导入）
         if config.get('prometheus', {}).get('enabled', False):
             try:
                 from spring.monitoring.prometheus import init_prometheus
                 init_prometheus(config.get('prometheus', {}))
                 self.logger.info("Prometheus monitoring initialized")
-            except ImportError:
-                if fail_fast:
-                    raise RuntimeError("Prometheus已启用但依赖未安装")
-                self.logger.warning("Prometheus not available (prometheus-client not installed)")
             except Exception as e:
-                if fail_fast:
-                    raise RuntimeError("Prometheus初始化失败") from e
-                self.logger.warning(f"Failed to initialize Prometheus: {e}")
-        
+                self._handle_init_error('Prometheus', config.get('prometheus', {}), e, fail_fast)
+
         self.logger.info("Enterprise components initialization completed")
 
     def _prepare_context(self) -> None:
@@ -166,16 +248,14 @@ class SpringApplication:
         self._init_enterprise_components()
         config = self.application_context.get_config()
         fail_fast = self._should_fail_fast(config)
-        
+
         # 在refresh之前先初始化MyBatis，确保Mapper在组件扫描时可用
         try:
             init_mybatis(self.application_context)
             self.logger.info("MyBatis integration initialized")
         except Exception as e:
-            if fail_fast:
-                raise RuntimeError("MyBatis初始化失败") from e
-            self.logger.warning(f"Failed to initialize MyBatis integration: {e}")
-        
+            self._handle_init_error('MyBatis', config.get('database', {}), e, fail_fast)
+
         self.application_context.refresh()
 
         self.logger.info(f"Registered {self.application_context.bean_factory.get_bean_count()} beans")
@@ -193,17 +273,13 @@ class SpringApplication:
                 from spring.cloud.seata import seata_manager
                 seata_manager.start_recovery_worker()
             except Exception as exc:
-                if fail_fast:
-                    raise RuntimeError("Seata HTTP recovery worker启动失败") from exc
-                self.logger.warning(f"Failed to start Seata HTTP recovery worker: {exc}")
+                self._handle_init_error('Seata HTTP Recovery', config.get('seata', {}), exc, fail_fast)
         if config.get('rabbitmq', {}).get('enabled', False):
             try:
                 from spring.messaging.rabbitmq import rabbitmq_client
                 rabbitmq_client.start_consuming_background()
             except Exception as exc:
-                if fail_fast:
-                    raise RuntimeError("RabbitMQ消费者启动失败") from exc
-                self.logger.warning(f"Failed to start RabbitMQ consumers: {exc}")
+                self._handle_init_error('RabbitMQ Consumer', config.get('rabbitmq', {}), exc, fail_fast)
         port = config.get('server', {}).get('port', 8080)
         self._register_discovery_service(port)
         self._background_started = True
