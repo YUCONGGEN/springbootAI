@@ -148,8 +148,8 @@ markers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/YUCONGGEN/springboot_cloud_python"
-Repository = "https://github.com/YUCONGGEN/springboot_cloud_python.git"
+Homepage = "https://github.com/YUCONGGEN/springbootAI"
+Repository = "https://github.com/YUCONGGEN/springbootAI.git"
 
 [project.scripts]
 springbootai = "spring.main:run_cli"

@@ -9,7 +9,7 @@ name: Publish
 #
 # 鉴权：使用 PyPI Trusted Publishing（OIDC），不在 GitHub 存放任何长期 API token。
 #   首次发布前，必须在 PyPI 为项目 springbootAI 配置 Trusted Publisher：
-#     仓库 owner = YUCONGGEN, 仓库 name = springboot_cloud_python
+#     仓库 owner = YUCONGGEN, 仓库 name = springbootAI
 #     workflow filename = publish.yml, environment 留空
 #   参见 https://docs.pypi.org/trusted-publishers/
 # ====================================================================

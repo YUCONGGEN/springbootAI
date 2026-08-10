@@ -1,7 +1,7 @@
 # SpringBootAI 内嵌 PyMyBatis ORM 与 DDL 使用指南
 
 > 本文档从 README.md 第 5.11 / 5.12 节（注解）与第 8 节（功能说明）分离而来。
-> 框架版本：SpringBootAI 1.6.1 / 内嵌 PyMyBatis 1.4.0
+> 框架版本：SpringBootAI 1.8.0 / 内嵌 PyMyBatis 1.4.0
 
 ---
 
