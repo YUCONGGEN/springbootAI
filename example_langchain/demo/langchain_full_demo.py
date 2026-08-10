@@ -300,7 +300,8 @@ def demo_parsers():
 
     # 6.3 json
     jp = OutputParserFactory.create_json_parser()
-    print(f"  [json] 解析 '{{\"a\": 1}}': {jp.parse('{\"a\": 1}')}")
+    json_str = '{"a": 1}'
+    print(f"  [json] 解析 '{json_str}': {jp.parse(json_str)}")
 
     # 6.4 pydantic 结构化
     from pydantic import BaseModel
