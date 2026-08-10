@@ -10,8 +10,8 @@ build-backend = "setuptools.build_meta"
 # ========================================
 
 [project]
-# 发行名 springpy-framework（PyPI 上 springpy 已被他人占用）；导入包名仍为 spring
-name = "springpy-framework"
+# 发行名 springbootAI（PyPI 包名，pip install springbootAI）；导入包名仍为 spring
+name = "springbootAI"
 version = "1.8.0"
 description = "Python版Spring Boot框架，集成PyMyBatis ORM"
 readme = "README.md"
@@ -30,7 +30,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Database",
-    "Topic :: Internet :: WWW/HTTP :: ASGI :: Application",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
 ]
 requires-python = ">=3.10"
 
