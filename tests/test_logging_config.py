@@ -150,3 +150,37 @@ class TestLogDirStrictValidation:
         assert spring_logger.level == "DEBUG"
         # 恢复
         spring_logger.reconfigure(level="INFO")
+
+    def test_import_does_not_create_logs_directory(self, tmp_path):
+        """SpringLogger 构造时不应创建 logs/ 目录（文件 handler 延迟到 init_logging）。
+
+        回归场景：模块级 ``spring_logger = SpringLogger()`` 在 import 时执行，
+        旧代码会立即创建 ``logs/`` 目录和文件 handler，导致即使用户配置了
+        ``logging.log_dir``，CWD 下仍会多出一份 ``logs/``。
+        修复后 ``__init__`` 只添加控制台 handler，文件 handler 由
+        ``reconfigure`` (即 ``init_logging``) 创建。
+        """
+        import os
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            # 构造 SpringLogger（模拟 import 时的模块级构造）
+            SpringLogger._instance = None
+            import spring.logging.loguru_logger as ll
+            ll.spring_logger = SpringLogger()
+            # logs/ 目录不应被创建
+            assert not (tmp_path / 'logs').exists(), \
+                "SpringLogger() 构造时不应创建 logs/ 目录"
+        finally:
+            SpringLogger._instance = None
+            os.chdir(original_cwd)
+
+    def test_enable_file_false_does_not_create_directory(self, tmp_path):
+        """_setup_loguru(enable_file=False) 不应创建日志目录。"""
+        SpringLogger._instance = None
+        import spring.logging.loguru_logger as ll
+        logger = SpringLogger()
+        logger.log_dir = str(tmp_path / 'should_not_exist')
+        logger._setup_loguru(strict=False, enable_file=False)
+        assert not (tmp_path / 'should_not_exist').exists(), \
+            "enable_file=False 时不应创建日志目录"

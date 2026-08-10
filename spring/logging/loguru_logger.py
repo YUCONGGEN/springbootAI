@@ -81,11 +81,15 @@ class SpringLogger:
         self._use_loguru = _loguru_available
         self.log_format = log_format or self._default_format()
 
-        # 初始化日志配置（import 时用默认 'logs'，strict=False 允许降级保证不崩溃）
+        # import 时只设置控制台输出，不创建文件 handler（不创建 logs/ 目录）。
+        # 文件 handler 在 init_logging → reconfigure 读取用户配置后创建，
+        # 避免在 CWD 下提前生成 logs/ 目录与用户配置的 log_dir 产生双份日志。
         if self._use_loguru:
-            self._setup_loguru(strict=False)
+            loguru_logger.remove()
+            loguru_logger.add(
+                sys.stdout, format=self.log_format, level=self.level, colorize=True)
         else:
-            self._setup_std_logging(strict=False)
+            self._setup_std_logging(strict=False, enable_file=False)
 
     def reconfigure(self, level: Optional[str] = None, log_format: Optional[str] = None,
                     log_dir: Optional[str] = None, retention: Optional[str] = None,
@@ -125,12 +129,14 @@ class SpringLogger:
         if rotation is not None:
             self.rotation = rotation
         # 重建日志处理器：用户显式配置 log_dir 时 strict=True（路径错必须报错），
-        # 否则 strict=False（保留旧值/默认值时允许降级）
+        # 否则 strict=False（保留旧值/默认值时允许降级）。
+        # reconfigure 始终启用文件 handler（enable_file=True），
+        # 因为此时用户配置已读取，应该创建日志文件。
         strict_mode = log_dir_explicitly_set
         if self._use_loguru:
-            self._setup_loguru(strict=strict_mode)
+            self._setup_loguru(strict=strict_mode, enable_file=True)
         else:
-            self._setup_std_logging(strict=strict_mode)
+            self._setup_std_logging(strict=strict_mode, enable_file=True)
 
     def _validate_log_dir(self, strict: bool) -> bool:
         """校验日志目录可创建且可写入。
@@ -223,12 +229,14 @@ class SpringLogger:
             )
         return "%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d | %(message)s"
     
-    def _setup_loguru(self, strict: bool = False):
+    def _setup_loguru(self, strict: bool = False, enable_file: bool = True):
         """配置Loguru。
 
         Args:
             strict: True 时日志目录校验失败抛 ``LoggingConfigError``（用户配置路径）；
                     False 时降级为仅控制台日志（import 时默认配置，保证不崩溃）
+            enable_file: True 时添加文件 handler（创建日志目录+文件）；
+                         False 时仅控制台输出（import 时避免提前创建 logs/ 目录）
         """
         # 清除默认处理器
         loguru_logger.remove()
@@ -240,6 +248,10 @@ class SpringLogger:
             level=self.level,
             colorize=True,
         )
+
+        # enable_file=False 时只输出到控制台（import 时使用，不创建 logs/ 目录）
+        if not enable_file:
+            return
 
         # 校验日志目录：strict 模式下失败会抛异常（由 reconfigure 捕获并输出），
         # 非 strict 模式下返回 False 则仅使用控制台日志
@@ -267,12 +279,14 @@ class SpringLogger:
             encoding="utf-8",
         )
 
-    def _setup_std_logging(self, strict: bool = False):
+    def _setup_std_logging(self, strict: bool = False, enable_file: bool = True):
         """配置标准logging（fallback）。
 
         Args:
             strict: True 时日志目录校验失败抛 ``LoggingConfigError``；
                     False 时降级为仅控制台日志（import 时保证不崩溃）
+            enable_file: True 时添加文件 handler；False 时仅控制台输出
+                         （import 时避免提前创建 logs/ 目录）
         """
         self._logger = logging.getLogger("Spring")
         self._logger.setLevel(getattr(logging, self.level))
@@ -284,6 +298,10 @@ class SpringLogger:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(logging.Formatter(self.log_format))
         self._logger.addHandler(console_handler)
+
+        # enable_file=False 时只输出到控制台
+        if not enable_file:
+            return
 
         # 校验日志目录
         if not self._validate_log_dir(strict=strict):
