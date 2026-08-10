@@ -6,7 +6,7 @@ from .utils import *
 from .main import create_app, run, SpringApplication, run_cli
 
 __version__ = "1.8.0"
-__author__ = "SpringBootAI Team"
+__author__ = "yuconggen"
 __license__ = "MIT"
 
 # ORM迁移
