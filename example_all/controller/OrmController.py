@@ -37,18 +37,27 @@ class OrmController:
             db_cfg = ConfigLoader(base_path=example_dir).get_config().get('database', {})
             host = db_cfg.get('host', 'localhost')
             port = int(db_cfg.get('port', 3306))
-            # 本地连接失败时自动回退到 Docker 容器 IP
-            from spring.orm.pymybatis.pool.connection_pool import _get_docker_container_ip_by_port
-            if host in ('localhost', '127.0.0.1', '0.0.0.0'):
-                docker_ip = _get_docker_container_ip_by_port(port)
-                if docker_ip:
-                    host = docker_ip
-            conn = pymysql.connect(
-                host=host, port=port,
+            connection_options = dict(
                 user=db_cfg.get('username', 'root'),
                 password=str(db_cfg.get('password', '') or ''),
                 database=db_cfg.get('database', 'springpy'), charset='utf8mb4',
+                connect_timeout=5,
             )
+            try:
+                conn = pymysql.connect(host=host, port=port, **connection_options)
+            except pymysql.MySQLError:
+                # Docker Desktop publishes MySQL on localhost.  Only fall back
+                # to the container IP when that configured endpoint is really
+                # unavailable; eagerly replacing localhost breaks Windows/macOS.
+                if host not in ('localhost', '127.0.0.1', '0.0.0.0'):
+                    raise
+                from spring.orm.pymybatis.pool.connection_pool import _get_docker_container_ip_by_port
+                docker_ip = _get_docker_container_ip_by_port(port)
+                if not docker_ip or docker_ip == host:
+                    raise
+                conn = pymysql.connect(
+                    host=docker_ip, port=port, **connection_options
+                )
             try:
                 cur = conn.cursor()
                 # 重建表以保证与 Mapper 期望的 schema 一致（幂等初始化）

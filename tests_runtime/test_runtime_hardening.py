@@ -9,11 +9,13 @@ import pytest
 from fastapi import FastAPI
 from starlette.requests import Request
 
-from spring.annotations.cloud import GlobalTransactional
+from spring.annotations.cloud import GlobalTransactional, NacosValue
+from spring.annotations.core import GetMapping
 from spring.aop.cloud_aop import global_transactional_decorator
 from spring.cloud.gateway import GatewayFilter, GatewayRouter
 from spring.cloud.seata import SeataTransactionManager, init_seata
 from spring.config.config_loader import ConfigLoader, ConfigurationError
+from spring.context.application_context import ApplicationContext
 from spring.main import SpringApplication
 from spring.web.web_context import WebApplicationContext
 
@@ -61,6 +63,42 @@ def test_sync_controller_runs_outside_event_loop():
     ticked_at, handler_thread, event_loop_thread = asyncio.run(scenario())
     assert ticked_at < 0.10
     assert handler_thread != event_loop_thread
+
+
+def test_config_injection_does_not_replace_annotated_controller_method():
+    class Controller:
+        @GetMapping("/config")
+        @NacosValue("app.name")
+        def get_config(self):
+            return {"name": "demo"}
+
+    instance = Controller()
+
+    class BeanFactory:
+        @staticmethod
+        def get_bean_names():
+            return ["controller"]
+
+        @staticmethod
+        def get_bean_definition(name):
+            return type("Definition", (), {"annotations": {}})()
+
+        @staticmethod
+        def get_bean(name):
+            return instance
+
+    class Loader:
+        @staticmethod
+        def resolve_value_expression(value, default=None):
+            return "configured-name"
+
+    context = object.__new__(ApplicationContext)
+    context.bean_factory = BeanFactory()
+    context.config_loader = Loader()
+    context._autowire_value_annotations()
+
+    assert callable(instance.get_config)
+    assert instance.get_config() == {"name": "demo"}
 
 
 def test_production_security_check_reads_server_cors(monkeypatch):

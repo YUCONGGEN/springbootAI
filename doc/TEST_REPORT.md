@@ -2,8 +2,8 @@
 
 **测试日期**: 2026-08-10（历史基线 2026-08-08；Excel/TOP5/P0/P1/P2/Swagger 增量测试 2026-08-09）
 **测试环境**: macOS + Python 3.9.6 + Docker ｜ Excel/TOP5/八大模块/Swagger 补充测试：Windows + Python 3.11.9 + openpyxl 3.1.5
-**框架版本**: SpringBootAI 1.8.4 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
-**测试结果**: ✅ **1368 个核心用例全部通过**（31 个测试套件，0 失败）；本机当前 `example_all` 集成测试为 4/5 套件通过，失败的是需要真实中间件的 HTTP API 套件，因为本次运行时 Docker 没有运行。历史 Docker 环境报告见第二部分的 5/5 记录；两者不是同一次运行。
+**框架版本**: SpringBootAI 1.8.5 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
+**测试结果**: ✅ **1402 个核心用例全部通过**（32 个测试套件，0 失败）；本机当前 `example_all` 集成测试为 4/5 套件通过，失败的是需要真实中间件的 HTTP API 套件，因为本次运行时 Docker 没有运行。历史 Docker 环境报告见第二部分的 5/5 记录；两者不是同一次运行。
 
 ## 给新手：这份报告如何阅读和复现
 
@@ -47,6 +47,18 @@ python -X utf8 -m pytest tests_integration -q
 > **2026-08-10 v1.8.3 修正发布**：v1.8.2 曾上传 PyPI 但为**不完整构建**（缺 `spring/cloud/transaction_store.py`，文档声称的持久化补偿未实际打包，文档与代码不符），已 **yank**。v1.8.3 是首个包含 Seata HTTP 持久化补偿完整实现的 PyPI 发布版（基于 cfdc5ad：transaction_store + seata 持久化 + BeanUtils + 新手文档）。版本号字段统一更新至 1.8.3；历史 v1.8.2 增量记录保留作为代码演进档案。**架构限制不变**：HTTP 补偿仍是进程内协调器，非 Seata AT 强一致性，不能据此宣称支付/订单/库存场景具备企业级分布式一致性。全量 1368 用例通过。
 
 > **2026-08-10 v1.8.4 Banner 更新**：将 `spring/utils/banner.py` 的启动 ASCII art 从 "SpringBoot" 替换为 "springbootAI"（figlet standard 字体，由 pyfiglet 生成），对齐项目品牌名。仅修改 `SPRING_BANNER` 常量，`BannerPrinter` 方法不变。Trusted Publishing（GitHub Actions OIDC）发布到 PyPI，无需 API token。
+>
+> **2026-08-10 v1.8.5 配置读取细节修复**：彻底审查配置文件读取链路，修复 1 个与日志 bug 同类的单例配置 Bug + 3 个功能缺失 Bug + 6 个风险点，新增 58 用例（`tests/test_config_fixes_185.py`），全量 1402 用例通过。
+> - **Bug 1（DatabaseManager 单例配置不生效）**：`DatabaseManager` 单例的 `_initialized` 守卫导致 `init_database` 传入的 `db_url`/`echo` 被忽略，应用始终连接默认 `sqlite:///./test.db`。新增 `configure()` 方法原地更新参数并重置 engine，与 `SpringLogger.reconfigure()` 同类修复。触发条件：`database.orm` 为 `sqlalchemy` 或 `both`。
+> - **Bug 2（profile 特定配置文件未实现）**：`_load_config()` 只加载 `application.yml`，完全不加载 `application-{profile}.yml`。新增 `_deep_merge()` + `_resolve_profile_path()`，在占位符解析前合并 profile 配置（profile 覆盖主配置，未涉及键保留）。
+> - **Bug 3（嵌套占位符解析错误）**：正则 `[^}]+` 无法处理嵌套 `}`，`${A:${B:default}}` 解析为 `${B:default`（丢失尾部 `}`）。改为迭代解析最内层占位符（`_INNER_ENV_VAR_PATTERN`），新增 `_is_single_placeholder()` 用括号深度计数识别单个平衡占位符以支持类型推断。
+> - **Bug 4（database.enabled 默认值不一致）**：`application.yml` 占位符默认 `true`，`_override_with_env` 兜底默认 `False`，YAML 缺失 database 段时数据库被错误禁用。统一兜底为 `True`。
+> - **风险5（环境变量命名不一致）**：6 处占位符 env 名与显式覆盖 env 名不一致（如 `NACOS_SERVER` vs `DISCOVERY_SERVER_ADDR`）。新增 `_get_env_any()` 兼容两套命名，占位符风格优先。
+> - **风险6（布尔转换两套规则）**：`_coerce` 接受 `true/1/yes/on`，`_override_with_env` 仅接受 `true`，`REDIS_ENABLED=1` 行为不一致。提取公共 `_to_bool()` 统一规则。
+> - **风险7（get() 不支持松散绑定）**：`config_loader.get()` 精确匹配，YAML 用 `log-dir` 而 `init_logging` 读 `log_dir` 取到 `None` 并被默认值覆盖。新增 `_lookup_key()` 先精确后松散匹配（kebab/snake/大小写不敏感）。
+> - **风险8（CLI 参数未实现）**：Spring Boot 的 `--server.port=9000` 这类 CLI 参数优先级最高，本项目无解析。新增 `_override_with_cli_args()` 支持 `--key=value` 与 `--key value` 两种形式，yaml 类型推断，在 env 之后调用。
+> - **风险9（discovery/rabbitmq 非标准重配）**：`NacosDiscoveryClient` 用 `__init__` 内 diff 逻辑、`RabbitMQClient` 直接赋值私有字段绕过单例守卫。统一重构为标准 `configure()` 方法，未来新增字段不易遗漏。
+> - **风险10（redis.timeout 未使用）**：`RedisClient.connect()` 硬编码 `socket_timeout=5`，用户 `redis.timeout` 配置被忽略。`configure()` 新增 `timeout` 参数，`init_redis` 把毫秒换算为秒传入。
 
 ---
 
@@ -757,7 +769,7 @@ python test_all_features.py
 
 ## 一、结论
 
-当前代码已完成 v1.8.4 版本，核心功能、微服务治理和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿模式仍不是 Seata AT 强一致事务；支付、订单、库存等核心交易必须完成真实 Seata/可靠消息方案和下方外部验证后再采用。
+当前代码已完成 v1.8.5 版本，核心功能、微服务治理和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿模式仍不是 Seata AT 强一致事务；支付、订单、库存等核心交易必须完成真实 Seata/可靠消息方案和下方外部验证后再采用。
 
 ## 二、本轮已完成
 

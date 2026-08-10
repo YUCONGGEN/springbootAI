@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, 
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship, scoped_session
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
+from typing import Optional
 import logging
 
 logger = logging.getLogger("Spring.ORM")
@@ -36,7 +37,30 @@ class DatabaseManager:
         self._session_factory = None
         self._scoped_session = None
         self._initialized = True
-    
+
+    def configure(self, db_url: Optional[str] = None, echo: Optional[bool] = None) -> None:
+        """重新配置单例的数据库连接参数（读取配置后调用）。
+
+        ``DatabaseManager`` 为单例，``__init__`` 的 ``_initialized`` 守卫会阻止后续
+        ``__init__`` 更新参数。``init_database`` 读取 ``application.yml`` 的
+        ``database.url`` / ``database.echo`` 后，必须通过本方法重新配置，否则
+        ``db_url`` 永远停留在默认 ``'sqlite:///./test.db'``，用户配置被静默丢弃。
+
+        重置已建立的 engine/session，强制下次 ``connect()`` 重建。
+
+        Args:
+            db_url: 数据库连接 URL，None 表示保留原值
+            echo: 是否开启 SQLAlchemy SQL 回显，None 表示保留原值
+        """
+        if db_url is not None:
+            self.db_url = db_url
+        if echo is not None:
+            self.echo = echo
+        # 重置已建立的连接，强制 connect() 重建 engine
+        self._engine = None
+        self._session_factory = None
+        self._scoped_session = None
+
     def connect(self) -> None:
         """连接数据库"""
         try:
@@ -171,17 +195,21 @@ db_manager = DatabaseManager()
 def init_database(config: dict) -> None:
     """
     初始化数据库配置
-    
+
+    通过 ``configure`` 重新配置单例 ``DatabaseManager``，使 ``database.url`` /
+    ``database.echo`` 配置生效。直接 ``DatabaseManager(db_url=...)`` 因单例
+    ``_initialized`` 守卫不会更新参数（与 ``SpringLogger`` 同类问题）。
+
     Args:
         config: 配置字典，包含url, echo等
     """
-    global db_manager
-    db_manager = DatabaseManager(
+    # 单例原地更新配置，避免 _initialized 守卫导致配置被忽略
+    db_manager.configure(
         db_url=config.get('url', 'sqlite:///./test.db'),
-        echo=config.get('echo', False)
+        echo=config.get('echo', False),
     )
     db_manager.connect()
-    
+
     # 创建所有表
     db_manager.create_all()
 

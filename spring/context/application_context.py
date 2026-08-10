@@ -421,6 +421,14 @@ class ApplicationContext:
                 # 处理字段上的@Value注解
                 for name, field in inspect.getmembers(bean_class):
                     if not name.startswith('_'):
+                        # @Value/@NacosValue can be attached to a function as
+                        # metadata alongside route/AOP annotations.  Replacing
+                        # that function on the instance makes the handler
+                        # non-callable and breaks controller registration.
+                        # Constructor/default and class-field injection are
+                        # handled separately by BeanFactory.
+                        if callable(field):
+                            continue
                         annotations = getattr(field, '__spring_annotations__', [])
                         for annotation in annotations:
                             if isinstance(annotation, Value):

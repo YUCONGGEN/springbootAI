@@ -1,10 +1,13 @@
 # Spring Python 应用配置文件
-# 环境变量会覆盖此处配置
+# 用法：开发时可直接修改这里；部署到测试/生产时，建议通过环境变量覆盖 `${NAME:默认值}`。
+# 例如设置 `$env:SERVER_PORT=9000` 后，server.port 会变成 9000。敏感值（密码、JWT 密钥、AI Key）不要提交到仓库。
 
 server:
+  # HTTP 服务监听地址。0.0.0.0 表示容器内监听所有网卡，浏览器访问仍使用 localhost。
   port: ${SERVER_PORT:8080}
   host: ${SERVER_HOST:0.0.0.0}
   thread_pool:
+    # 同步 Controller、同步数据库/Feign 调用会在线程池中执行；队列有界是为了过载时快速返回 503。
     max_workers: ${SYNC_MAX_WORKERS:40}
     max_queue: ${SYNC_MAX_QUEUE:100}
     queue_timeout: ${SYNC_QUEUE_TIMEOUT:0.1}
@@ -45,10 +48,12 @@ spring:
       recovery-timeout: ${AI_CB_RECOVERY_TIMEOUT:30}
 
 startup:
+  # 生产建议设为 true：关键依赖初始化失败时立即退出，让进程管理器重启，而不是启动一个半可用服务。
   fail_fast: ${STARTUP_FAIL_FAST:}
 
 # Redis配置（用于分布式锁、限流、熔断等）
 redis:
+  # 只有启用后，分布式锁、跨 worker 限流和共享缓存才会使用 Redis；单机学习可保持 false。
   enabled: ${REDIS_ENABLED:false}
   host: ${REDIS_HOST:localhost}
   port: ${REDIS_PORT:6379}
@@ -58,6 +63,7 @@ redis:
 
 # JWT配置（用于认证授权）
 jwt:
+  # JWT secret_key 只是开发默认值，生产必须使用随机长密钥并通过环境变量注入。
   secret_key: ${JWT_SECRET_KEY:spring-python-secret-key-change-in-production}
   algorithm: ${JWT_ALGORITHM:HS256}
   expires_in: ${JWT_EXPIRES_IN:3600}
@@ -67,6 +73,7 @@ jwt:
 
 # 数据库配置（支持PyMyBatis）
 database:
+  # enabled=false 时不会创建数据库连接。driver=sqlite 适合学习/测试；生产请配置 mysql 或 postgres 驱动及连接池。
   enabled: ${DB_ENABLED:true}
   orm: ${DB_ORM:mybatis}
   driver: ${DB_DRIVER:sqlite}
@@ -101,6 +108,7 @@ database:
 
 # 服务注册发现配置（Nacos）
 discovery:
+  # 启用后应用会向 Nacos 注册并读取服务实例；没有 Nacos 时保持 false。
   enabled: ${DISCOVERY_ENABLED:false}
   server_addr: ${NACOS_SERVER:localhost:8848}
   namespace: ${NACOS_NAMESPACE:}
@@ -110,6 +118,7 @@ discovery:
 
 # 分布式事务配置（Seata）
 seata:
+  # local 只表示本地事务；http 是持久化补偿而非 Seata AT；强一致场景必须使用 distributed 对接真实 Seata Server。
   enabled: ${SEATA_ENABLED:false}
   mode: ${SEATA_MODE:local}  # local | distributed；http 为持久化补偿模式
   http_compensation_enabled: ${SEATA_HTTP_COMPENSATION_ENABLED:false}

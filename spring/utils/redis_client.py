@@ -17,30 +17,44 @@ except ImportError:
 class RedisClient:
     """Redis客户端封装"""
 
-    def __init__(self, host: str = 'localhost', port: int = 6379, db: int = 0, password: str = None):
+    def __init__(self, host: str = 'localhost', port: int = 6379, db: int = 0,
+                 password: str = None, timeout: int = 5):
         self._client = None
-        self.configure(host=host, port=port, db=db, password=password)
+        self.configure(host=host, port=port, db=db, password=password, timeout=timeout)
 
-    def configure(self, host: str, port: int, db: int, password: str = None) -> None:
+    def configure(self, host: str, port: int, db: int, password: str = None,
+                  timeout: int = 5) -> None:
+        """配置 Redis 连接参数。
+
+        Args:
+            host: 主机
+            port: 端口
+            db: 数据库序号
+            password: 密码
+            timeout: 套接字超时（秒），对齐 application.yml 的 redis.timeout（毫秒值会被
+                init_redis 转换为秒）。默认 5 秒，保持向后兼容。
+        """
         self.host = host
         self.port = int(port)
         self.db = int(db)
         self.password = password
+        # timeout 统一为秒；application.yml 中 redis.timeout 为毫秒，init_redis 负责换算
+        self.timeout = max(0.1, float(timeout))
         self._client = None
 
     def connect(self, strict: bool = False) -> None:
         """连接Redis"""
         try:
             from redis import Redis
-            
+
             self._client = Redis(
                 host=self.host,
                 port=self.port,
                 db=self.db,
                 password=self.password,
                 decode_responses=True,
-                socket_timeout=5,
-                socket_connect_timeout=5
+                socket_timeout=self.timeout,
+                socket_connect_timeout=self.timeout
             )
             # 测试连接
             self._client.ping()
@@ -513,14 +527,22 @@ redis_client = RedisClient()
 def init_redis(config: dict) -> None:
     """
     初始化Redis连接
-    
+
     Args:
-        config: Redis配置字典，包含host, port, db, password等
+        config: Redis配置字典，包含host, port, db, password, timeout等。
+            timeout 在 application.yml 中以毫秒表示（如 5000），此处换算为秒。
     """
+    # redis.timeout 在 application.yml 中为毫秒（默认 5000），换算为秒
+    timeout_ms = config.get('timeout', 5000)
+    try:
+        timeout_s = float(timeout_ms) / 1000.0
+    except (ValueError, TypeError):
+        timeout_s = 5.0
     redis_client.configure(
         host=config.get('host', 'localhost'),
         port=config.get('port', 6379),
         db=config.get('db', 0),
-        password=config.get('password')
+        password=config.get('password'),
+        timeout=timeout_s,
     )
     redis_client.connect(strict=True)

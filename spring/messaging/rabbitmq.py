@@ -26,8 +26,8 @@ class RabbitMQClient:
                     cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, host: str = "localhost", port: int = 5672, 
-                 username: str = "guest", password: str = "guest", 
+    def __init__(self, host: str = "localhost", port: int = 5672,
+                 username: str = "guest", password: str = "guest",
                  virtual_host: str = "/"):
         if hasattr(self, '_initialized'):
             return
@@ -41,6 +41,41 @@ class RabbitMQClient:
         self._consumers: Dict[str, Callable] = {}
         self._consumer_thread: Optional[threading.Thread] = None
         self._initialized = True
+
+    def configure(self, host: Optional[str] = None, port: Optional[int] = None,
+                  username: Optional[str] = None, password: Optional[str] = None,
+                  virtual_host: Optional[str] = None) -> None:
+        """重新配置单例的 RabbitMQ 连接参数（读取配置后调用）。
+
+        ``RabbitMQClient`` 为单例，``__init__`` 的 ``_initialized`` 守卫会阻止
+        后续 ``__init__`` 更新参数。``init_rabbitmq`` 读取 ``application.yml``
+        的 ``rabbitmq.*`` 后，必须通过本方法重新配置，否则连接参数停留在默认值。
+
+        重置已建立的连接与消费者，强制下次 ``connect()`` 重建。
+
+        Args:
+            host: 主机，None 表示保留原值
+            port: 端口，None 表示保留原值
+            username: 用户名，None 表示保留原值
+            password: 密码，None 表示保留原值
+            virtual_host: 虚拟主机，None 表示保留原值
+        """
+        # 关闭旧连接，清理消费者状态
+        self.close()
+        if host is not None:
+            self.host = host
+        if port is not None:
+            self.port = int(port)
+        if username is not None:
+            self.username = username
+        if password is not None:
+            self.password = password
+        if virtual_host is not None:
+            self.virtual_host = virtual_host
+        self._connection = None
+        self._channel = None
+        self._consumers.clear()
+        self._consumer_thread = None
     
     def connect(self) -> None:
         """连接RabbitMQ"""
@@ -284,19 +319,20 @@ rabbitmq_client = RabbitMQClient()
 def init_rabbitmq(config: dict) -> None:
     """
     初始化RabbitMQ配置
-    
+
+    通过 ``configure`` 重新配置单例 ``RabbitMQClient``，使 ``rabbitmq.*`` 配置生效。
+    直接操作私有字段绕过单例守卫虽能工作，但封装为标准 ``configure`` 方法更稳健，
+    未来新增字段不易遗漏。
+
     Args:
         config: 配置字典，包含host, port, username, password等
     """
-    # Preserve references imported by RabbitTemplate and listener registration.
-    rabbitmq_client.close()
-    rabbitmq_client.host = config.get('host', 'localhost')
-    rabbitmq_client.port = int(config.get('port', 5672))
-    rabbitmq_client.username = config.get('username', 'guest')
-    rabbitmq_client.password = config.get('password', 'guest')
-    rabbitmq_client.virtual_host = config.get('virtual_host', '/')
-    rabbitmq_client._connection = None
-    rabbitmq_client._channel = None
-    rabbitmq_client._consumers.clear()
-    rabbitmq_client._consumer_thread = None
+    # 单例原地更新配置，避免直接操作私有字段
+    rabbitmq_client.configure(
+        host=config.get('host', 'localhost'),
+        port=config.get('port', 5672),
+        username=config.get('username', 'guest'),
+        password=config.get('password', 'guest'),
+        virtual_host=config.get('virtual_host', '/'),
+    )
     rabbitmq_client.connect()

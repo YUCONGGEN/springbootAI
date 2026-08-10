@@ -32,20 +32,9 @@ class NacosDiscoveryClient:
     
     def __init__(self, server_addr: str = "localhost:8848", namespace: str = "", group: str = "DEFAULT_GROUP", username: str = "", password: str = ""):
         if hasattr(self, '_initialized'):
-            if (
-                self.server_addr != server_addr
-                or self.namespace != namespace
-                or self.group != group
-                or self.username != username
-                or self.password != password
-            ):
-                self.server_addr = server_addr
-                self.namespace = namespace
-                self.group = group
-                self.username = username
-                self.password = password
-                self._client = None
-                self._ready = False
+            # 已初始化：委托给 configure() 做原地更新，保持单一更新路径
+            self.configure(server_addr=server_addr, namespace=namespace,
+                           group=group, username=username, password=password)
             return
         self.server_addr = server_addr
         self.namespace = namespace
@@ -58,6 +47,44 @@ class NacosDiscoveryClient:
         self._ip: str = "127.0.0.1"
         self._port: int = 8080
         self._initialized = True
+
+    def configure(self, server_addr: Optional[str] = None, namespace: Optional[str] = None,
+                  group: Optional[str] = None, username: Optional[str] = None,
+                  password: Optional[str] = None) -> None:
+        """重新配置单例的 Nacos 连接参数（读取配置后调用）。
+
+        ``NacosDiscoveryClient`` 为单例，``__init__`` 的 ``_initialized`` 守卫会
+        阻止后续 ``__init__`` 更新参数。``init_discovery`` 读取 ``application.yml``
+        的 ``discovery.*`` 后，必须通过本方法重新配置，否则连接参数停留在默认值。
+
+        参数变化时重置已建立的客户端连接，强制下次 ``connect()`` 重建。
+
+        Args:
+            server_addr: Nacos 服务地址，None 表示保留原值
+            namespace: 命名空间，None 表示保留原值
+            group: 分组，None 表示保留原值
+            username: 用户名，None 表示保留原值
+            password: 密码，None 表示保留原值
+        """
+        changed = False
+        if server_addr is not None and self.server_addr != server_addr:
+            self.server_addr = server_addr
+            changed = True
+        if namespace is not None and self.namespace != namespace:
+            self.namespace = namespace
+            changed = True
+        if group is not None and self.group != group:
+            self.group = group
+            changed = True
+        if username is not None and self.username != username:
+            self.username = username
+            changed = True
+        if password is not None and self.password != password:
+            self.password = password
+            changed = True
+        if changed:
+            self._client = None
+            self._ready = False
     
     def connect(self) -> None:
         """连接Nacos"""
@@ -347,13 +374,16 @@ nacos_client = NacosDiscoveryClient()
 def init_discovery(config: dict) -> None:
     """
     初始化服务注册发现
-    
+
+    通过 ``configure`` 重新配置单例 ``NacosDiscoveryClient``，使 ``discovery.*``
+    配置生效。直接 ``NacosDiscoveryClient(...)`` 因单例 ``_initialized`` 守卫不会
+    更新参数。
+
     Args:
         config: 配置字典，包含server_addr, namespace, group等
     """
-    # Reconfigure the singleton in place so modules that imported the client
-    # keep observing the active connection rather than a stale instance.
-    nacos_client.__init__(
+    # 单例原地更新配置，避免 _initialized 守卫导致配置被忽略
+    nacos_client.configure(
         server_addr=config.get('server_addr', 'localhost:8848'),
         namespace=config.get('namespace', ''),
         group=config.get('group', 'DEFAULT_GROUP'),

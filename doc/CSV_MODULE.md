@@ -6,6 +6,20 @@
 
 ---
 
+## 零、新手先读
+
+CSV 是用文本表示表格的格式，一行通常代表一条记录。CSV 模块适合批量导入导出、系统间交换数据和生成可用 Excel 打开的简单报表。它不支持颜色、公式、图片、合并单元格和多个工作表；需要这些能力时使用 [Excel 模块](EXCEL_MODULE.md)。
+
+核心包已经包含 CSV 模块，不依赖 openpyxl：
+
+```powershell
+python -m pip install springbootAI
+```
+
+新手只要记住四步：定义行对象、用 `CsvProperty` 绑定表头、调用 `write_csv()`、调用 `read_csv()` 验证回读。Windows Excel 打开中文时推荐 `encoding="utf-8-sig"`。
+
+导入不可信 CSV 时应限制文件大小和行数，校验必填字段，不允许用户提供的值直接拼接 SQL。CSV 读取成功只代表格式可解析，不代表业务数据有效。
+
 ## 一、模块组成
 
 | 文件 | 职责 |

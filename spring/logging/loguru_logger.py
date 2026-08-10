@@ -49,6 +49,40 @@ class SpringLogger:
         else:
             self._setup_std_logging()
     
+    def reconfigure(self, level: Optional[str] = None, log_format: Optional[str] = None,
+                    log_dir: Optional[str] = None, retention: Optional[str] = None,
+                    rotation: Optional[str] = None) -> None:
+        """重新配置日志参数并重建处理器（读取配置后调用）。
+
+        SpringLogger 为单例，``__init__`` 的 ``_initialized`` 守卫会阻止后续 ``__init__``
+        更新参数。``init_logging`` 读取 ``application.yml`` 的 ``logging.log_dir`` 后，
+        必须通过本方法重新配置，否则日志目录永远停留在默认 ``'logs'``（相对当前工作目录，
+        即 Application.py 所在目录/logs）。
+
+        Args:
+            level: 日志级别（如 INFO/DEBUG），None 表示保留原值
+            log_format: 日志格式，None 表示保留原值
+            log_dir: 日志目录，None 表示保留原值
+            retention: 日志保留期，None 表示保留原值
+            rotation: 日志轮转大小，None 表示保留原值
+        """
+        if level is not None:
+            self.level = level.upper()
+        if log_format is not None:
+            self.log_format = log_format
+        if log_dir is not None:
+            self.log_dir = log_dir
+        if retention is not None:
+            self.retention = retention
+        if rotation is not None:
+            self.rotation = rotation
+        # 重建日志处理器（_setup_loguru 会 loguru_logger.remove() 清除旧 handler；
+        # _setup_std_logging 已清除旧 handler，避免重复 add）
+        if self._use_loguru:
+            self._setup_loguru()
+        else:
+            self._setup_std_logging()
+
     def _default_format(self) -> str:
         """默认日志格式"""
         if self._use_loguru:
@@ -106,7 +140,10 @@ class SpringLogger:
         """配置标准logging（fallback）"""
         self._logger = logging.getLogger("Spring")
         self._logger.setLevel(getattr(logging, self.level))
-        
+        # 清除旧 handler（reconfigure 重建时避免重复 add 导致日志重复输出）
+        for handler in list(self._logger.handlers):
+            self._logger.removeHandler(handler)
+
         # 添加控制台输出（始终启用）
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(logging.Formatter(self.log_format))
@@ -199,19 +236,21 @@ spring_logger = SpringLogger()
 
 
 def init_logging(config: dict) -> None:
-    """
-    初始化日志配置
-    
+    """初始化日志配置（读取 application.yml 的 logging 段后调用）。
+
+    通过 ``reconfigure`` 重新配置单例 SpringLogger，使 ``logging.log_dir`` / ``level``
+    等配置生效。直接 ``SpringLogger(log_dir=...)`` 因单例 ``_initialized`` 守卫不会更新参数。
+
     Args:
-        config: 配置字典，包含level, log_dir, retention, rotation等
+        config: 配置字典（logging 子字典），包含 level/log_dir/retention/rotation 等
     """
     global spring_logger
-    spring_logger = SpringLogger(
-        level=config.get('level', 'INFO'),
+    spring_logger.reconfigure(
+        level=config.get('level'),
         log_format=config.get('log_format'),
-        log_dir=config.get('log_dir', 'logs'),
-        retention=config.get('retention', '30 days'),
-        rotation=config.get('rotation', '100 MB'),
+        log_dir=config.get('log_dir'),
+        retention=config.get('retention'),
+        rotation=config.get('rotation'),
     )
 
 

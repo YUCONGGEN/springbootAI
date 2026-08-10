@@ -19,7 +19,7 @@ app:
     - admin
     - superadmin
 
-# MySQL 数据库配置 (Docker: mysql:8.0, 无密码)
+# MySQL 数据库配置（与仓库 docker-compose.integration.yml 保持一致）
 database:
   enabled: true
   orm: mybatis
@@ -28,7 +28,7 @@ database:
   port: 3306
   database: springpy
   username: root
-  password: ""
+  password: ${DB_PASSWORD:root123}
   min_size: 1
   max_size: 5
   leak_detection_enabled: false

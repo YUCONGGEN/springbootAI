@@ -11,7 +11,7 @@ class BannerPrinter:
     |_|                 |___/                                  
     """
 
-    def __init__(self, version: str = "1.8.3"):
+    def __init__(self, version: str = "1.8.5"):  # v1.8.5 配置读取细节修复
         self.version = version
         self.logger = SpringLogger()
 
