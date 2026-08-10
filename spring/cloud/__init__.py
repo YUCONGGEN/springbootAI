@@ -18,6 +18,7 @@ from spring.cloud.seata import (
     SeataTransactionManager,
     BranchStatus,
 )
+from spring.cloud.transaction_store import SQLiteTransactionStore
 from spring.cloud.sentinel import (
     sentinel_engine,
     SentinelEngine,
@@ -63,6 +64,7 @@ __all__ = [
     'FeignClientProxy', 'FeignClientFactory', 'create_feign_client', 'create_declared_feign_client',
     # 分布式事务
     'seata_manager', 'init_seata', 'SeataTransactionManager', 'BranchStatus',
+    'SQLiteTransactionStore',
     # 熔断限流
     'sentinel_engine', 'SentinelEngine', 'FlowRule', 'DegradeRule',
     'SystemRule', 'HotParamRule', 'BlockException', 'sentinel_protect',

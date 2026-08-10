@@ -3,7 +3,7 @@
 **测试日期**: 2026-08-08（Excel 模块补充测试 2026-08-09；TOP5 注解模块测试 2026-08-09；P0/P1/P2 八大模块测试 2026-08-09；Swagger/OpenAPI 模块测试 2026-08-09）
 **测试环境**: macOS + Python 3.9.6 + Docker ｜ Excel/TOP5/八大模块/Swagger 补充测试：Windows + Python 3.11.9 + openpyxl 3.1.5
 **框架版本**: SpringBootAI 1.8.2 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
-**测试结果**: ✅ **1246 个用例全部通过**（29 个测试套件，0 失败）；example_all 集成测试 4/5 套件通过（HTTP API 套件需 MySQL/Docker 环境，Windows 无 Docker 时跳过，非框架回归问题）
+**测试结果**: ✅ **1368 个用例全部通过**（31 个测试套件，0 失败）；example_all 集成测试 4/5 套件通过（HTTP API 套件需 MySQL/Docker 环境，Windows 无 Docker 时跳过，非框架回归问题）
 
 > 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 1.5.0 / PyMyBatis 1.4.0）。
 >
@@ -15,7 +15,9 @@
 
 > **2026-08-10 v1.8.1 修复增量**：修复 `import spring` 在无写权限工作目录（如系统目录/只读位置）下因 `SpringLogger` 创建 `logs` 目录抛 `PermissionError` 而崩溃的问题。`_setup_loguru` / `_setup_std_logging` 创建日志目录失败时优雅降级为仅控制台日志（`os.makedirs(exist_ok=True)` + `try/except (PermissionError, OSError)`），loguru warning 用 f-string 格式化。全量 1295 用例回归通过。
 >
-> **2026-08-10 v1.8.2 BeanUtils 工具增量**：新增 `spring.utils.BeanUtils`（对齐 Spring `org.springframework.beans.BeanUtils` + Apache Commons BeanUtils），提供 `copy_properties` / `copy_property` / `clone` / `get_property` / `set_property` / `get_simple_property` / `get_property_descriptors` / `get_property_descriptor` / `populate` / `describe` 共 10 个方法，支持普通类 / dataclass / Pydantic v2 Model / ORM entity，默认浅拷贝、可选深拷贝、嵌套路径读写、只读 property 自动跳过。新增 34 用例（`tests/test_bean_utils.py`），全量 1329 用例通过。同步在 `doc/CLOUD_MODULE.md` 新增"架构限制与生产边界"章节，明确披露 HTTP 补偿模式 ≠ Seata AT 强一致性，不能据此宣称支付/订单/库存等场景具备企业级分布式一致性；生产强一致必须使用 `distributed` 模式对接真实 Seata Server。
+> **2026-08-10 v1.8.2 BeanUtils 工具增量**：新增 `spring.utils.BeanUtils`（对齐 Spring `org.springframework.beans.BeanUtils` + Apache Commons BeanUtils），提供 `copy_properties` / `copy_property` / `clone` / `get_property` / `set_property` / `get_simple_property` / `get_property_descriptors` / `get_property_descriptor` / `populate` / `describe` 共 10 个方法，支持普通类 / dataclass / Pydantic v2 Model / ORM entity，默认浅拷贝、可选深拷贝、嵌套路径读写、只读 property 自动跳过。新增 34 用例（`tests/test_bean_utils.py`）。
+>
+> **2026-08-10 v1.8.2 Seata HTTP 持久化补偿增量**：兑现 `doc/CLOUD_MODULE.md` 早已承诺但未落地的持久化存储实现。新增 `spring/cloud/transaction_store.py`（`SQLiteTransactionStore`，WAL 模式 + 原子状态迁移 + 外键级联），`SeataTransactionManager` 集成持久化存储后支持：事务/分支元数据落盘、重启恢复（`recover_pending_transactions`）、幂等提交（超时 + 重启后重复 commit 仅执行一次回调）、过期分支回滚、并发 commit 单次 claim（`reclaim_stale_transaction`）、`PARTIAL_COMMIT`/`PARTIAL_ROLLBACK` 失败关闭持久化。`@GlobalTransactional` 异步路径用 `asyncio.to_thread` 包装 SQLite 阻塞操作避免事件循环阻塞。`init_seata` 读取 `http_compensation_enabled`/`store_path`/`recover_on_startup`/`recovery_grace_ms`/`recovery_interval_s`，并在启动时执行恢复；`SpringApplication` 启停 recovery worker；`/actuator/health` 的 seata http 探针由 DOWN 改为 UP 并附 `warning: Persistent compensation only; no Seata AT consistency` + 活跃事务计数。**架构限制仍未改变**：协调器运行在应用进程内，不具备 Seata AT 全局锁/undo_log 回滚/分支资源代理等强一致性语义，**不能据此宣称支付/订单/库存等场景具备企业级分布式一致性**；生产强一致必须使用 `distributed` 模式对接真实 Seata Server。新增 7 用例（`tests/test_seata_durable_store.py`），运行时加固套件增强（`tests_runtime/test_runtime_hardening.py` 21 用例），全量 1368 用例通过。
 
 ---
 
@@ -129,6 +131,14 @@
 | # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
 |---|---------|--------|---------|------|
 | 30 | test_bean_utils.py | 34 | BeanUtils 属性复制工具（copy_properties：基本复制/ignore 忽略/单下划线私有属性/方法与 dunder 排除/只读 property 跳过/浅拷贝/深拷贝/None 源目标/dataclass/Pydantic v2 Model；copy_property：单属性/缺失/只读目标；clone：浅克隆/深克隆/None；嵌套 get/set：对象嵌套/Mapping 嵌套/中间 None/简单 set；get_simple_property；get_property_descriptors/get_property_descriptor：类型推断；populate：批量填充/跳过不可写/None 与空；describe：导出字典含 property getter/None；顶层导出 spring.utils.BeanUtils） | ✅ 全部通过 |
+
+### SpringBootAI Seata HTTP 持久化补偿测试套件（1 个文件，7 个用例）
+
+> 2026-08-10 新增（v1.8.2）。兑现 `doc/CLOUD_MODULE.md` 持久化存储承诺，`http` 模式由"实验性"升级为"持久化补偿协调器"，但**架构限制不变**（非 Seata AT 强一致性）。
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 31 | test_seata_durable_store.py | 7 | Seata HTTP 持久化补偿（元数据落盘：事务/分支存 SQLite WAL；重启恢复：callback 缓存丢失后元数据存活/`get_stored_transaction`；幂等提交：超时 + 重启后重复 commit 仅触发一次回调；启动恢复：过期远程分支回滚 `recover_pending_transactions`；失败关闭：本地回调丢失 → `PARTIAL_COMMIT` + 分支 `FAILED` + last_error 持久化；分支注册密封：COMMITTING 后拒绝新分支；recovery worker 生命周期：start/stop/线程存活；并发 commit 单次 claim：Barrier 多线程仅一个成功） | ✅ 全部通过 |
 
 ---
 

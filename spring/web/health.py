@@ -370,9 +370,19 @@ def _check_seata() -> dict:
             return {'status': 'DISABLED', 'enabled': False, 'reason': 'Seata not configured'}
         mode = str(seata_config.get('mode', 'local')).lower()
         if mode == 'http':
+            if seata_manager.get_mode() != 'http':
+                return {
+                    'status': 'DOWN', 'enabled': True,
+                    'reason': 'HTTP compensation coordinator is not initialized',
+                }
+            counts = seata_manager._ensure_transaction_store().active_counts()
             return {
-                'status': 'DOWN', 'enabled': True,
-                'reason': 'Experimental HTTP compensation mode is not production-ready',
+                'status': 'UP', 'enabled': True,
+                'mode': 'http-compensation',
+                'active_global_tx': counts['active_global_tx'],
+                'active_branches': counts['active_branches'],
+                'warning': 'Persistent compensation only; no Seata AT consistency',
+                'store_path': seata_manager._transaction_store_path,
             }
         if mode == 'local':
             return {

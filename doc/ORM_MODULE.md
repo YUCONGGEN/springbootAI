@@ -5,6 +5,75 @@
 
 ---
 
+## 零、新手先读
+
+### 0.1 ORM 模块解决什么问题
+
+后端程序最终需要把用户、订单等对象保存到数据库。PyMyBatis ORM 负责把 Python 方法参数安全绑定到 SQL，并把查询结果转换为字典或对象；DDL Auto 可以根据实体定义创建或检查表结构。
+
+它不会替你设计表、索引和事务边界。生产项目仍需理解 SQL，并在目标数据库上验证执行计划、锁等待和连接池容量。
+
+### 0.2 三种使用方式怎么选
+
+| 方式 | 适合谁 | 特点 |
+|---|---|---|
+| Mapper 注解 SQL | 新项目和简单 SQL | SQL 跟着 Python 方法，最容易入门 |
+| XML Mapper | 从 Java MyBatis 迁移、动态 SQL 较多 | SQL 与 Python 代码分离，支持常见动态标签 |
+| SqlSession | 需要完全控制执行流程 | 最灵活，也需要自己处理更多细节 |
+
+新手建议先用 Mapper 注解，跑通 CRUD 和事务后再学习 XML。
+
+### 0.3 使用前需要准备什么
+
+1. 在 `application.yml` 中开启 `database.enabled`。
+2. 安装目标数据库驱动。SQLite 使用 Python 标准库；MySQL 使用 `pip install springbootAI[mysql]`。
+3. 在启动类配置 Mapper 扫描包，且目录中包含 `__init__.py`。
+4. 数据库账号应只拥有应用需要的权限，生产环境不要使用 root。
+
+最小 SQLite 配置：
+
+```yaml
+database:
+  enabled: true
+  orm: mybatis
+  driver: sqlite
+  database: ./data/demo.db
+  min_size: 1
+  max_size: 5
+  ddl-auto:
+    mode: update
+    entity_packages: demo.entity
+```
+
+SQLite 适合本地学习和测试。正式使用 MySQL/PostgreSQL 时必须修改驱动、地址、账号、密码，并重新执行集成测试。
+
+### 0.4 一次数据库调用经过哪些层
+
+```text
+HTTP 请求 -> Controller -> Service -> Mapper -> 连接池 -> 数据库
+                         \-> @Transactional 控制提交或回滚
+```
+
+Controller 只负责参数和响应，Service 决定事务边界，Mapper 负责 SQL。这种分层能让单元测试和故障定位更清楚。
+
+### 0.5 如何确认 ORM 配置成功
+
+1. 启动日志没有“Mapper 未注册”或连接失败。
+2. 调用插入接口后，直接在数据库客户端中能查到记录。
+3. 在 `@Transactional` 方法中主动抛异常，确认插入被回滚。
+4. 并发请求后检查连接池没有持续耗尽。
+5. `ddl-auto=validate` 能在列缺失或类型不匹配时阻止错误版本启动。
+
+常见错误及处理：
+
+| 错误 | 原因 | 处理 |
+|---|---|---|
+| Mapper 找不到 | 扫描包错误或缺少 `__init__.py` | 检查 `@MapperScan` 和目录 |
+| SQL 参数未绑定 | SQL 中的 `#{name}` 与方法参数名不同 | 统一名称或使用 `Annotated[..., Param("name")]` |
+| 事务不回滚 | Service 不是受管 Bean，或异常被内部捕获 | 通过容器调用，并让异常离开事务方法 |
+| 多 worker 后数据库连接暴增 | 每个 worker 都有独立连接池 | 按 `workers x max_size` 计算总连接数 |
+| SQLite 正常、MySQL 失败 | SQL 方言、主键或类型不同 | 在真实 MySQL 上执行相同集成测试 |
+
 ## 一、注解参考
 
 ### 5.11 MyBatis 集成注解

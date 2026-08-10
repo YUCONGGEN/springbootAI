@@ -111,8 +111,13 @@ discovery:
 # 分布式事务配置（Seata）
 seata:
   enabled: ${SEATA_ENABLED:false}
-  mode: ${SEATA_MODE:local}  # local | distributed；http 仅限显式启用的开发实验
-  experimental_http_enabled: ${SEATA_EXPERIMENTAL_HTTP_ENABLED:false}
+  mode: ${SEATA_MODE:local}  # local | distributed；http 为持久化补偿模式
+  http_compensation_enabled: ${SEATA_HTTP_COMPENSATION_ENABLED:false}
+  # SQLite WAL 默认支持同一主机多 worker；跨主机请使用共享事务数据库或真实 Seata Server
+  store_path: ${SEATA_HTTP_STORE_PATH:./data/seata-http.sqlite3}
+  recover_on_startup: ${SEATA_HTTP_RECOVER_ON_STARTUP:true}
+  recovery_grace_ms: ${SEATA_HTTP_RECOVERY_GRACE_MS:30000}
+  recovery_interval_s: ${SEATA_HTTP_RECOVERY_INTERVAL_S:30}
   server_addr: ${SEATA_SERVER:localhost:8091}
   application_id: ${SEATA_APP_ID:spring-python-app}
   transaction_group: ${SEATA_TX_GROUP:my_tx_group}

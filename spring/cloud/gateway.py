@@ -185,9 +185,10 @@ class GatewayRouter:
     作为异步 Starlette/FastAPI endpoint 使用。上游 I/O 不会阻塞事件循环。
 
     Usage:
-        gateway = GatewayRouter(discovery_client=nacos_discovery)
-        gateway.route("/api/users/**", "user-service", strip_prefix=True)
-        app.add_route("/api/{path:path}", gateway.handle_asgi, methods=["GET","POST","PUT","DELETE"])
+        gateway = GatewayRouter(timeout=5)
+        gateway.route("/api/users/**", uri="http://127.0.0.1:8081",
+                      strip_prefix=True)
+        gateway.install(app, "/api/{path:path}")
     """
 
     _HOP_BY_HOP_HEADERS = {
@@ -216,11 +217,27 @@ class GatewayRouter:
     def install(self, app, path: str = "/{path:path}",
                 methods: Optional[List[str]] = None) -> "GatewayRouter":
         """Register the gateway route and its HTTP-client shutdown hook."""
-        app.add_api_route(
-            path,
-            self.handle_asgi,
-            methods=methods or ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        )
+        route_methods = methods or ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        path_id = re.sub(r"[^a-zA-Z0-9]+", "_", path).strip("_") or "root"
+        existing_operation_ids = {
+            getattr(route, "operation_id", None) for route in app.routes
+        }
+        for method in route_methods:
+            normalized_method = method.upper()
+            base_operation_id = f"gateway_{normalized_method.lower()}_{path_id}"
+            operation_id = base_operation_id
+            suffix = 2
+            while operation_id in existing_operation_ids:
+                operation_id = f"{base_operation_id}_{suffix}"
+                suffix += 1
+            existing_operation_ids.add(operation_id)
+            app.add_api_route(
+                path,
+                self.handle_asgi,
+                methods=[normalized_method],
+                name=operation_id,
+                operation_id=operation_id,
+            )
         app.router.add_event_handler("shutdown", self.aclose)
         return self
 

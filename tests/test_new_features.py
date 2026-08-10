@@ -1,5 +1,5 @@
 """
-测试新特性：Sentinel限流熔断、OpenTelemetry追踪、Seata HTTP-AT分布式事务、
+测试新特性：Sentinel限流熔断、OpenTelemetry追踪、Seata HTTP补偿事务、
 API Gateway、ORM DDL自动建表
 
 运行方式: pytest test_new_features.py -v
@@ -184,7 +184,7 @@ class TestTracer:
         assert len(spans) >= 1
 
 
-# ==================== Seata HTTP-AT 分布式事务测试 ====================
+# ==================== Seata HTTP 补偿事务测试 ====================
 
 class TestSeataHttpAt:
     def setup_method(self):

@@ -63,6 +63,33 @@ def test_sync_controller_runs_outside_event_loop():
     assert handler_thread != event_loop_thread
 
 
+def test_production_security_check_reads_server_cors(monkeypatch):
+    class CapturingLogger:
+        def __init__(self):
+            self.messages = []
+
+        def warning(self, message):
+            self.messages.append(message)
+
+    application = SpringApplication(object)
+    logger = CapturingLogger()
+    application.logger = logger
+    monkeypatch.setenv("SPRING_DISABLE_DOCKER_IP_DETECT", "1")
+
+    application._production_security_check({
+        "jwt": {"secret_key": "x" * 40},
+        "database": {"enabled": False},
+        "server": {"cors": {"allow_origins": ["*"]}},
+    })
+
+    assert any("CORS allows all origins" in message for message in logger.messages)
+
+
+def test_fail_fast_parses_string_boolean_values():
+    assert SpringApplication._should_fail_fast({"startup": {"fail_fast": "false"}}) is False
+    assert SpringApplication._should_fail_fast({"startup": {"fail_fast": "TRUE"}}) is True
+
+
 def test_gateway_forwards_body_repeated_query_and_status_async():
     captured = {}
 
@@ -103,6 +130,26 @@ def test_gateway_forwards_body_repeated_query_and_status_async():
         "query": [("tag", "a"), ("tag", "b")],
         "body": b"payload",
     }
+
+
+def test_gateway_install_assigns_unique_openapi_operation_ids():
+    gateway = GatewayRouter(default_filters=[])
+    app = FastAPI()
+    gateway.install(
+        app,
+        "/gateway/{path:path}",
+        methods=["GET", "POST", "PUT"],
+    )
+
+    path_item = app.openapi()["paths"]["/gateway/{path}"]
+    operation_ids = [path_item[method]["operationId"] for method in ("get", "post", "put")]
+
+    assert operation_ids == [
+        "gateway_get_gateway_path_path",
+        "gateway_post_gateway_path_path",
+        "gateway_put_gateway_path_path",
+    ]
+    assert len(operation_ids) == len(set(operation_ids))
 
 
 def test_gateway_filter_and_body_limit_fail_before_upstream():
@@ -187,9 +234,71 @@ def test_async_global_transaction_waits_for_business_completion():
     assert manager.is_in_transaction() is False
 
 
-def test_experimental_http_transaction_requires_explicit_opt_in():
-    with pytest.raises(ValueError, match="experimental"):
+def test_http_compensation_requires_explicit_opt_in():
+    with pytest.raises(ValueError, match="opt-in"):
         init_seata({"mode": "http"})
+
+
+def test_async_global_transaction_completion_runs_off_event_loop(monkeypatch):
+    manager = SeataTransactionManager()
+    manager.set_mode("local")
+    event_loop_thread = threading.get_ident()
+    completion_threads = []
+    original_commit = manager.commit_transaction
+
+    def observed_commit(tx_id):
+        completion_threads.append(threading.get_ident())
+        time.sleep(0.03)
+        return original_commit(tx_id)
+
+    monkeypatch.setattr(manager, "commit_transaction", observed_commit)
+
+    @global_transactional_decorator(GlobalTransactional(name="offload"))
+    async def business():
+        await asyncio.sleep(0)
+        return "done"
+
+    assert asyncio.run(business()) == "done"
+    assert completion_threads and completion_threads[0] != event_loop_thread
+    assert manager.is_in_transaction() is False
+
+
+def test_async_http_transaction_coordination_io_runs_off_event_loop(monkeypatch, tmp_path):
+    manager = SeataTransactionManager()
+    manager.configure(
+        mode="http",
+        store_path=str(tmp_path / "async-http.sqlite3"),
+        recovery_interval_s=0,
+    )
+    event_loop_thread = threading.get_ident()
+    begin_threads = []
+    commit_threads = []
+    original_begin = manager.begin_transaction
+    original_commit = manager.commit_transaction
+
+    def observed_begin(*args, **kwargs):
+        begin_threads.append(threading.get_ident())
+        return original_begin(*args, **kwargs)
+
+    def observed_commit(*args, **kwargs):
+        commit_threads.append(threading.get_ident())
+        return original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "begin_transaction", observed_begin)
+    monkeypatch.setattr(manager, "commit_transaction", observed_commit)
+
+    @global_transactional_decorator(GlobalTransactional(name="async-http"))
+    async def business():
+        await asyncio.sleep(0)
+        return "done"
+
+    assert asyncio.run(business()) == "done"
+    assert begin_threads and begin_threads[0] != event_loop_thread
+    assert commit_threads and commit_threads[0] != event_loop_thread
+    assert manager.is_in_transaction() is False
+    manager.set_mode("local")
+    manager._transaction_store = None
+    manager._transaction_store_path = ""
 
 
 def test_distributed_seata_initialization_fails_closed(monkeypatch):
@@ -245,6 +354,30 @@ def test_health_and_readiness_include_every_enabled_component(monkeypatch):
     assert json.loads(aggregate.body)["status"] == "DEGRADED"
     assert readiness.status_code == 503
     assert "nacos" in json.loads(readiness.body)["reason"]
+
+
+def test_http_compensation_health_reports_store_without_claiming_at(monkeypatch, tmp_path):
+    import spring.web.health as health
+    from spring.cloud.seata import seata_manager
+
+    seata_manager.configure(
+        mode="http",
+        store_path=str(tmp_path / "health-seata.sqlite3"),
+        recovery_interval_s=0,
+    )
+    context = type("Context", (), {
+        "get_config": lambda self: {"seata": {"enabled": True, "mode": "http"}},
+    })()
+    monkeypatch.setattr(health, "_application_context", context)
+
+    result = health._check_seata()
+
+    assert result["status"] == "UP"
+    assert result["mode"] == "http-compensation"
+    assert "no Seata AT" in result["warning"]
+    seata_manager.set_mode("local")
+    seata_manager._transaction_store = None
+    seata_manager._transaction_store_path = ""
 
 
 def test_prometheus_endpoint_preserves_content_type(monkeypatch):

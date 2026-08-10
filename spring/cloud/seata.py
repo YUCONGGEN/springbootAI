@@ -25,10 +25,13 @@ import time
 import threading
 import uuid
 import json
+import os
+import tempfile
 from contextvars import ContextVar
 from typing import Dict, Any, Optional, List, Callable
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
+from spring.cloud.transaction_store import SQLiteTransactionStore
 
 # 可选导入Seata
 try:
@@ -81,8 +84,15 @@ class SeataTransactionManager:
         )
         self._seata_client_initialized = False
         self._initialized = True
+        self._transaction_store: Optional[SQLiteTransactionStore] = None
+        self._transaction_store_path = ""
+        self._recovery_grace_ms = 30000
+        self._recovery_interval_s = 30.0
+        self._recovery_stop = threading.Event()
+        self._recovery_thread: Optional[threading.Thread] = None
 
-        # 实验性 HTTP 模式：进程内状态只用于开发验证，不承诺故障恢复。
+        # HTTP compensation mode stores coordinator metadata durably.  Branch
+        # callbacks still need callback_url to be recoverable after a restart.
         self._global_transactions: Dict[str, Dict] = {}
         self._branches: Dict[str, List[Dict]] = {}  # xid -> [branch]
         self._gt_lock = threading.Lock()
@@ -95,12 +105,32 @@ class SeataTransactionManager:
             self.set_mode(mode)
 
     def configure(self, server_addr: str = "localhost:8091", application_id: str = "",
-                  transaction_group: str = "my_tx_group", mode: str = "local") -> None:
+                  transaction_group: str = "my_tx_group", mode: str = "local",
+                  store_path: Optional[str] = None,
+                  recovery_grace_ms: int = 30000,
+                  recovery_interval_s: float = 30.0) -> None:
         """重新配置单例；初始化入口不能依赖第二次构造调用。"""
         self.server_addr = server_addr
         self.application_id = application_id
         self.transaction_group = transaction_group
+        if store_path is not None:
+            normalized_path = os.path.abspath(os.path.expanduser(store_path))
+            if normalized_path != self._transaction_store_path:
+                self._transaction_store = None
+            self._transaction_store_path = normalized_path
+        self._recovery_grace_ms = max(0, int(recovery_grace_ms))
+        self._recovery_interval_s = max(0.0, float(recovery_interval_s))
         self.set_mode(mode)
+
+    def _ensure_transaction_store(self) -> SQLiteTransactionStore:
+        if self._transaction_store is None:
+            path = self._transaction_store_path or os.getenv(
+                "SEATA_HTTP_STORE_PATH",
+                os.path.join(tempfile.gettempdir(), "springpy-seata-http.sqlite3"),
+            )
+            self._transaction_store_path = path
+            self._transaction_store = SQLiteTransactionStore(path)
+        return self._transaction_store
 
     def _get_context(self) -> Dict[str, Any]:
         return self._transaction_context.get() or {}
@@ -174,14 +204,28 @@ class SeataTransactionManager:
             'name': name,
         })
 
-        # 实验性 HTTP 补偿模式：注册进程内全局事务
+        # Durable HTTP compensation coordinator.  The local dictionaries are
+        # only a hot cache for callbacks; recovery reads from the store.
         if self.mode == "http":
+            store = self._ensure_transaction_store()
+            start_time = time.time()
+            try:
+                store.create_transaction(
+                    tx_id,
+                    name=name,
+                    status="BEGIN",
+                    start_time=start_time,
+                    timeout_ms=timeout,
+                )
+            except Exception:
+                self._cleanup_context()
+                raise
             with self._gt_lock:
                 self._global_transactions[tx_id] = {
                     'xid': tx_id,
                     'name': name,
                     'status': 'BEGIN',
-                    'start_time': time.time(),
+                    'start_time': start_time,
                     'timeout': timeout,
                 }
                 self._branches[tx_id] = []
@@ -209,6 +253,34 @@ class SeataTransactionManager:
 
         return tx_id
 
+    def restore_transaction_context(self, tx_id: str) -> bool:
+        """Bind durable HTTP transaction metadata to the current async task."""
+        context = self.get_transaction_context(tx_id)
+        if context is None:
+            return False
+        self.bind_transaction_context(context)
+        return True
+
+    def bind_transaction_context(self, context: Dict[str, Any]) -> None:
+        """Bind a previously read transaction context to the current task."""
+        self._transaction_context.set(dict(context))
+
+    def get_transaction_context(self, tx_id: str) -> Optional[Dict[str, Any]]:
+        """Read a BEGIN transaction context without binding it to this task."""
+        if self.mode != 'http':
+            return None
+        transaction = self._ensure_transaction_store().get_transaction(tx_id)
+        if transaction is None or transaction['status'] != 'BEGIN':
+            return None
+        return {
+            'in_transaction': True,
+            'tx_id': tx_id,
+            'status': transaction['status'],
+            'timeout': transaction['timeout_ms'],
+            'start_time': transaction['start_time'],
+            'name': transaction['name'],
+        }
+
     def register_branch(self, xid: str, branch_id: str = "", resource_id: str = "",
                         callback_url: str = "", commit_cb: Callable = None,
                         rollback_cb: Callable = None, service_name: str = "") -> str:
@@ -231,9 +303,9 @@ class SeataTransactionManager:
             branch_id = uuid.uuid4().hex[:16]
 
         if self.mode == 'http':
-            with self._gt_lock:
-                if xid not in self._global_transactions:
-                    raise ValueError(f"Unknown or completed experimental HTTP transaction: {xid}")
+            transaction = self._ensure_transaction_store().get_transaction(xid)
+            if transaction is None or transaction['status'] in {'COMMITTED', 'ROLLED_BACK'}:
+                raise ValueError(f"Unknown or completed HTTP transaction: {xid}")
 
         branch = {
             'branch_id': branch_id,
@@ -245,10 +317,14 @@ class SeataTransactionManager:
             'registered_at': time.time(),
         }
 
+        if self.mode == 'http':
+            branch = self._ensure_transaction_store().register_branch(branch)
+
         with self._gt_lock:
             if xid not in self._branches:
                 self._branches[xid] = []
-            self._branches[xid].append(branch)
+            if not any(item['branch_id'] == branch_id for item in self._branches[xid]):
+                self._branches[xid].append(branch)
 
         # 注册本地回调
         if commit_cb or rollback_cb:
@@ -312,33 +388,73 @@ class SeataTransactionManager:
             if current_tx_id and current_tx_id != tx_id:
                 logger.error(f"Transaction mismatch: expected {tx_id}, got {current_tx_id}")
                 return False
-            
+
+            store = None
+            stored_transaction = None
+            if self.mode == "http":
+                store = self._ensure_transaction_store()
+                stored_transaction = store.get_transaction(tx_id)
+                if stored_transaction is None:
+                    logger.error(f"[Seata-HTTP] Unknown transaction: {tx_id}")
+                    return False
+                if stored_transaction['status'] == 'COMMITTED':
+                    return True
+                if stored_transaction['status'] in {'ROLLED_BACK', 'ROLLING_BACK'}:
+                    logger.error(
+                        f"[Seata-HTTP] Cannot commit transaction in "
+                        f"{stored_transaction['status']}"
+                    )
+                    return False
+
             start_time = context.get('start_time', 0)
             timeout = context.get('timeout', 60000)
+            if stored_transaction is not None and not start_time:
+                start_time = stored_transaction['start_time']
+                timeout = stored_transaction['timeout_ms']
             duration = (time.time() - start_time) * 1000
             
-            if duration > timeout:
+            recovering_commit = (
+                stored_transaction is not None
+                and stored_transaction['status'] in {'COMMITTING', 'PARTIAL_COMMIT'}
+            )
+            if duration > timeout and not recovering_commit:
                 logger.error(f"Transaction timeout: {duration}ms > {timeout}ms")
                 self.rollback_transaction(tx_id)
                 return False
 
-            # 实验性 HTTP 补偿模式：通知所有分支提交
+            # Durable HTTP compensation mode: atomically claim the global
+            # transaction and persist every branch outcome for retry/recovery.
             if self.mode == "http":
+                assert store is not None
+                if not store.transition_transaction(
+                    tx_id,
+                    'COMMITTING',
+                    {'BEGIN', 'PARTIAL_COMMIT'},
+                ):
+                    logger.error(
+                        f"[Seata-HTTP] Transaction {tx_id} is already being completed"
+                    )
+                    return False
                 all_ok = True
-                with self._gt_lock:
-                    branches = list(self._branches.get(tx_id, []))
-                    transaction = self._global_transactions.get(tx_id)
-                    if transaction is None:
-                        logger.error(f"[Seata-HTTP] Unknown transaction: {tx_id}")
-                        return False
-                    transaction['status'] = 'COMMITTING'
+                branches = store.list_branches(tx_id)
                 for branch in branches:
+                    if branch['status'] == BranchStatus.COMMITTED:
+                        continue
                     ok = self._notify_branch(branch, 'commit')
-                    branch['status'] = BranchStatus.COMMITTED if ok else BranchStatus.FAILED
+                    status = BranchStatus.COMMITTED if ok else BranchStatus.FAILED
+                    store.update_branch(
+                        branch['branch_id'],
+                        status,
+                        "" if ok else "commit callback failed",
+                    )
+                    store.touch_transaction(tx_id, 'COMMITTING')
                     if not ok:
                         all_ok = False
+                final_status = 'COMMITTED' if all_ok else 'PARTIAL_COMMIT'
+                store.update_transaction(tx_id, final_status)
                 with self._gt_lock:
-                    self._global_transactions[tx_id]['status'] = 'COMMITTED' if all_ok else 'PARTIAL_COMMIT'
+                    if tx_id in self._global_transactions:
+                        self._global_transactions[tx_id]['status'] = final_status
                 if all_ok:
                     self._cleanup_http_transaction(tx_id)
                 logger.info(f"[Seata-HTTP] Commit transaction {tx_id[:16]}... branches={len(branches)} success={all_ok}")
@@ -382,21 +498,48 @@ class SeataTransactionManager:
                 logger.error(f"Transaction mismatch: expected {tx_id}, got {current_tx_id}")
                 return False
 
-            # 实验性 HTTP 补偿模式：通知所有分支回滚
+            # Durable HTTP compensation mode: rollback is idempotent and each
+            # branch result remains available after process restarts.
             if self.mode == "http":
+                store = self._ensure_transaction_store()
+                transaction = store.get_transaction(tx_id)
+                if transaction is None:
+                    logger.error(f"[Seata-HTTP] Unknown transaction: {tx_id}")
+                    return False
+                if transaction['status'] == 'ROLLED_BACK':
+                    return True
+                if transaction['status'] in {'COMMITTED', 'COMMITTING'}:
+                    logger.error(f"[Seata-HTTP] Cannot roll back transaction in {transaction['status']}")
+                    return False
+                if not store.transition_transaction(
+                    tx_id,
+                    'ROLLING_BACK',
+                    {'BEGIN', 'PARTIAL_ROLLBACK'},
+                ):
+                    logger.error(
+                        f"[Seata-HTTP] Transaction {tx_id} is already being completed"
+                    )
+                    return False
                 all_ok = True
-                with self._gt_lock:
-                    branches = list(self._branches.get(tx_id, []))
-                    if tx_id in self._global_transactions:
-                        self._global_transactions[tx_id]['status'] = 'ROLLING_BACK'
+                branches = store.list_branches(tx_id)
                 for branch in branches:
+                    if branch['status'] == BranchStatus.ROLLED_BACK:
+                        continue
                     ok = self._notify_branch(branch, 'rollback')
-                    branch['status'] = BranchStatus.ROLLED_BACK if ok else BranchStatus.FAILED
+                    status = BranchStatus.ROLLED_BACK if ok else BranchStatus.FAILED
+                    store.update_branch(
+                        branch['branch_id'],
+                        status,
+                        "" if ok else "rollback callback failed",
+                    )
+                    store.touch_transaction(tx_id, 'ROLLING_BACK')
                     if not ok:
                         all_ok = False
+                final_status = 'ROLLED_BACK' if all_ok else 'PARTIAL_ROLLBACK'
+                store.update_transaction(tx_id, final_status)
                 with self._gt_lock:
                     if tx_id in self._global_transactions:
-                        self._global_transactions[tx_id]['status'] = 'ROLLED_BACK' if all_ok else 'PARTIAL_ROLLBACK'
+                        self._global_transactions[tx_id]['status'] = final_status
                 if all_ok:
                     self._cleanup_http_transaction(tx_id)
                 logger.info(f"[Seata-HTTP] Rollback transaction {tx_id[:16]}... branches={len(branches)} success={all_ok}")
@@ -435,13 +578,116 @@ class SeataTransactionManager:
                 pass
 
     def _cleanup_http_transaction(self, tx_id: str) -> None:
-        """成功完成后移除协调状态和本地回调，避免长期进程内存增长。"""
+        """Drop process-local callback caches; durable audit state remains stored."""
         with self._gt_lock:
             branches = self._branches.pop(tx_id, [])
             self._global_transactions.pop(tx_id, None)
         with self._cb_lock:
             for branch in branches:
                 self._branch_callbacks.pop(branch['branch_id'], None)
+
+    def recover_pending_transactions(self) -> Dict[str, List[str]]:
+        """Retry durable HTTP transactions left incomplete by a worker crash.
+
+        A recorded commit/rollback intent is resumed.  A BEGIN transaction is
+        rolled back only after its timeout.  Branches that relied solely on a
+        process-local callback fail closed and remain PARTIAL_* for operators or
+        a later retry; callback URLs remain fully recoverable.
+        """
+        if self.mode != "http":
+            return {"committed": [], "rolled_back": [], "pending": []}
+
+        store = self._ensure_transaction_store()
+        transactions = store.list_transactions({
+            'BEGIN', 'COMMITTING', 'ROLLING_BACK',
+            'PARTIAL_COMMIT', 'PARTIAL_ROLLBACK',
+        })
+        result = {"committed": [], "rolled_back": [], "pending": []}
+        now = time.time()
+        for transaction in transactions:
+            xid = transaction['xid']
+            status = transaction['status']
+            if status == 'COMMITTING':
+                cutoff = now - self._recovery_grace_ms / 1000
+                if not store.reclaim_stale_transaction(
+                    xid, 'COMMITTING', 'PARTIAL_COMMIT', cutoff
+                ):
+                    result['pending'].append(xid)
+                    continue
+                status = 'PARTIAL_COMMIT'
+            elif status == 'ROLLING_BACK':
+                cutoff = now - self._recovery_grace_ms / 1000
+                if not store.reclaim_stale_transaction(
+                    xid, 'ROLLING_BACK', 'PARTIAL_ROLLBACK', cutoff
+                ):
+                    result['pending'].append(xid)
+                    continue
+                status = 'PARTIAL_ROLLBACK'
+
+            if status == 'PARTIAL_COMMIT':
+                if self.commit_transaction(xid):
+                    result['committed'].append(xid)
+                else:
+                    result['pending'].append(xid)
+                continue
+            if status == 'PARTIAL_ROLLBACK':
+                if self.rollback_transaction(xid):
+                    result['rolled_back'].append(xid)
+                else:
+                    result['pending'].append(xid)
+                continue
+
+            elapsed_ms = (now - transaction['start_time']) * 1000
+            if elapsed_ms >= transaction['timeout_ms']:
+                if self.rollback_transaction(xid):
+                    result['rolled_back'].append(xid)
+                else:
+                    result['pending'].append(xid)
+            else:
+                result['pending'].append(xid)
+        return result
+
+    def start_recovery_worker(self) -> None:
+        """Start restart-safe recovery after the ASGI worker has forked."""
+        if self.mode != 'http' or self._recovery_interval_s <= 0:
+            return
+        if self._recovery_thread and self._recovery_thread.is_alive():
+            return
+        self._recovery_stop.clear()
+
+        def run() -> None:
+            while not self._recovery_stop.wait(self._recovery_interval_s):
+                try:
+                    self.recover_pending_transactions()
+                except Exception:
+                    logger.exception("[Seata-HTTP] Recovery worker failed")
+
+        self._recovery_thread = threading.Thread(
+            target=run,
+            name="springpy-seata-http-recovery",
+            daemon=True,
+        )
+        self._recovery_thread.start()
+
+    def stop_recovery_worker(self) -> None:
+        """Stop the worker-owned recovery loop during ASGI shutdown."""
+        thread = self._recovery_thread
+        if thread is None:
+            return
+        self._recovery_stop.set()
+        if thread is not threading.current_thread():
+            thread.join(timeout=5)
+        self._recovery_thread = None
+
+    def get_stored_transaction(self, tx_id: str) -> Optional[Dict[str, Any]]:
+        """Return durable global and branch state for monitoring or repair tooling."""
+        if self.mode != "http":
+            return None
+        store = self._ensure_transaction_store()
+        transaction = store.get_transaction(tx_id)
+        if transaction is not None:
+            transaction['branches'] = store.list_branches(tx_id)
+        return transaction
     
     def is_in_transaction(self) -> bool:
         """检查是否在事务中"""
@@ -472,6 +718,12 @@ class SeataTransactionManager:
         """设置事务模式 (local/http/distributed)"""
         if mode not in ["local", "http", "distributed"]:
             raise ValueError("Mode must be 'local', 'http' or 'distributed'")
+
+        if mode != 'http':
+            self.stop_recovery_worker()
+
+        if mode == "http":
+            self._ensure_transaction_store()
         
         if mode == "distributed":
             # 即使初始化失败也保持 distributed，后续事务必须失败关闭，
@@ -484,14 +736,20 @@ class SeataTransactionManager:
 
     def get_transaction_info(self) -> Dict[str, Any]:
         """获取当前事务信息（用于调试/监控）"""
-        with self._gt_lock:
-            return {
-                'mode': self.mode,
-                'active_global_tx': len(self._global_transactions),
-                'active_branches': sum(len(b) for b in self._branches.values()),
-                'in_transaction': self.is_in_transaction(),
-                'current_xid': self.get_current_tx_id(),
-            }
+        if self.mode == "http":
+            counts = self._ensure_transaction_store().active_counts()
+        else:
+            with self._gt_lock:
+                counts = {
+                    'active_global_tx': len(self._global_transactions),
+                    'active_branches': sum(len(b) for b in self._branches.values()),
+                }
+        return {
+            'mode': self.mode,
+            **counts,
+            'in_transaction': self.is_in_transaction(),
+            'current_xid': self.get_current_tx_id(),
+        }
 
     @staticmethod
     def get_xid_from_headers(headers: Dict[str, str]) -> str:
@@ -544,14 +802,25 @@ def init_seata(config: dict) -> None:
            ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8 COMMENT='Seata回滚日志表';
     """
     mode = str(config.get('mode', 'local')).lower()
-    if mode == 'http' and not config.get('experimental_http_enabled', False):
+    http_enabled = (
+        config.get('http_compensation_enabled', False)
+        or config.get('experimental_http_enabled', False)
+    )
+    if mode == 'http' and not http_enabled:
         raise ValueError(
-            "seata.mode=http is an experimental best-effort compensation mode; "
-            "set seata.experimental_http_enabled=true only for development tests"
+            "seata.mode=http requires explicit compensation-mode opt-in; "
+            "set seata.http_compensation_enabled=true"
         )
     seata_manager.configure(
         server_addr=config.get('server_addr', 'localhost:8091'),
         application_id=config.get('application_id', ''),
         transaction_group=config.get('transaction_group', 'my_tx_group'),
         mode=mode,
+        store_path=config.get('store_path') or config.get('store-path'),
+        recovery_grace_ms=config.get('recovery_grace_ms', config.get('recovery-grace-ms', 30000)),
+        recovery_interval_s=config.get('recovery_interval_s', config.get('recovery-interval-s', 30.0)),
     )
+    if mode == 'http' and config.get('recover_on_startup', True):
+        recovery = seata_manager.recover_pending_transactions()
+        if recovery['committed'] or recovery['rolled_back'] or recovery['pending']:
+            logger.info("[Seata-HTTP] Startup recovery result: %s", recovery)

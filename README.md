@@ -11,10 +11,12 @@ SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提
 
 ## 模块文档
 
-各模块的注解参考与功能说明已从本指南分离为独立文档，按需查阅：
+第一次使用请先读 [新手入门指南](doc/BEGINNER_GUIDE.md)。它从安装开始，带你创建第一个接口，并解释 Controller、Service、Bean、依赖注入和配置文件是什么。各模块文档统一按“解决什么问题 -> 如何启用 -> 最小示例 -> 如何验证 -> 常见错误 -> 生产边界”组织，按需查阅即可，不要求一次读完。
 
 | 模块 | 文档 | 安装 | 说明 |
 |------|------|------|------|
+| 新手入门 | [BEGINNER_GUIDE.md](doc/BEGINNER_GUIDE.md) | 随核心包 | 从零安装、创建项目、运行接口、打开 Swagger、选择后续模块 |
+| 常用注解模块 | [ANNOTATION_MODULES.md](doc/ANNOTATION_MODULES.md) | 随核心包 | Bean Validation / 条件装配 / 缓存增强 / CSV / `@Version` / `@Transient` |
 | AI（对齐 Spring AI 2.0） | [AI_MODULE.md](doc/AI_MODULE.md) | `pip install springbootAI[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测 |
 | 内嵌 PyMyBatis ORM 与 DDL | [ORM_MODULE.md](doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 |
 | Spring Cloud（对齐 Cloud Alibaba） | [CLOUD_MODULE.md](doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 负载均衡 / 分布式事务 |
@@ -27,6 +29,14 @@ SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提
 | 测试报告 | [TEST_REPORT.md](doc/TEST_REPORT.md) | — | 全量测试用例与覆盖范围 |
 
 > 所有模块文档统一存放于 [`doc/`](doc/) 目录。本指南正文中出现的"已分离至独立文档"链接均指向 `doc/` 下的对应文件。
+
+### 新手推荐阅读顺序
+
+1. 按 [新手入门指南](doc/BEGINNER_GUIDE.md) 跑通 `/api/hello/{name}`。
+2. 阅读本页第 4、6、7 章，理解配置、依赖注入和 Controller。
+3. 做数据库 CRUD 时阅读 [ORM_MODULE.md](doc/ORM_MODULE.md)。
+4. 需要输入校验、缓存或条件开关时阅读 [ANNOTATION_MODULES.md](doc/ANNOTATION_MODULES.md)。
+5. 最后再按业务需要选择安全、Cloud、AI、Excel、WebSocket 或性能测试文档。
 
 ## 目录
 

@@ -163,6 +163,22 @@ class Schema(SpringAnnotation):
 
     _annotation_type = "swagger_schema"
 
+    def __new__(cls, *args, **kwargs):
+        decorated = super().__new__(cls, *args, **kwargs)
+        if isinstance(decorated, type):
+            registrar = globals().get("register_schema")
+            if registrar is not None:
+                annotation = next(
+                    (
+                        item for item in reversed(get_spring_annotations(decorated))
+                        if isinstance(item, cls)
+                    ),
+                    None,
+                )
+                if annotation is not None:
+                    registrar(decorated, annotation)
+        return decorated
+
     def __init__(
         self,
         title: str = "",
@@ -176,6 +192,13 @@ class Schema(SpringAnnotation):
             example=example,
             deprecated=deprecated,
         )
+
+    def __call__(self, target: Union[Type, Callable]) -> Union[Type, Callable]:
+        decorated = super().__call__(target)
+        registrar = globals().get("register_schema")
+        if registrar is not None and isinstance(decorated, type):
+            registrar(decorated, self)
+        return decorated
 
 
 # Swagger 2 别名
@@ -263,11 +286,25 @@ class SwaggerConfig:
             return cls()
         spring = config.get("spring", {}) if isinstance(config.get("spring"), dict) else {}
         swagger = spring.get("swagger", {}) if isinstance(spring, dict) else {}
-        if not isinstance(swagger, dict) or not swagger:
-            # 兼容 springdoc.* 顶层配置
-            swagger = config.get("springdoc", {}) if isinstance(config.get("springdoc"), dict) else {}
+        springdoc = config.get("springdoc", {}) if isinstance(config.get("springdoc"), dict) else {}
+        using_springdoc = not isinstance(swagger, dict) or not swagger
+        if using_springdoc:
+            swagger = springdoc
         if not isinstance(swagger, dict):
             return cls()
+
+        def _mapping_get(mapping: Dict[str, Any], key: str, default: Any = None) -> Any:
+            if key in mapping:
+                return mapping[key]
+            alternate = key.replace("-", "_")
+            return mapping.get(alternate, default)
+
+        api_docs = _mapping_get(springdoc, "api-docs", {}) if using_springdoc else {}
+        if not isinstance(api_docs, dict):
+            api_docs = {}
+        swagger_ui = _mapping_get(springdoc, "swagger-ui", {}) if using_springdoc else {}
+        if not isinstance(swagger_ui, dict):
+            swagger_ui = {}
 
         def _get(key: str, default: Any = None) -> Any:
             # 松散绑定：kebab-case / snake_case
@@ -292,8 +329,31 @@ class SwaggerConfig:
             v = _get(key, default)
             return v if v is not None else default
 
+        def _bool(value: Any, default: bool = True) -> bool:
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in {"true", "1", "yes", "on"}:
+                    return True
+                if normalized in {"false", "0", "no", "off", ""}:
+                    return False
+            return bool(value)
+
+        api_docs_enabled = _bool(
+            _get("enabled", _mapping_get(api_docs, "enabled", True))
+        )
+        swagger_ui_enabled = _bool(_mapping_get(swagger_ui, "enabled", True))
+        docs_url = _get(
+            "docs-url", _mapping_get(swagger_ui, "path", "/docs")
+        )
+        if not swagger_ui_enabled:
+            docs_url = None
+
         return cls(
-            enabled=bool(_get("enabled", True)),
+            enabled=api_docs_enabled,
             title=_opt("title", "SpringBootAI Application"),
             description=_opt("description", ""),
             version=_opt("version", "1.0.0"),
@@ -303,9 +363,11 @@ class SwaggerConfig:
             contact_url=_opt("contact-url", "") or (contact.get("url", "") if isinstance(contact, dict) else ""),
             license_name=_opt("license-name", "") or (license_info.get("name", "") if isinstance(license_info, dict) else ""),
             license_url=_opt("license-url", "") or (license_info.get("url", "") if isinstance(license_info, dict) else ""),
-            docs_url=_get("docs-url", "/docs"),
+            docs_url=docs_url,
             redoc_url=_get("redoc-url", "/redoc"),
-            openapi_url=_get("openapi-url", "/openapi.json"),
+            openapi_url=_get(
+                "openapi-url", _mapping_get(api_docs, "path", "/openapi.json")
+            ),
         )
 
     def to_fastapi_kwargs(self) -> Dict[str, Any]:
@@ -437,6 +499,19 @@ def collect_security_schemes(controller_classes: List[Type]) -> Dict[str, Dict[s
     return schemes
 
 
+def collect_openapi_tags(controller_classes: List[Type]) -> List[Dict[str, str]]:
+    """Collect unique class-level tags, including their OpenAPI descriptions."""
+    tags: Dict[str, Dict[str, str]] = {}
+    for cls in controller_classes:
+        for ann in get_spring_annotations(cls):
+            if not isinstance(ann, Tag) or not ann.name:
+                continue
+            definition = tags.setdefault(ann.name, {"name": ann.name})
+            if ann.description:
+                definition["description"] = ann.description
+    return list(tags.values())
+
+
 def _security_scheme_to_dict(ann: SecurityScheme) -> Dict[str, Any]:
     """将 ``@SecurityScheme`` 注解转为 OpenAPI securityScheme 对象。"""
     if ann.type == "apiKey":
@@ -542,6 +617,7 @@ def configure_swagger(
     swagger_config: Optional[SwaggerConfig] = None,
     security_schemes: Optional[Dict[str, Dict[str, Any]]] = None,
     method_param_meta: Optional[Dict[str, List[Parameter]]] = None,
+    tag_definitions: Optional[List[Dict[str, str]]] = None,
 ) -> None:
     """自定义 ``app.openapi()``，注入全局 ``securitySchemes`` 与 ``@Schema``/
     ``@Parameter`` 后处理。
@@ -554,6 +630,7 @@ def configure_swagger(
 
     security_schemes = security_schemes or {}
     method_param_meta = method_param_meta or {}
+    tag_definitions = tag_definitions or []
 
     original_openapi = app.openapi
 
@@ -569,6 +646,18 @@ def configure_swagger(
         if security_schemes:
             components = schema.setdefault("components", {})
             components.setdefault("securitySchemes", {}).update(security_schemes)
+        if tag_definitions:
+            existing_tags = {
+                tag.get("name"): tag for tag in schema.setdefault("tags", [])
+                if isinstance(tag, dict) and tag.get("name")
+            }
+            for tag in tag_definitions:
+                existing = existing_tags.get(tag["name"])
+                if existing is None:
+                    schema["tags"].append(dict(tag))
+                    existing_tags[tag["name"]] = schema["tags"][-1]
+                elif tag.get("description"):
+                    existing["description"] = tag["description"]
         # @Schema 后处理
         try:
             _apply_schema_metadata(schema)
@@ -594,7 +683,7 @@ __all__ = [
     # 配置
     "SwaggerConfig",
     # 元数据收集
-    "collect_openapi_metadata", "collect_security_schemes",
+    "collect_openapi_metadata", "collect_security_schemes", "collect_openapi_tags",
     "register_schema",
     # 配置函数
     "configure_swagger",

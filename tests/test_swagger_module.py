@@ -22,7 +22,6 @@ from spring.web.swagger import (
     Parameter, ApiParam, Schema, ApiModel,
     SecurityScheme, SecurityRequirement,
     SwaggerConfig, collect_openapi_metadata, collect_security_schemes,
-    configure_swagger, register_schema,
 )
 from spring.web.result import Result
 
@@ -297,6 +296,24 @@ class TestSwaggerConfig:
         cfg = SwaggerConfig.from_config(config)
         assert cfg.enabled is False
 
+    def test_from_springdoc_nested_config(self):
+        config = {
+            "springdoc": {
+                "api-docs": {"enabled": "true", "path": "/v3/api-docs"},
+                "swagger-ui": {"enabled": "false", "path": "/swagger-ui.html"},
+            }
+        }
+        cfg = SwaggerConfig.from_config(config)
+        assert cfg.enabled is True
+        assert cfg.openapi_url == "/v3/api-docs"
+        assert cfg.docs_url is None
+
+    def test_string_false_disables_swagger(self):
+        cfg = SwaggerConfig.from_config(
+            {"spring": {"swagger": {"enabled": "false"}}}
+        )
+        assert cfg.enabled is False
+
     def test_from_config_contact_and_license(self):
         config = {
             "spring": {"swagger": {
@@ -401,6 +418,9 @@ class TestSwaggerIntegration:
             schema = client.get("/openapi.json").json()
             path_item = schema["paths"]["/api/users/list"]["get"]
             assert "用户管理" in path_item["tags"]
+            assert {tag["name"]: tag.get("description") for tag in schema["tags"]}[
+                "用户管理"
+            ] == "用户接口"
         finally:
             import os; os.unlink(path)
 
@@ -519,32 +539,27 @@ class TestSwaggerIntegration:
 
     def test_schema_post_processing(self):
         from spring.web.swagger import _SCHEMA_REGISTRY
+        from pydantic import BaseModel
+
         _SCHEMA_REGISTRY.clear()
 
         @Schema(title="订单模型", description="订单实体描述")
-        class OrderDTO:
-            pass
+        class OrderDTO(BaseModel):
+            order_id: int
 
         @RestController
         @RequestMapping("/api")
         class Ctrl:
+            @ApiResponse(code=200, description="success", response_model=OrderDTO)
             @GetMapping("/orders")
-            def list_orders(self): return {"order": OrderDTO()}
-
-        # 手动注册 Schema
-        register_schema(OrderDTO, next(
-            a for a in getattr(OrderDTO, '__spring_annotations__', [])
-            if isinstance(a, Schema)
-        ))
+            def list_orders(self): return OrderDTO(order_id=1)
 
         client, _, path = _build_client([Ctrl])
         try:
             schema = client.get("/openapi.json").json()
-            # OrderDTO 可能出现在 components/schemas（取决于序列化路径）
             components_schemas = schema.get("components", {}).get("schemas", {})
-            if "OrderDTO" in components_schemas:
-                assert components_schemas["OrderDTO"].get("description") == "订单实体描述"
-                assert components_schemas["OrderDTO"].get("title") == "订单模型"
+            assert components_schemas["OrderDTO"].get("description") == "订单实体描述"
+            assert components_schemas["OrderDTO"].get("title") == "订单模型"
         finally:
             _SCHEMA_REGISTRY.clear()
             import os; os.unlink(path)

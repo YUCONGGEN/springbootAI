@@ -186,6 +186,16 @@ class SpringApplication:
             return
         config = self.application_context.get_config()
         fail_fast = self._should_fail_fast(config)
+        if config.get('seata', {}).get('enabled', False) and str(
+            config.get('seata', {}).get('mode', 'local')
+        ).lower() == 'http':
+            try:
+                from spring.cloud.seata import seata_manager
+                seata_manager.start_recovery_worker()
+            except Exception as exc:
+                if fail_fast:
+                    raise RuntimeError("Seata HTTP recovery worker启动失败") from exc
+                self.logger.warning(f"Failed to start Seata HTTP recovery worker: {exc}")
         if config.get('rabbitmq', {}).get('enabled', False):
             try:
                 from spring.messaging.rabbitmq import rabbitmq_client
@@ -206,10 +216,15 @@ class SpringApplication:
 
     @staticmethod
     def _should_fail_fast(config: dict) -> bool:
-        startup_config = config.get('startup', {})
+        startup_config = config.get('startup', {}) or {}
         if 'fail_fast' in startup_config:
-            return bool(startup_config['fail_fast'])
-        profile = str(config.get('spring', {}).get('profiles', {}).get('active', 'default')).lower()
+            value = startup_config['fail_fast']
+            if isinstance(value, str):
+                return value.strip().lower() in {'true', '1', 'yes', 'on'}
+            return bool(value)
+        spring_config = config.get('spring', {}) or {}
+        profile_config = spring_config.get('profiles', {}) or {}
+        profile = str(profile_config.get('active', 'default')).lower()
         return profile in {'prod', 'production'}
 
     def _production_security_check(self, config: dict) -> None:
@@ -227,7 +242,8 @@ class SpringApplication:
             warnings.append("Database password is empty, MUST set password in production")
 
         # 检查CORS是否全开
-        cors_config = config.get('cors', {})
+        server_config = config.get('server', {}) or {}
+        cors_config = server_config.get('cors', config.get('cors', {})) or {}
         allow_origins = cors_config.get('allow_origins', [])
         if '*' in (allow_origins if isinstance(allow_origins, list) else [allow_origins]):
             warnings.append("CORS allows all origins (*), restrict to specific domains in production")
@@ -274,6 +290,11 @@ class SpringApplication:
 
     def _on_app_shutdown(self):
         """ASGI应用关闭事件回调"""
+        try:
+            from spring.cloud.seata import seata_manager
+            seata_manager.stop_recovery_worker()
+        except Exception:
+            pass
         try:
             from spring.core.graceful_shutdown import shutdown_handler
             if not shutdown_handler._signal_received:

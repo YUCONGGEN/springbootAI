@@ -101,10 +101,12 @@ class WebApplicationContext:
         """在路由注册完成后，自定义 ``app.openapi()`` 注入全局 securitySchemes、
         ``@Schema`` 模型描述与 ``@Parameter`` 参数描述。"""
         from spring.web.swagger import (
-            configure_swagger, collect_security_schemes, register_schema, Schema,
+            configure_swagger, collect_openapi_tags, collect_security_schemes,
+            register_schema, Schema,
         )
         # 收集全局 @SecurityScheme
         security_schemes = collect_security_schemes(self._controller_classes)
+        tag_definitions = collect_openapi_tags(self._controller_classes)
         # 注册 @Schema 标注的模型类
         for cls in self._controller_classes:
             for ann in (getattr(cls, '__spring_annotations__', []) or []):
@@ -115,6 +117,7 @@ class WebApplicationContext:
             self.swagger_config,
             security_schemes=security_schemes,
             method_param_meta=self._method_param_meta,
+            tag_definitions=tag_definitions,
         )
 
     def _get_thread_pool_config(self) -> Dict[str, Any]:

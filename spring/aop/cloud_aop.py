@@ -3,6 +3,7 @@ Spring Cloud AOP 切面实现（企业级版本）
 使用真实的分布式组件：Seata事务、Nacos服务发现、Sentinel限流熔断等
 """
 from typing import Any, Callable, Dict, List, Optional, Type
+import asyncio
 import time
 import functools
 import threading
@@ -139,16 +140,43 @@ def global_transactional_decorator(annotation: GlobalTransactional):
                 if seata_manager.is_in_transaction():
                     logger.warning("[GlobalTransactional] Nested transaction detected, skipping")
                     return await func(*args, **kwargs)
-                tx_id = begin_transaction()
+                if seata_manager.get_mode() == "http":
+                    tx_id = await asyncio.to_thread(begin_transaction)
+                    transaction_context = await asyncio.to_thread(
+                        seata_manager.get_transaction_context, tx_id
+                    )
+                    if transaction_context is None:
+                        seata_manager._cleanup_context()
+                        raise RuntimeError(
+                            f"Unable to bind durable HTTP transaction context: {tx_id}"
+                        )
+                    seata_manager.bind_transaction_context(transaction_context)
+                else:
+                    tx_id = begin_transaction()
                 start_time = time.monotonic()
                 try:
                     result = await func(*args, **kwargs)
-                    commit_transaction(tx_id, time.monotonic() - start_time)
-                    return result
                 except Exception:
                     if seata_manager.is_in_transaction():
-                        seata_manager.rollback_transaction(tx_id)
+                        try:
+                            await asyncio.to_thread(
+                                seata_manager.rollback_transaction, tx_id
+                            )
+                        finally:
+                            # Context changes in to_thread stay in its copied
+                            # context, so clear the event-loop task explicitly.
+                            seata_manager._cleanup_context()
                     raise
+
+                try:
+                    await asyncio.to_thread(
+                        commit_transaction,
+                        tx_id,
+                        time.monotonic() - start_time,
+                    )
+                    return result
+                finally:
+                    seata_manager._cleanup_context()
 
             return async_wrapper
 
