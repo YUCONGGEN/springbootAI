@@ -15,8 +15,8 @@ except ImportError:
     # 如果example_all不可用，提供一个最小ASGI应用占位
     from fastapi import FastAPI
     from spring import __version__
-    app = FastAPI(title="SpringPy", version=__version__)
+    app = FastAPI(title="SpringBootAI", version=__version__)
 
     @app.get("/")
     async def root():
-        return {"message": "SpringPy application not configured", "status": "setup"}
+        return {"message": "SpringBootAI application not configured", "status": "setup"}

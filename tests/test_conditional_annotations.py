@@ -1,4 +1,4 @@
-"""SpringPy 条件装配注解测试 —— 覆盖 @Conditional / @ConditionalOnProperty /
+"""SpringBootAI 条件装配注解测试 —— 覆盖 @Conditional / @ConditionalOnProperty /
 @ConditionalOnBean / @ConditionalOnMissingBean / @ConditionalOnClass 及合取求值。
 
 对齐 tests/test_validation_module.py 的 pytest 风格。条件注解的 ``matches(ctx)`` 接收

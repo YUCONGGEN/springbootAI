@@ -1,4 +1,4 @@
-"""SpringPy i18n 国际化模块 —— 注解驱动的消息源与区域解析（对齐 Spring ``MessageSource`` +
+"""SpringBootAI i18n 国际化模块 —— 注解驱动的消息源与区域解析（对齐 Spring ``MessageSource`` +
 ``LocaleResolver`` 体系）。
 
 模块组成（镜像 ``org.springframework.context.*`` / ``org.springframework.web.servlet.i18n.*``）：

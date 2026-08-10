@@ -1,7 +1,7 @@
-# SpringPy Swagger / OpenAPI 模块使用文档
+# SpringBootAI Swagger / OpenAPI 模块使用文档
 
-> 版本：SpringPy Swagger 1.0.0 ｜ 框架版本：SpringPy 1.8.0
-> 对齐 SpringDoc OpenAPI 3 注解体系（`@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`/`@Schema`/`@SecurityScheme`/`@SecurityRequirement`），同时提供 Swagger 2 风格别名（`@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam`），**无新增第三方依赖**（复用 FastAPI 自带的 OpenAPI 生成），`pip install springpy-framework` 即可用。
+> 版本：SpringBootAI Swagger 1.0.0 ｜ 框架版本：SpringBootAI 1.8.0
+> 对齐 SpringDoc OpenAPI 3 注解体系（`@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`/`@Schema`/`@SecurityScheme`/`@SecurityRequirement`），同时提供 Swagger 2 风格别名（`@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam`），**无新增第三方依赖**（复用 FastAPI 自带的 OpenAPI 生成），`pip install springbootAI` 即可用。
 > 设计原则：**复用项目既有范式，不重复造轮子**——注解复用 `SpringAnnotation` 描述符，元数据在 `WebApplicationContext` 注册路由时同步注入 FastAPI 路由参数，全局 `securitySchemes`/`@Schema`/`@Parameter` 通过自定义 `app.openapi()` 后处理注入。
 
 ---
@@ -34,7 +34,7 @@
 spring:
   swagger:
     enabled: true                    # 是否启用 OpenAPI/docs（生产环境可设 false）
-    title: "SpringPy 演示 API"        # API 标题
+    title: "SpringBootAI 演示 API"        # API 标题
     description: "注解驱动的 API 文档"  # API 描述
     version: "1.0.0"                 # API 版本
     terms-of-service: "https://tos.example.com"
@@ -232,7 +232,7 @@ class OrderCtrl:
 
 ## 九、与 Java Spring 的对齐与差异
 
-| 特性 | Java SpringDoc | SpringPy | 差异 |
+| 特性 | Java SpringDoc | SpringBootAI | 差异 |
 |------|---------------|----------|------|
 | 注解体系 | `io.swagger.v3.oas.annotations.*` | `spring.web.swagger.*` | 命名对齐，复用 `SpringAnnotation` 描述符 |
 | 自动扫描 | `springdoc-openapi-starter-webmvc-ui` 自动扫描 | `WebApplicationContext` 注册路由时同步注入 | 无额外依赖，复用路由注册流程 |
@@ -278,7 +278,7 @@ class OrderCtrl:
 | 9 | **Execute** 实际调用接口成功，响应体正确（`page=2` 透传） | ✅ |
 | 10 | `@SecurityScheme` 渲染为 **Authorize** 按钮 + 弹窗（BearerAuth/JWT Bearer 认证） | ✅ |
 | 11 | `@SecurityRequirement` 标记的路由显示锁图标（POST /create） | ✅ |
-| 12 | Contact/License 信息渲染（SpringPy 网站/邮箱/MIT） | ✅ |
+| 12 | Contact/License 信息渲染（SpringBootAI 网站/邮箱/MIT） | ✅ |
 | 13 | Actuator 端点自动归入 default 分组 | ✅ |
 
 > 截图：`swagger_ui_overview.png`（总览）、`swagger_ui_tryitout_response.png`（Try it out 响应）、`swagger_ui_authorize_dialog.png`（Authorize 弹窗）。

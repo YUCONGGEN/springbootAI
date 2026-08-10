@@ -47,7 +47,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $repoRoot 'docker-compose.performance.yml'
-$projectName = 'springpy-performance'
+$projectName = 'springbootai-performance'
 $startedBenchmark = [string]::IsNullOrWhiteSpace($TargetUrl)
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $resultContainerPath = "/results/$Profile-$Workload-$timestamp.json"

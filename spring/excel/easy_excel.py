@@ -1,4 +1,4 @@
-"""SpringPy ``EasyExcel`` —— 流式构建入口（对齐 alibaba EasyExcel API）。
+"""SpringBootAI ``EasyExcel`` —— 流式构建入口（对齐 alibaba EasyExcel API）。
 
 用法::
 
@@ -17,7 +17,7 @@
     # 读所有 sheet
     sheets = EasyExcel.read("/tmp/multi.xlsx", head=DemoData).doReadAll()
 
-注解声明不依赖 openpyxl；仅在 ``doRead`` / ``doWrite`` 时检测并提示安装 ``springpy[excel]``。
+注解声明不依赖 openpyxl；仅在 ``doRead`` / ``doWrite`` 时检测并提示安装 ``springbootAI[excel]``。
 """
 from __future__ import annotations
 

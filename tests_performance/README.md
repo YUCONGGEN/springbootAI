@@ -1,4 +1,4 @@
-# SpringPy 性能与容量测试
+# SpringBootAI 性能与容量测试
 
 这套测试使用固定版本的 k6，通过 Docker 运行，不需要在本机安装 k6。默认会构建并启动一个双 worker 基准服务，覆盖异步/同步 Controller、请求体解析、内嵌 Gateway、Bean Validation、缓存增强、CSV、JPA 乐观锁和条件装配。
 
@@ -100,7 +100,7 @@
 - `failed_rate`：业务或协议错误比例。
 - `p95_ms` / `p99_ms`：尾延迟。
 - `dropped_iterations`：k6 无法维持目标到达率，可能是 VU 不足或服务显著变慢。
-- `overload_responses`：SpringPy 有界同步队列主动拒绝的请求数。
+- `overload_responses`：SpringBootAI 有界同步队列主动拒绝的请求数。
 
 压测最大容量时，应把 k6 放在独立机器上，避免负载发生器与服务竞争 CPU、网络和 Docker 资源。容量结论至少重复三次，并同时观察 `/actuator/prometheus`、数据库连接池和宿主机指标。
 

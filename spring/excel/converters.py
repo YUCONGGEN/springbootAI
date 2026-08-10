@@ -1,4 +1,4 @@
-"""SpringPy Excel 转换器 —— Python 值与 Excel 单元格值之间的双向转换。
+"""SpringBootAI Excel 转换器 —— Python 值与 Excel 单元格值之间的双向转换。
 
 对齐 EasyExcel 的 ``Converter`` 机制：用户可实现 ``Converter`` 接口自定义任意类型的读写转换；
 内置常用类型（int/float/bool/str/datetime/date/Decimal）的转换器，并在未显式指定 converter 时

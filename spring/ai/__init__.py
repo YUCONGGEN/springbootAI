@@ -1,5 +1,5 @@
 """
-SpringPy AI 模块 - 对齐 Spring AI 的 ChatClient/Advisor/ETL 抽象，
+SpringBootAI AI 模块 - 对齐 Spring AI 的 ChatClient/Advisor/ETL 抽象，
 底层复用 LangChain 生态做模型适配，上层保留 Spring 风格的统一配置与依赖注入。
 
 模块组成：

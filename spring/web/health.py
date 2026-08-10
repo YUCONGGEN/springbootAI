@@ -198,7 +198,7 @@ def info_check():
             'profile': profile_config.get('active', 'default'),
         },
         'framework': {
-            'name': 'SpringPy',
+            'name': 'SpringBootAI',
             'version': spring_version,
             'python': platform.python_version(),
         },

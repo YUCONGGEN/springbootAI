@@ -1,4 +1,4 @@
-"""SpringPy Spring Data 模块（对齐 Spring Data Commons / Spring Data JPA）。
+"""SpringBootAI Spring Data 模块（对齐 Spring Data Commons / Spring Data JPA）。
 
 提供基于实体元数据的统一数据访问抽象：分页（``Pageable``/``Page``）、排序（``Sort``）、
 动态查询（``Specification``）、CRUD 仓库基类（``PagingAndSortingRepository``）。

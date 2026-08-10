@@ -1,4 +1,4 @@
-"""SpringPy CSV 注解模块测试 —— 覆盖注解/转换器/读写引擎/EasyCsv 入口/round-trip。
+"""SpringBootAI CSV 注解模块测试 —— 覆盖注解/转换器/读写引擎/EasyCsv 入口/round-trip。
 
 对齐 tests/test_excel_module.py 的 pytest 风格。CSV 使用标准库 ``csv``，无可选依赖，
 测试以临时文件与 ``io.StringIO`` 驱动，验证：

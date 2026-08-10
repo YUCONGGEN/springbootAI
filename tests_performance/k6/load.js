@@ -269,7 +269,7 @@ function recordSwaggerDocument(response) {
           && document.info?.title
           && document.info?.version
           && pathsInDocument.length > 0
-          && benchmarkOperation?.tags?.includes('SpringPy Benchmark')
+          && benchmarkOperation?.tags?.includes('SpringBootAI Benchmark')
           && benchmarkOperation?.operationId === 'benchmarkData'
           && benchmarkOperation?.responses?.['200']?.description === 'Paged benchmark data'
           && benchmarkOperation?.security?.some((entry) => entry.BenchmarkBearer)
@@ -544,7 +544,7 @@ export function handleSummary(data) {
   };
   const outputPath = __ENV.SPRINGPY_RESULTS_FILE || '/results/summary.json';
   const line = [
-    `SpringPy k6 ${profile}/${workload}`,
+    `SpringBootAI k6 ${profile}/${workload}`,
     `requests=${report.result.requests}`,
     `rps=${report.result.request_rate}`,
     `p95=${report.result.p95_ms}ms`,

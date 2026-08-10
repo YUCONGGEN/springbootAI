@@ -1,4 +1,4 @@
-"""SpringPy i18n 国际化模块测试 —— 覆盖 Locale / MessageSource / LocaleResolver /
+"""SpringBootAI i18n 国际化模块测试 —— 覆盖 Locale / MessageSource / LocaleResolver /
 LocaleContextHolder / MessageSourceAccessor / properties 解析 / 中间件 / 自动配置。
 
 对齐 tests/test_csv_module.py 的 pytest + 临时文件风格；不依赖第三方 i18n 库。

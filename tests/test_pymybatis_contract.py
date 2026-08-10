@@ -303,7 +303,7 @@ class PyMyBatisContractTests(unittest.TestCase):
             <association property="author" resultMap="author" />
           </resultMap>
           <select id="findBook" resultMap="book">
-            SELECT 7 AS book_id, 'SpringPy' AS book_title,
+            SELECT 7 AS book_id, 'SpringBootAI' AS book_title,
                    3 AS author_id, 'Ada' AS author_name
           </select>
           <insert id="insertWithSelectKey" keyProperty="id">
@@ -326,7 +326,7 @@ class PyMyBatisContractTests(unittest.TestCase):
             params = {"name": "select-key"}
             self.session.insert("tests.AdvancedMapper.insertWithSelectKey", params)
 
-            self.assertEqual("SpringPy", mapped[0]["title"])
+            self.assertEqual("SpringBootAI", mapped[0]["title"])
             self.assertEqual("Ada", mapped[0]["author"]["name"])
             self.assertEqual(99, params["id"])
             self.assertEqual("select-key", self.session.select_one("SELECT name FROM generated_tasks WHERE id = 99"))

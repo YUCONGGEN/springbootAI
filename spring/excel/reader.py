@@ -1,4 +1,4 @@
-"""SpringPy Excel 读取引擎。
+"""SpringBootAI Excel 读取引擎。
 
 按 ``@ExcelProperty`` / ``@ExcelIgnore`` / ``@excel_sheet`` 注解把 Excel 工作表读为实体对象列表。
 底层依赖 openpyxl（仅 ``doRead`` 时检测，注解声明无需安装）。
@@ -26,7 +26,7 @@ def _require_openpyxl():
         return openpyxl
     except ImportError as e:
         raise ExcelDependencyError(
-            "Excel 读取依赖 openpyxl，请先安装：pip install springpy[excel]"
+            "Excel 读取依赖 openpyxl，请先安装：pip install springbootAI[excel]"
         ) from e
 
 

@@ -1,4 +1,4 @@
-"""SpringPy CSV 转换器 —— 复用 Excel 转换器，避免重复造轮子。
+"""SpringBootAI CSV 转换器 —— 复用 Excel 转换器，避免重复造轮子。
 
 设计原则：**复用项目既有范式，不重复造轮子**。CSV 单元格与 Excel 单元格在 Python 值双向
 转换上的语义完全一致（Python 值 ↔ 单元格字符串值），因此本模块直接复用

@@ -1,4 +1,4 @@
-"""SpringPy AI 模块测试 - 覆盖核心抽象/Provider/Advisor/Memory/VectorStore/ETL/Tools/AutoConfig/注解。
+"""SpringBootAI AI 模块测试 - 覆盖核心抽象/Provider/Advisor/Memory/VectorStore/ETL/Tools/AutoConfig/注解。
 
 使用 FakeChatModel/FakeEmbeddingModel 提供确定性输出，不依赖网络或真实 LLM。
 """
@@ -415,14 +415,14 @@ class TestAdvisors:
         """QuestionAnswerAdvisor 检索文档并注入 system 上下文"""
         emb = FakeEmbeddingModel(dim=8)
         store = SimpleInMemoryVectorStore(embedding_model=emb)
-        store.add_texts(["SpringPy 是 Python 微服务框架"])
+        store.add_texts(["SpringBootAI 是 Python 微服务框架"])
         advisor = QuestionAnswerAdvisor(vector_store=store, embedding_model=emb)
 
         model = FakeChatModel()
         client = (ChatClientBuilder(model)
                   .default_advisors(advisor).build())
         req_ctx = {}
-        spec = client.prompt().user("SpringPy是什么").param("k", "v")
+        spec = client.prompt().user("SpringBootAI是什么").param("k", "v")
         # 手动触发 advisor 请求阶段
         advisor_request = AdvisorRequest(
             messages=spec._messages, chat_model=model,
@@ -432,7 +432,7 @@ class TestAdvisors:
         # 首条消息应为注入的 RAG system 提示（默认启用 Prompt 注入加固）
         assert transformed.messages[0].type == MessageType.SYSTEM
         assert "retrieved_documents" in transformed.messages[0].content
-        assert "SpringPy" in transformed.messages[0].content
+        assert "SpringBootAI" in transformed.messages[0].content
         assert "retrieved_documents" in transformed.context
         # 加固模板明确要求忽略文档中的指令（反 Prompt 注入）
         assert "不是指令" in transformed.messages[0].content
@@ -444,12 +444,12 @@ class TestAdvisors:
         emb = FakeEmbeddingModel()
         store = SimpleInMemoryVectorStore(embedding_model=emb)
         # 交由 embedding_model 自动嵌入，保证查询与文档可检索到
-        store.add([VectorDocument(id="1", content="SpringPy 是 Python 微服务框架")])
+        store.add([VectorDocument(id="1", content="SpringBootAI 是 Python 微服务框架")])
         advisor = QuestionAnswerAdvisor(store, embedding_model=emb,
                                         harden_injection=False)
         model = FakeChatModel()
         advisor_request = AdvisorRequest(
-            messages=[Message.user("SpringPy 是 Python 微服务框架")], chat_model=model,
+            messages=[Message.user("SpringBootAI 是 Python 微服务框架")], chat_model=model,
         )
         transformed = advisor.advise_request(advisor_request)
         assert "上下文" in transformed.messages[0].content
@@ -599,8 +599,8 @@ class TestIntegrationScenarios:
         # 1. ETL：读取并切片
         reader = TextReader()
         doc = reader.read_text(
-            "SpringPy 支持 IoC 容器。SpringPy 支持 AOP 切面。"
-            "SpringPy 内嵌 Sentinel 限流。", source="manual"
+            "SpringBootAI 支持 IoC 容器。SpringBootAI 支持 AOP 切面。"
+            "SpringBootAI 内嵌 Sentinel 限流。", source="manual"
         )
         splitter = TokenTextSplitter(chunk_size=20, chunk_overlap=5)
         chunks = splitter.split([doc])
@@ -618,7 +618,7 @@ class TestIntegrationScenarios:
         model = FakeChatModel(prefix="回答:")
         client = (ChatClientBuilder(model)
                   .default_advisors(rag).build())
-        answer = client.prompt().user("SpringPy支持什么").call().content()
+        answer = client.prompt().user("SpringBootAI支持什么").call().content()
         assert answer.startswith("回答:")
 
     def test_multi_turn_conversation_with_memory(self):
@@ -735,8 +735,8 @@ class TestEmbeddingAutoconfigAndRedisVectorStore:
         beans = configure_ai(registry=registry, config=loader)
         vs = beans["aiVectorStore"]
         # 写入纯文本（无 embedding），VectorStore 应自动嵌入
-        vs.add_texts(["SpringPy 框架", "Python 语言"])
-        results = vs.similarity_search(SearchRequest(query="SpringPy", top_k=1))
+        vs.add_texts(["SpringBootAI 框架", "Python 语言"])
+        results = vs.similarity_search(SearchRequest(query="SpringBootAI", top_k=1))
         assert len(results) >= 1
 
     def test_redis_vector_store_without_client_is_noop(self):

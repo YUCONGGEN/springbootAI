@@ -1,4 +1,4 @@
-"""SpringPy WebSocket 实时通信模块 —— 注解驱动的 WebSocket 端点与消息路由（对齐
+"""SpringBootAI WebSocket 实时通信模块 —— 注解驱动的 WebSocket 端点与消息路由（对齐
 JSR-356 ``@ServerEndpoint`` + Spring WebSocket ``@MessageMapping`` / ``@SendTo`` 体系）。
 
 模块组成：

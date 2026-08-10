@@ -51,13 +51,13 @@ def generate_sbom(output_path: str = "build/sbom.json", fmt: str = "cyclonedx"):
             "metadata": {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "tool": {
-                    "vendor": "SpringPy",
+                    "vendor": "SpringBootAI",
                     "name": "sbom-generator",
                     "version": "1.0.0"
                 },
                 "component": {
                     "type": "application",
-                    "name": "springpy",
+                    "name": "springbootai",
                     "version": _get_spring_version(),
                 }
             },
@@ -77,11 +77,11 @@ def generate_sbom(output_path: str = "build/sbom.json", fmt: str = "cyclonedx"):
             "spdxVersion": "SPDX-2.3",
             "dataLicense": "CC0-1.0",
             "SPDXID": "SPDXRef-DOCUMENT",
-            "name": "springpy-sbom",
-            "documentNamespace": f"https://springpy.io/spdx/{_gen_uuid()}",
+            "name": "springbootai-sbom",
+            "documentNamespace": f"https://springbootai.io/spdx/{_gen_uuid()}",
             "creationInfo": {
                 "created": datetime.now(timezone.utc).isoformat(),
-                "creators": ["Tool: SpringPy-SBOM-Generator-1.0.0"],
+                "creators": ["Tool: SpringBootAI-SBOM-Generator-1.0.0"],
             },
             "packages": [
                 {
@@ -114,7 +114,7 @@ def _gen_uuid():
 
 
 def _get_spring_version():
-    """获取SpringPy版本"""
+    """获取SpringBootAI版本"""
     try:
         init_py = Path(__file__).parent.parent / "spring" / "__init__.py"
         for line in init_py.read_text().splitlines():

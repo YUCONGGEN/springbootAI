@@ -1,1 +1,1 @@
-"""SpringPy regression tests."""
+"""SpringBootAI regression tests."""

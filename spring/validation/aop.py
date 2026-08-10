@@ -1,4 +1,4 @@
-"""SpringPy Bean Validation 方法级 AOP 注解 ``@BeanValidate``。
+"""SpringBootAI Bean Validation 方法级 AOP 注解 ``@BeanValidate``。
 
 把字段约束校验（``spring.validation.validator.BeanValidator``）接入既有 AOP 分发链路：
 ``@BeanValidate`` 作为方法级 ``SpringAnnotation``，在 ``comprehensive_aop.ANNOTATION_DECORATORS``

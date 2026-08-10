@@ -1,4 +1,4 @@
-"""SpringPy 事务扩展模块（对齐 Spring ``@TransactionalEventListener``）。
+"""SpringBootAI 事务扩展模块（对齐 Spring ``@TransactionalEventListener``）。
 
 模块组成：
 - ``synchronization``: ``TransactionSynchronizationManager`` + ``TransactionSynchronization`` +

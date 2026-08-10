@@ -1,12 +1,12 @@
-# SpringPy AI 模块使用指南
+# SpringBootAI AI 模块使用指南
 
 > 对齐 Spring AI 2.0：ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测。
 > 本文档从 README.md 第 12 节分离而来，作为 AI 模块的独立完整说明。
-> 安装：`pip install springpy-framework[ai]` ｜ 框架版本：SpringPy 1.6.1 / SpringPy AI 1.3.0
+> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 1.6.1 / SpringBootAI AI 1.3.0
 
 ---
 
-SpringPy AI 模块对齐 **Spring AI 2.0**，提供 `ChatClient`/`ChatModel`/`EmbeddingModel`/`Advisor`/`Tools` 抽象，底层复用 LangChain 生态做模型适配（未安装时降级原生 HTTP），上层保留 Spring 风格的统一配置（`application.yml` 的 `spring.ai.*`）与依赖注入（BeanRegistry）。
+SpringBootAI AI 模块对齐 **Spring AI 2.0**，提供 `ChatClient`/`ChatModel`/`EmbeddingModel`/`Advisor`/`Tools` 抽象，底层复用 LangChain 生态做模型适配（未安装时降级原生 HTTP），上层保留 Spring 风格的统一配置（`application.yml` 的 `spring.ai.*`）与依赖注入（BeanRegistry）。
 
 **核心能力**：
 - **多 Provider 适配**：OpenAI / Ollama / DeepSeek / Moonshot / Zhipu（LangChain 优先，HTTP 降级）
@@ -293,7 +293,7 @@ from spring.ai import (
 
 emb = FakeEmbeddingModel(dim=16)
 store = SimpleInMemoryVectorStore(embedding_model=emb)
-store.add_texts(["SpringPy 支持 IoC 容器", "SpringPy 内嵌 Sentinel 限流"])
+store.add_texts(["SpringBootAI 支持 IoC 容器", "SpringBootAI 内嵌 Sentinel 限流"])
 
 memory = InMemoryChatMemory()
 client = (ChatClientBuilder(FakeChatModel(prefix="回答:"))
@@ -471,9 +471,9 @@ from spring.ai import RedisVectorStore, FakeEmbeddingModel, SearchRequest
 store = RedisVectorStore(redis_client=redis_client,
                          collection="docs",
                          embedding_model=FakeEmbeddingModel(dim=16))
-store.add_texts(["SpringPy 文档一", "SpringPy 文档二"])
+store.add_texts(["SpringBootAI 文档一", "SpringBootAI 文档二"])
 # 检索时自动 embed query
-results = store.similarity_search(SearchRequest(query="SpringPy", top_k=2))
+results = store.similarity_search(SearchRequest(query="SpringBootAI", top_k=2))
 ```
 
 `configure_ai()` 会按 `spring.ai.vector-store.type` 自动装配 `aiVectorStore`（redis 或 inmemory）并注入 `aiEmbeddingModel`，让 RAG 真正自动可用。
@@ -510,7 +510,7 @@ from spring.ai import configure_ai
 
 beans = configure_ai()                      # 读取 application.yml 自动装配（AI_PROVIDER=deepseek）
 client = beans["aiChatClient"]              # 已注入 DeepSeek + Memory Advisor
-print(client.prompt().user("用一句话介绍 SpringPy").call().content())
+print(client.prompt().user("用一句话介绍 SpringBootAI").call().content())
 ```
 
 等价手动构建：
@@ -590,7 +590,7 @@ chat_model = OpenAICompatChatModel(provider="deepseek",
 emb = FakeEmbeddingModel(dim=16)
 
 # 1. 知识库入库（读 -> 切 -> 存）
-raw = "SpringPy 内嵌 Sentinel 限流与 OpenTelemetry 追踪；支持 Mapper 注解与 XML 混合。"
+raw = "SpringBootAI 内嵌 Sentinel 限流与 OpenTelemetry 追踪；支持 Mapper 注解与 XML 混合。"
 doc = TextReader().read_text(raw, source="manual")
 chunks = TokenTextSplitter(chunk_size=200, chunk_overlap=50).split([doc])
 
@@ -602,7 +602,7 @@ client = (ChatClientBuilder(chat_model)
           .default_advisors(QuestionAnswerAdvisor(vector_store=store,
                                                   embedding_model=emb, top_k=2))
           .build())
-print(client.prompt().user("SpringPy 是否支持 XML 与注解混合?").call().content())
+print(client.prompt().user("SpringBootAI 是否支持 XML 与注解混合?").call().content())
 ```
 
 #### 12.11.5 Function Calling 工具调用

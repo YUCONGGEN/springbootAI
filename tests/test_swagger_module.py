@@ -1,4 +1,4 @@
-"""SpringPy Swagger / OpenAPI 注解驱动 API 文档模块测试。
+"""SpringBootAI Swagger / OpenAPI 注解驱动 API 文档模块测试。
 
 覆盖：
 - 注解元数据：@Tag/@Operation/@ApiResponse/@Parameter/@Schema/@SecurityScheme/
@@ -262,7 +262,7 @@ class TestSwaggerConfig:
     def test_defaults(self):
         cfg = SwaggerConfig.from_config({})
         assert cfg.enabled is True
-        assert cfg.title == "SpringPy Application"
+        assert cfg.title == "SpringBootAI Application"
         assert cfg.docs_url == "/docs"
 
     def test_from_config_kebab_case(self):

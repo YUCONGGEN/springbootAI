@@ -25,7 +25,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $repoRoot 'docker-compose.performance.yml'
 $loadScript = Join-Path $PSScriptRoot 'run-load-test.ps1'
 $sliceScript = Join-Path $PSScriptRoot 'run-test-slice-benchmark.ps1'
-$projectName = 'springpy-performance'
+$projectName = 'springbootai-performance'
 $appStarted = $false
 
 try {

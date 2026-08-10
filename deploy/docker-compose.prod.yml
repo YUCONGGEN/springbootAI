@@ -1,12 +1,12 @@
 services:
   mysql:
     image: mysql:8.0
-    container_name: springpy-mysql
+    container_name: springbootai-mysql
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-springpy}
-      MYSQL_USER: ${MYSQL_USER:-springpy}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-springbootai}
+      MYSQL_USER: ${MYSQL_USER:-springbootai}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
     ports:
       - "127.0.0.1:3306:3306"
@@ -28,11 +28,11 @@ services:
       retries: 30
       start_period: 30s
     networks:
-      - springpy-net
+      - springbootai-net
 
   redis:
     image: redis:7-alpine
-    container_name: springpy-redis
+    container_name: springbootai-redis
     restart: always
     command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set} --maxmemory 512mb --maxmemory-policy allkeys-lru --appendonly yes
     ports:
@@ -46,11 +46,11 @@ services:
       retries: 20
       start_period: 10s
     networks:
-      - springpy-net
+      - springbootai-net
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    container_name: springpy-rabbitmq
+    container_name: springbootai-rabbitmq
     restart: always
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
@@ -68,11 +68,11 @@ services:
       retries: 20
       start_period: 30s
     networks:
-      - springpy-net
+      - springbootai-net
 
   nacos:
     image: nacos/nacos-server:v2.5.1
-    container_name: springpy-nacos
+    container_name: springbootai-nacos
     restart: always
     environment:
       MODE: standalone
@@ -84,7 +84,7 @@ services:
       MYSQL_SERVICE_HOST: mysql
       MYSQL_SERVICE_PORT: 3306
       MYSQL_SERVICE_DB_NAME: ${NACOS_DB_NAME:-nacos_config}
-      MYSQL_SERVICE_USER: ${MYSQL_USER:-springpy}
+      MYSQL_SERVICE_USER: ${MYSQL_USER:-springbootai}
       MYSQL_SERVICE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set}
     ports:
       - "127.0.0.1:8848:8848"
@@ -101,7 +101,7 @@ services:
       retries: 30
       start_period: 60s
     networks:
-      - springpy-net
+      - springbootai-net
 
 volumes:
   mysql_data:
@@ -114,5 +114,5 @@ volumes:
     driver: local
 
 networks:
-  springpy-net:
+  springbootai-net:
     driver: bridge

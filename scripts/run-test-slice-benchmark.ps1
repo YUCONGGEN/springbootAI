@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $repoRoot 'docker-compose.performance.yml'
-$projectName = 'springpy-test-slice-benchmark'
+$projectName = 'springbootai-test-slice-benchmark'
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $resultName = "test-slice-assembly-$timestamp.json"
 $resultContainerPath = "/results/$resultName"

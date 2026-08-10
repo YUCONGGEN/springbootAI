@@ -1,4 +1,4 @@
-"""SpringPy 测试切片模块（对齐 Spring Boot ``@SpringBootTest``/``@WebMvcTest``/``@DataJpaTest``）。
+"""SpringBootAI 测试切片模块（对齐 Spring Boot ``@SpringBootTest``/``@WebMvcTest``/``@DataJpaTest``）。
 
 模块组成（``spring.test.slicing``）：
 - ``SpringBootTest``：全量应用上下文，对齐 ``@SpringBootTest``。

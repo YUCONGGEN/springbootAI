@@ -59,14 +59,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Start benchmark application
-        run: docker compose -p springpy-performance -f docker-compose.performance.yml up -d --build --wait app
+        run: docker compose -p springbootai-performance -f docker-compose.performance.yml up -d --build --wait app
 
       - name: Run threshold-gated k6 profile
-        run: docker compose -p springpy-performance -f docker-compose.performance.yml run --rm --no-deps k6
+        run: docker compose -p springbootai-performance -f docker-compose.performance.yml run --rm --no-deps k6
 
       - name: Collect application logs
         if: failure()
-        run: docker compose -p springpy-performance -f docker-compose.performance.yml logs --no-color app
+        run: docker compose -p springbootai-performance -f docker-compose.performance.yml logs --no-color app
 
       - name: Upload performance result
         if: always()
@@ -78,4 +78,4 @@ jobs:
 
       - name: Stop benchmark application
         if: always()
-        run: docker compose -p springpy-performance -f docker-compose.performance.yml down --remove-orphans
+        run: docker compose -p springbootai-performance -f docker-compose.performance.yml down --remove-orphans

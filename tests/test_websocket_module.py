@@ -1,4 +1,4 @@
-"""SpringPy WebSocket 实时通信模块测试 —— 覆盖 WebSocketSession / WebSocketHandler /
+"""SpringBootAI WebSocket 实时通信模块测试 —— 覆盖 WebSocketSession / WebSocketHandler /
 @ServerEndpoint / @MessageMapping / @SendTo / broker / router 全链路。
 
 对齐 tests/test_i18n_module.py 的 pytest + Starlette TestClient 风格。

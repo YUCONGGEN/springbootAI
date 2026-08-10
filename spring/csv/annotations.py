@@ -1,4 +1,4 @@
-"""SpringPy CSV 注解 —— 字段/类级映射元数据。
+"""SpringBootAI CSV 注解 —— 字段/类级映射元数据。
 
 设计原则：**复用项目既有范式，不重复造轮子**。本模块的字段级注解完全镜像 Excel 模块
 ``spring/excel/annotations.py`` 的 ``@ExcelProperty`` / ``@ExcelIgnore`` / ``@excel_sheet``

@@ -1,4 +1,4 @@
-"""SpringPy Bean Validation 异常定义。
+"""SpringBootAI Bean Validation 异常定义。
 
 设计对齐 Jakarta Bean Validation（Hibernate Validator）的错误语义：
 - ``ValidationError``：校验失败时抛出的汇总异常，包含全部约束违反。

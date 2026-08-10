@@ -1,4 +1,4 @@
-"""SpringPy Bean Validation 验证器。
+"""SpringBootAI Bean Validation 验证器。
 
 ``BeanValidator`` 反射实体类的字段约束（``Constraint`` 描述符或 ``__bean_constraint__``
 函数装饰器），对一个对象实例执行全部约束校验，收集 ``ConstraintViolation``。

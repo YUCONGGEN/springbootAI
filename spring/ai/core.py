@@ -1,5 +1,5 @@
 """
-SpringPy AI 核心抽象 - 对齐 Spring AI 的 ChatClient / ChatModel / EmbeddingModel / Advisor。
+SpringBootAI AI 核心抽象 - 对齐 Spring AI 的 ChatClient / ChatModel / EmbeddingModel / Advisor。
 
 设计原则：
 - 模型调用层 (ChatModel/EmbeddingModel) 屏蔽 Provider 差异，底层可走 LangChain 或原生 HTTP

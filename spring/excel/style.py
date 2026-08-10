@@ -1,4 +1,4 @@
-"""SpringPy Excel 默认样式 —— 轻量表头/内容样式（基于 openpyxl）。
+"""SpringBootAI Excel 默认样式 —— 轻量表头/内容样式（基于 openpyxl）。
 
 仅在 writer 实际写入时使用，且为可选项。样式名通过 ``@ExcelSheet(head_style=...)`` 或
 ``@ExcelProperty(head_style=...)`` 指定；未指定时使用 ``DEFAULT_HEAD``。
@@ -30,7 +30,7 @@ def get_head_style(name: str = "default"):
         Font, PatternFill, Alignment, Border, Side = _require_openpyxl()
     except ImportError:
         raise ExcelDependencyError(
-            "Excel 写入依赖 openpyxl，请先安装：pip install springpy[excel]"
+            "Excel 写入依赖 openpyxl，请先安装：pip install springbootAI[excel]"
         )
     key = f"head::{name}"
     if key in _STYLE_CACHE:
@@ -54,7 +54,7 @@ def get_content_style(name: str = "default"):
         Font, PatternFill, Alignment, Border, Side = _require_openpyxl()
     except ImportError:
         raise ExcelDependencyError(
-            "Excel 写入依赖 openpyxl，请先安装：pip install springpy[excel]"
+            "Excel 写入依赖 openpyxl，请先安装：pip install springbootAI[excel]"
         )
     key = f"content::{name}"
     if key in _STYLE_CACHE:

@@ -1,4 +1,4 @@
-"""SpringPy Excel 注解 —— 字段/类级映射元数据。
+"""SpringBootAI Excel 注解 —— 字段/类级映射元数据。
 
 设计原则：**复用项目既有范式，不重复造轮子**。本模块的字段级注解完全镜像 ORM 层
 ``spring/orm/ddl_auto.py`` 的 ``Column`` / ``Id`` / ``@entity`` 元数据描述符范式：

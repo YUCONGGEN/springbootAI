@@ -1,4 +1,4 @@
-"""SpringPy CSV 模块异常定义。
+"""SpringBootAI CSV 模块异常定义。
 
 设计对齐 Excel 模块（``spring.excel.exceptions``）的错误语义：注解配置错误、读写过程错误
 均通过本模块的异常抛出，便于上层统一捕获。

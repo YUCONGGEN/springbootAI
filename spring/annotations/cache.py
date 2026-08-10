@@ -1,4 +1,4 @@
-"""SpringPy 缓存增强注解 —— 对齐 Spring Cache 抽象的完整操作族。
+"""SpringBootAI 缓存增强注解 —— 对齐 Spring Cache 抽象的完整操作族。
 
 本模块在既有 ``@Cacheable``（``spring.annotations.core.Cacheable``）基础上补齐 Spring Cache
 剩余四个核心注解，复用同一 ``SpringAnnotation`` 元数据范式：

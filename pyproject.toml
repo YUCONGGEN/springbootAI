@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel>=0.37"]
 build-backend = "setuptools.build_meta"
 
 # ========================================
-# SpringPy 项目元数据与依赖声明（PEP 621）
+# SpringBootAI 项目元数据与依赖声明（PEP 621）
 # 本文件是依赖的单一真实来源，类似 Spring Boot 的 pom.xml
 # 版本锁定策略：所有直接依赖使用 == 精确锁定
 # 实验性 HTTP 补偿协调器不提供 Seata AT 语义；生产分布式事务需要真实协调器
@@ -36,7 +36,7 @@ requires-python = ">=3.10"
 
 # ========================================
 # 核心依赖 - 类似 Spring Boot Starter Web/Core
-# 安装：pip install springpy
+# 安装：pip install springbootAI
 # ========================================
 dependencies = [
     "fastapi==0.141.1",
@@ -89,13 +89,13 @@ ast = ["sqlglot==27.28.1"]
 
 # ========================================
 # Excel 注解驱动读写 - 类似 alibaba EasyExcel
-# 安装：pip install springpy[excel]
+# 安装：pip install springbootAI[excel]
 # ========================================
 excel = ["openpyxl==3.1.5"]
 
 # ========================================
-# SpringPy AI 模块 - 对齐 Spring AI（ChatClient/Advisor/ETL/Tools）
-# 安装：pip install springpy[ai]
+# SpringBootAI AI 模块 - 对齐 Spring AI（ChatClient/Advisor/ETL/Tools）
+# 安装：pip install springbootAI[ai]
 # AI 模块采用"可选依赖 + 降级"设计：未安装仍可用（降级原生 HTTP + FakeChatModel）
 # 依赖清单同步自 requirements-ai.txt（所有版本号 == 已测试验证）
 # ========================================
@@ -152,7 +152,7 @@ Homepage = "https://github.com/YUCONGGEN/springboot_cloud_python"
 Repository = "https://github.com/YUCONGGEN/springboot_cloud_python.git"
 
 [project.scripts]
-springpy = "spring.main:run_cli"
+springbootai = "spring.main:run_cli"
 
 [tool.setuptools.packages.find]
 include = ["spring*"]

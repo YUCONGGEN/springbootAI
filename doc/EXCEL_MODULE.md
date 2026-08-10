@@ -1,13 +1,13 @@
-# SpringPy Excel 模块使用报告
+# SpringBootAI Excel 模块使用报告
 
-> 注解驱动的 Excel 读写，对齐 alibaba EasyExcel，复用 SpringPy 框架既有注解范式。
-> 模块版本：`spring.excel` 1.0.0 ｜ 框架版本：SpringPy 1.6.1
+> 注解驱动的 Excel 读写，对齐 alibaba EasyExcel，复用 SpringBootAI 框架既有注解范式。
+> 模块版本：`spring.excel` 1.0.0 ｜ 框架版本：SpringBootAI 1.6.1
 
 ---
 
 ## 一、模块概述
 
-`spring.excel` 是 SpringPy 框架的可选模块，提供 **注解驱动** 的 Excel 读写能力，API 与
+`spring.excel` 是 SpringBootAI 框架的可选模块，提供 **注解驱动** 的 Excel 读写能力，API 与
 [alibaba EasyExcel](https://github.com/alibaba/easyexcel) 对齐，让"实体类 ↔ Excel"的映射像 ORM 一样声明式完成。
 
 **设计原则：复用项目既有范式，不重复造轮子。** 字段级注解完全镜像 ORM 层
@@ -38,15 +38,15 @@
 Excel 引擎是**可选依赖**，按需安装（不安装不影响框架核心与注解声明）：
 
 ```bash
-pip install springpy-framework[excel]      # 推荐：经 extras 安装，自动装 openpyxl==3.1.5
+pip install springbootAI[excel]      # 推荐：经 extras 安装，自动装 openpyxl==3.1.5
 # 或
 pip install -r requirements-excel.txt
 # 或
 pip install openpyxl==3.1.5
 ```
 
-> 同时，本次发布还为 **AI 模块**补齐了单独安装能力：`pip install springpy-framework[ai]`。
-> 一键全量安装：`pip install springpy-framework[full]`。
+> 同时，本次发布还为 **AI 模块**补齐了单独安装能力：`pip install springbootAI[ai]`。
+> 一键全量安装：`pip install springbootAI[full]`。
 
 ---
 
@@ -204,13 +204,13 @@ EasyExcel.read("multi.xlsx", head=DemoUser).sheet(sheet_no=0).doRead()
 | **表头行可配置** | `head_row_number` 支持表头不在第 1 行（前置说明行场景）。 |
 | **样式** | 默认表头加粗居中+填充+边框、冻结表头、自适应列宽；支持 `width`/`num_format`。 |
 | **流式 API** | `EasyExcel.read(...).head_row_number(...).sheet(...).doRead()`，对齐 alibaba EasyExcel。 |
-| **可选依赖降级** | 注解声明无需 openpyxl；未安装时 read/write 抛 `ExcelDependencyError` 提示 `pip install springpy-framework[excel]`。 |
+| **可选依赖降级** | 注解声明无需 openpyxl；未安装时 read/write 抛 `ExcelDependencyError` 提示 `pip install springbootAI[excel]`。 |
 
 ---
 
 ## 六、与 Java EasyExcel 的差异与限制
 
-| 维度 | Java EasyExcel | SpringPy Excel | 说明 |
+| 维度 | Java EasyExcel | SpringBootAI Excel | 说明 |
 |------|----------------|----------------|------|
 | 注解载体 | Java 注解（编译期） | Python 描述符/装饰符（运行时反射） | 复用 ORM `Column` 范式，无原生注解。 |
 | 字段声明 | 反射字段 | 类属性标记或 `__init__` 参数 | 无类属性时自动回退到 `__init__` 参数。 |
@@ -221,7 +221,7 @@ EasyExcel.read("multi.xlsx", head=DemoUser).sheet(sheet_no=0).doRead()
 
 ---
 
-## 七、与 SpringPy 框架的集成
+## 七、与 SpringBootAI 框架的集成
 
 - **注解范式一致**：Excel 注解与 ORM `@entity`/`@Column` 同属"映射元数据"族，复用 `cls.__dict__` + MRO 反射，不侵入 DI/AOP 注解通道（`__spring_annotations__`）。
 - **可选安装**：通过 `pyproject.toml` 的 `[project.optional-dependencies]` extras 单独安装，`spring.excel` 不在 `spring/__init__.py` 顶层导出，保持核心包轻量。
@@ -245,7 +245,7 @@ EasyExcel.read("multi.xlsx", head=DemoUser).sheet(sheet_no=0).doRead()
 运行：
 
 ```bash
-pip install springpy-framework[excel]      # 或 pip install openpyxl==3.1.5
+pip install springbootAI[excel]      # 或 pip install openpyxl==3.1.5
 pytest tests/test_excel_module.py -v
 ```
 

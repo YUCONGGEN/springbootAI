@@ -1,4 +1,4 @@
-"""SpringPy Bean Validation 约束注解 —— 字段级描述符。
+"""SpringBootAI Bean Validation 约束注解 —— 字段级描述符。
 
 设计原则：**复用项目既有范式，不重复造轮子**。本模块的字段级约束完全镜像 ORM 层
 ``spring/orm/ddl_auto.py`` 的 ``Column``/``Id`` 与 Excel 层 ``spring/excel/annotations.py``

@@ -1,4 +1,4 @@
-"""SpringPy Spring Data 仓库抽象测试 —— 覆盖 Pageable/Page/Sort、Specification、
+"""SpringBootAI Spring Data 仓库抽象测试 —— 覆盖 Pageable/Page/Sort、Specification、
 PagingAndSortingRepository 的 CRUD/分页/排序/动态查询。
 
 对齐 tests/test_jpa_version_transient.py 的 pytest + 内存 sqlite 风格。复用

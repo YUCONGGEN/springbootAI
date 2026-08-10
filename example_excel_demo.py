@@ -1,8 +1,8 @@
-"""SpringPy Excel 模块端到端演示（可独立运行）。
+"""SpringBootAI Excel 模块端到端演示（可独立运行）。
 
 运行::
 
-    pip install springpy[excel]      # 或 pip install openpyxl==3.1.5
+    pip install springbootAI[excel]      # 或 pip install openpyxl==3.1.5
     python example_excel_demo.py
 
 演示内容：

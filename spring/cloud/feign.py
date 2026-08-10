@@ -368,7 +368,7 @@ def create_feign_client(service_name: str, path: str = "", url: str = "",
 def create_declared_feign_client(client_class: Type, annotation: Any) -> Any:
     """Create a typed proxy from a ``@FeignClient`` class declaration.
 
-    Method mappings use the same SpringPy ``@RequestMapping`` family as web
+    Method mappings use the same SpringBootAI ``@RequestMapping`` family as web
     controllers.  The generated object subclasses the declaration class, so
     normal type-based IoC injection and ``isinstance`` checks continue to work.
     """

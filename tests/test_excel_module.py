@@ -1,4 +1,4 @@
-"""SpringPy Excel 模块测试 —— 覆盖注解/转换器/读写引擎/多 sheet/大数字/降级/round-trip。
+"""SpringBootAI Excel 模块测试 —— 覆盖注解/转换器/读写引擎/多 sheet/大数字/降级/round-trip。
 
 使用真实 openpyxl 读写临时 xlsx 文件做 round-trip 验证，不依赖网络。
 对齐 tests/test_ai_module.py 的 pytest 风格（class TestXxx + test_* 方法）。

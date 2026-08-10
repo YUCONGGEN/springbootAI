@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $repoRoot 'docker-compose.performance.yml'
-$projectName = 'springpy-performance-recovery'
+$projectName = 'springbootai-performance-recovery'
 $targetUrl = 'http://127.0.0.1:8088/benchmark/async'
 $env:APP_WORKERS = [string][Math]::Max(2, $Workers)
 

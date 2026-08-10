@@ -1,4 +1,4 @@
-"""Contract coverage for SpringPy, Cloud and PyMyBatis annotations."""
+"""Contract coverage for SpringBootAI, Cloud and PyMyBatis annotations."""
 
 import asyncio
 import sys

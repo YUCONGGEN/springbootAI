@@ -1,4 +1,4 @@
-"""A deterministic SpringPy application used by the k6 load profiles."""
+"""A deterministic SpringBootAI application used by the k6 load profiles."""
 
 import asyncio
 import hashlib
@@ -394,7 +394,7 @@ class BenchmarkMessageEndpoint:
     bearer_format="JWT",
     description="Benchmark-only authentication scheme",
 )
-@Tag(name="SpringPy Benchmark", description="Framework feature performance paths")
+@Tag(name="SpringBootAI Benchmark", description="Framework feature performance paths")
 @RequestMapping("/benchmark")
 @RestController
 class BenchmarkController:

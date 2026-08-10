@@ -1,5 +1,5 @@
 # ========================================
-# SpringPy Excel 模块可选依赖（精确锁定版本）
+# SpringBootAI Excel 模块可选依赖（精确锁定版本）
 # ========================================
 # Excel 模块采用"可选依赖 + 降级"设计：
 #   - 未安装本文件任何依赖时，注解声明（@ExcelProperty/@ExcelIgnore/@excel_sheet）仍可用
@@ -7,7 +7,7 @@
 #
 # 安装方式（按需）：
 #   pip install -r requirements-excel.txt   # 全量
-#   pip install springpy[excel]             # 经 extras 安装（推荐）
+#   pip install springbootAI[excel]             # 经 extras 安装（推荐）
 #   pip install openpyxl==3.1.5             # 仅核心引擎
 #
 # 推荐 Python: 3.10+（与框架 requires-python 一致）

@@ -1,8 +1,8 @@
-# SpringPy Cloud 模块使用指南
+# SpringBootAI Cloud 模块使用指南
 
 > 对齐 Spring Cloud Alibaba：服务注册发现 / 配置中心动态刷新 / Feign 远程调用 / Sentinel 限流熔断 / Gateway / 负载均衡 / 分布式事务。
 > 本文档从 README.md 第 5.10 节（Cloud 注解）与第 14.3 节（功能说明）分离而来。
-> 框架版本：SpringPy 1.6.1
+> 框架版本：SpringBootAI 1.6.1
 
 ---
 

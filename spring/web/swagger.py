@@ -1,4 +1,4 @@
-"""SpringPy Swagger / OpenAPI 注解驱动 API 文档模块。
+"""SpringBootAI Swagger / OpenAPI 注解驱动 API 文档模块。
 
 对齐 SpringDoc OpenAPI 3 注解体系（``@Tag``/``@Operation``/``@ApiResponse``/
 ``@Parameter``/``@Schema``/``@SecurityScheme``/``@SecurityRequirement``），
@@ -243,7 +243,7 @@ class SwaggerConfig:
     """
 
     enabled: bool = True
-    title: str = "SpringPy Application"
+    title: str = "SpringBootAI Application"
     description: str = ""
     version: str = "1.0.0"
     terms_of_service: str = ""
@@ -294,7 +294,7 @@ class SwaggerConfig:
 
         return cls(
             enabled=bool(_get("enabled", True)),
-            title=_opt("title", "SpringPy Application"),
+            title=_opt("title", "SpringBootAI Application"),
             description=_opt("description", ""),
             version=_opt("version", "1.0.0"),
             terms_of_service=_opt("terms-of-service", ""),

@@ -1,11 +1,11 @@
-# SpringPy 框架综合测试报告
+# SpringBootAI 框架综合测试报告
 
 **测试日期**: 2026-08-08（Excel 模块补充测试 2026-08-09；TOP5 注解模块测试 2026-08-09；P0/P1/P2 八大模块测试 2026-08-09；Swagger/OpenAPI 模块测试 2026-08-09）
 **测试环境**: macOS + Python 3.9.6 + Docker ｜ Excel/TOP5/八大模块/Swagger 补充测试：Windows + Python 3.11.9 + openpyxl 3.1.5
-**框架版本**: SpringPy 1.8.0 / PyMyBatis 1.4.0 / SpringPy AI 1.3.0 / SpringPy Excel 1.0.0 / SpringPy Validation 1.0.0 / SpringPy CSV 1.0.0 / SpringPy Data 1.0.0 / SpringPy i18n 1.0.0 / SpringPy WebSocket 1.0.0 / SpringPy Swagger 1.0.0
+**框架版本**: SpringBootAI 1.8.0 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
 **测试结果**: ✅ **1246 个用例全部通过**（29 个测试套件，0 失败）；example_all 集成测试 4/5 套件通过（HTTP API 套件需 MySQL/Docker 环境，Windows 无 Docker 时跳过，非框架回归问题）
 
-> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringPy 1.5.0 / PyMyBatis 1.4.0）。
+> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 1.5.0 / PyMyBatis 1.4.0）。
 >
 > **2026-08-09 TOP5 注解模块增量**：补齐 Bean Validation / JPA @Version·@Transient / 条件装配 / 缓存增强 / CSV 注解 5 个模块的测试套件（共 166 用例），并修复 4 处生产代码缺陷（见第六节）。
 >
@@ -22,7 +22,7 @@
 | 组件 | 版本 | 状态 |
 |------|------|------|
 | Python | 3.9.6 | ✅ |
-| SpringPy | 1.5.0 | ✅ |
+| SpringBootAI | 1.5.0 | ✅ |
 | PyMyBatis（内嵌ORM） | 1.4.0 | ✅ |
 | MySQL（Docker） | 8.0.46 | ✅ 运行中（端口 3306，springpy 库已就绪） |
 | Redis（Docker） | 7-alpine | ✅ 运行中（healthy，PONG） |
@@ -71,19 +71,19 @@
 |---|---------|--------|---------|------|
 | 13 | test_annotation_combinations.py | 28 | 组合注解（类级组合/方法级AOP四合一/重复注解/安全+Web跨层/Cloud组合/异步+调度/声明顺序保持/继承隔离/Configuration+Bean 多方法） | ✅ 全部通过 |
 
-### SpringPy AI 模块测试套件（1 个文件，87 个用例）
+### SpringBootAI AI 模块测试套件（1 个文件，87 个用例）
 
 | # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
 |---|---------|--------|---------|------|
-| 14 | test_ai_module.py | 87 | SpringPy AI（核心抽象/ChatClient链式API/Provider配置/会话记忆InMemory+Redis/VectorStore余弦检索/ETL切片/ToolRegistry函数调用/Advisor-RAG+Memory+Logger+顺序/AI注解/AutoConfig装配/RAG流水线/多轮对话 + 企业级缺口：Function Calling闭环/熔断重试韧性/真流式SSE+async/Prometheus观测/RedisVectorStore持久化 + 类型化配置绑定AIProperties：env覆盖/类型转换/嵌套递归 + Redis封装复用：框架RedisClient接口统一/原生降级/TTL修复/全局单例自动复用 + P1 企业级修复：AI_ALLOW_FAKE生产开关/熔断指标provider透传/流式重试降级/RedisVectorStore max_scan分页/AICircuitBreaker Redis持久化跨实例共享 + 优化修复：流式记忆持久化/统一HTTP重试瞬态分类/RAG Prompt注入加固 + 多厂商LangChain化：DeepSeek/Moonshot/ZhipuAI 经 OpenAICompatChatModel 接入 LangChain 优先+HTTP降级/工具注入/流式/自动装配 + LangChain优先切片委托：TokenTextSplitter/CharacterTextSplitter 经 langchain-text-splitters 实现并补齐 chunk_index，未装自动降级内置 + LangChainVectorStore 向量库适配器） | ✅ 全部通过 |
+| 14 | test_ai_module.py | 87 | SpringBootAI AI（核心抽象/ChatClient链式API/Provider配置/会话记忆InMemory+Redis/VectorStore余弦检索/ETL切片/ToolRegistry函数调用/Advisor-RAG+Memory+Logger+顺序/AI注解/AutoConfig装配/RAG流水线/多轮对话 + 企业级缺口：Function Calling闭环/熔断重试韧性/真流式SSE+async/Prometheus观测/RedisVectorStore持久化 + 类型化配置绑定AIProperties：env覆盖/类型转换/嵌套递归 + Redis封装复用：框架RedisClient接口统一/原生降级/TTL修复/全局单例自动复用 + P1 企业级修复：AI_ALLOW_FAKE生产开关/熔断指标provider透传/流式重试降级/RedisVectorStore max_scan分页/AICircuitBreaker Redis持久化跨实例共享 + 优化修复：流式记忆持久化/统一HTTP重试瞬态分类/RAG Prompt注入加固 + 多厂商LangChain化：DeepSeek/Moonshot/ZhipuAI 经 OpenAICompatChatModel 接入 LangChain 优先+HTTP降级/工具注入/流式/自动装配 + LangChain优先切片委托：TokenTextSplitter/CharacterTextSplitter 经 langchain-text-splitters 实现并补齐 chunk_index，未装自动降级内置 + LangChainVectorStore 向量库适配器） | ✅ 全部通过 |
 
-### SpringPy Excel 模块测试套件（1 个文件，42 个用例）
+### SpringBootAI Excel 模块测试套件（1 个文件，42 个用例）
 
 | # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
 |---|---------|--------|---------|------|
-| 15 | test_excel_module.py | 42 | SpringPy Excel（注解元数据解析：@ExcelProperty/@ExcelIgnore/@excel_sheet/order/index覆盖/无注解回退/函数装饰器形式/全忽略抛错；转换器：int/float/bool/str/date/Decimal双向转换+按类型自动选择+Optional[T]+显式覆盖+日期格式注入+自定义Converter round-trip；读写round-trip：完整写读/大数字字符串保留17位防丢精度/@ExcelIgnore跳过/表头顺序/纯__init__模型回退/便捷函数/空行跳过；多sheet：写多sheet/doReadAll/按名称索引读/不存在sheet抛错；配置与降级：表头非首行/流式构建器返回self/无head抛错/openpyxl缺失抛ExcelDependencyError/注解无需openpyxl；样式与格式：冻结表头+表头加粗/num_format应用/自定义列宽） | ✅ 全部通过 |
+| 15 | test_excel_module.py | 42 | SpringBootAI Excel（注解元数据解析：@ExcelProperty/@ExcelIgnore/@excel_sheet/order/index覆盖/无注解回退/函数装饰器形式/全忽略抛错；转换器：int/float/bool/str/date/Decimal双向转换+按类型自动选择+Optional[T]+显式覆盖+日期格式注入+自定义Converter round-trip；读写round-trip：完整写读/大数字字符串保留17位防丢精度/@ExcelIgnore跳过/表头顺序/纯__init__模型回退/便捷函数/空行跳过；多sheet：写多sheet/doReadAll/按名称索引读/不存在sheet抛错；配置与降级：表头非首行/流式构建器返回self/无head抛错/openpyxl缺失抛ExcelDependencyError/注解无需openpyxl；样式与格式：冻结表头+表头加粗/num_format应用/自定义列宽） | ✅ 全部通过 |
 
-### SpringPy TOP5 注解模块测试套件（5 个文件，166 个用例）
+### SpringBootAI TOP5 注解模块测试套件（5 个文件，166 个用例）
 
 > 2026-08-09 新增。补齐缺失注解模块分析中推荐的 TOP5：Bean Validation 字段约束、JPA @Version/@Transient、条件装配、缓存增强、CSV 注解。每个模块独立测试套件，均 ≥10 用例。
 
@@ -95,7 +95,7 @@
 | 19 | test_cache_annotations.py | 25 | 缓存增强（元数据：CachePut/CacheEvict/CacheConfig/Caching 构造；@Cacheable 回归：命中/miss/condition 跳过；@CachePut：总是执行+写缓存+跨方法更新 @Cacheable 条目/condition 参数名/取反/callable；@CacheEvict：按 key 跨方法失效/all_entries 清空/异常不失效/before_invocation 时序；@CacheConfig 默认命名空间回退/显式覆盖；@Caching 组合 put+evict/cacheable→put→evict 顺序） | ✅ 全部通过 |
 | 20 | test_csv_module.py | 46 | CSV 注解（元数据：@CsvProperty/@CsvIgnore/@csv_file 描述符+函数装饰器/header 回退；parse_csv_columns：order 排序/index 覆盖/ignore/全忽略抛错/回退 __init__/类型注解；转换器：int/float/bool tokens/date/Decimal/自定义/CsvConverter 别名；CsvReader：表头匹配/位置匹配/跳空行/自定义分隔符/类型转换/大数 Decimal/date_format/自定义转换器/文件路径/转换错误；CsvWriter：表头顺序/无表头/big_number/date_format/dict/分隔符/None·bool/文件路径；round-trip：完整/无表头位置/流式链） | ✅ 全部通过 |
 
-### SpringPy P0/P1/P2 八大模块测试套件（8 个文件，342 个用例）
+### SpringBootAI P0/P1/P2 八大模块测试套件（8 个文件，342 个用例）
 
 > 2026-08-09 新增。补齐缺失注解模块分析中推荐的 P0 三项 / P1 三项 / P2 两项，覆盖 Spring Data Repository 抽象、Actuator 运维端点、多数据源读写分离、事务事件监听、配置松散绑定与校验、测试切片、i18n 国际化、WebSocket 实时通信。每个模块独立测试套件，均 ≥10 用例。
 
@@ -110,7 +110,7 @@
 | 27 | test_i18n_module.py | 88 | P2-7 i18n 国际化（Locale：大小写规范化/parse 下划线·BCP47/空 locale/to_string Java 风格/to_language_tag BCP47/相等哈希/matches 前缀/预定义常量；properties 解析：KV/分隔符变体/注释/续行/转义/Unicode/UTF-8 中文；StaticMessageSource：增删查/locale 回退语言/默认 locale/精确覆盖/字典参数/MessageFormat 类型子模式剥离/格式失败容错/批量/useCodeAsDefault；父级委派：parent fallback/child override/DelegatingMessageSource；MessageSourceResolvable：首匹配 code/default/raise/dict args；ResourceBundleMessageSource：默认 bundle/精确 locale/语言回退/默认回退/YAML bundle/多 basename；LocaleResolver：AcceptHeader 解析 q 值/SupportedLocales/Fixed/Session/Cookie；LocaleContextHolder ContextVar；MessageSourceAccessor；中间件集成：Accept-Language 设置 locale context/request state；自动配置） | ✅ 全部通过 |
 | 28 | test_websocket_module.py | 63 | P2-8 WebSocket 实时通信（WebSocketSession：send_text/send_bytes/close/is_closed/属性；SessionRegistry 注册/解绑/按用户/广播；@ServerEndpoint：on_open/on_message/on_close/on_error/路径注册/AnnotatedEndpointHandler 反射调度；@MessageMapping/@SendTo/@SendToUser/@SubscribeMapping 元数据/collect_message_mappings/MessageMappingModel；InMemoryBroker：subscribe/unsubscribe/publish 到订阅者/send_to_user/broadcast/SimpMessageSendingOperations；MessageEndpointDispatcher：路由消息到 @MessageMapping 方法/@SendTo 广播/@SendToUser 单播；WebSocketRouter：add_endpoint/install 到 FastAPI/Starlette 集成/TestClient echo round-trip/连接关闭清理） | ✅ 全部通过 |
 
-### SpringPy Swagger / OpenAPI 模块测试套件（1 个文件，43 个用例）
+### SpringBootAI Swagger / OpenAPI 模块测试套件（1 个文件，43 个用例）
 
 > 2026-08-09 新增。对齐 SpringDoc OpenAPI 3 注解体系 + Swagger 2 别名，注解驱动 API 文档。复用 FastAPI 自带 OpenAPI 生成，无新增第三方依赖。
 
@@ -276,7 +276,7 @@
 | 顺序与继承 | 4 | 声明顺序（自底向上）严格保持；子类组合不泄漏到父类；六注解叠加计数与类型；组合中各注解元数据互不干扰 |
 | Configuration+Bean | 2 | @Configuration+多 @Bean 方法（不同 scope/init/destroy）；@Controller+@Autowired 构造器+多 @GetMapping 方法 |
 
-### 3.10 SpringPy AI 模块（87 个测试覆盖，test_ai_module.py）
+### 3.10 SpringBootAI AI 模块（87 个测试覆盖，test_ai_module.py）
 
 | 模块 | 测试数 | 验证内容 |
 |------|--------|---------|
@@ -366,7 +366,7 @@
 | DDL Auto专项 | 5模式+@entity/@table/@Id/@Column | 22用例 | ✅ |
 | 注解契约 | 全部注解 | 11用例 | ✅ |
 | 组合注解 | 8类组合场景 | 28用例 | ✅ |
-| SpringPy AI | 4注解+12模块+5企业能力+类型化配置绑定+Redis封装统一+LangChain切片委托+向量库适配器 | 87用例 | ✅ |
+| SpringBootAI AI | 4注解+12模块+5企业能力+类型化配置绑定+Redis封装统一+LangChain切片委托+向量库适配器 | 87用例 | ✅ |
 | Bean Validation | 14约束+@BeanValidate | 30用例 | ✅ |
 | JPA @Version/@Transient | @Version/@Transient+OptimisticLockExecutor | 20用例 | ✅ |
 | 条件装配 | @Conditional/@ConditionalOnProperty/OnBean/OnMissingBean/OnClass | 45用例 | ✅ |
@@ -391,7 +391,7 @@
 2. **test_ddl_auto.py 重写为标准 pytest 套件**：原文件为脚本式（共享状态、2 个用例在 pytest 下报 fixture 缺失错误），重写为 22 个自包含用例，覆盖 create/update/validate/none/create-drop 全部模式、@entity/@table/@Id/@Column/@column/@id_column 注解、MySQL/PostgreSQL/SQLite 三方言 SQL 生成、类型映射、索引、dataclass 实体、注册去重、init_ddl_auto 配置驱动。
 3. **test_annotations_contract.py 补充 2 个用例**：原 9 个用例不满足“≥10”下限，新增“多注解叠加（@Metrics+@AuditLog）”与“@Value/@ConfigurationProperties 默认值绑定”2 个用例，达到 11 个。
 4. **依赖补全**：补装 fastapi/uvicorn/redis/sqlalchemy/PyMySQL/DBUtils/sqlglot/cryptography/bcrypt/prometheus-client/loguru/requests/pika/pydantic/python-dotenv/pytest-cov，使全部测试套件可在干净的 Python 3.9.6 环境运行。
-5. **新增 SpringPy AI 模块（spring/ai/，37 用例）**：对齐 Spring AI 2.0 的 ChatClient/ChatModel/EmbeddingModel/Advisor/ETL 抽象，底层复用 LangChain 生态做模型适配（未安装时降级原生 HTTP）。包含 9 个文件：core（链式 ChatClient+Advisor 调用链）、annotations（@AiClient/@Tool/@AiAdvisor/@AiMemory）、providers（OpenAI兼容+Ollama+Fake测试模型）、advisors（QuestionAnswerAdvisor RAG/MessageChatMemoryAdvisor/SimpleLoggerAdvisor）、memory（InMemory+Redis）、vectorstore（抽象+内存余弦检索）、etl（TextReader/TokenTextSplitter/CharacterTextSplitter）、tools（ToolRegistry 函数调用+签名自动生成 schema）、autoconfig（spring.ai.* 配置装配 Bean）。新增 application.yml 的 spring.ai.* 配置段。测试覆盖核心抽象/链式API/Provider配置/记忆/向量检索/ETL/工具调用/Advisor顺序/AI注解/AutoConfig装配/完整RAG流水线/多轮对话。
+5. **新增 SpringBootAI AI 模块（spring/ai/，37 用例）**：对齐 Spring AI 2.0 的 ChatClient/ChatModel/EmbeddingModel/Advisor/ETL 抽象，底层复用 LangChain 生态做模型适配（未安装时降级原生 HTTP）。包含 9 个文件：core（链式 ChatClient+Advisor 调用链）、annotations（@AiClient/@Tool/@AiAdvisor/@AiMemory）、providers（OpenAI兼容+Ollama+Fake测试模型）、advisors（QuestionAnswerAdvisor RAG/MessageChatMemoryAdvisor/SimpleLoggerAdvisor）、memory（InMemory+Redis）、vectorstore（抽象+内存余弦检索）、etl（TextReader/TokenTextSplitter/CharacterTextSplitter）、tools（ToolRegistry 函数调用+签名自动生成 schema）、autoconfig（spring.ai.* 配置装配 Bean）。新增 application.yml 的 spring.ai.* 配置段。测试覆盖核心抽象/链式API/Provider配置/记忆/向量检索/ETL/工具调用/Advisor顺序/AI注解/AutoConfig装配/完整RAG流水线/多轮对话。
 6. **修复 AI 模块阻碍企业使用的 5 个关键缺口（新增 18 用例，37→55）**：
    - **闭环 Function Calling**：`ChatModel.call()` 基类实现 tool_call 执行闭环（Provider 把模型请求的 tool_calls 放入 `response.metadata['tool_calls']`，基类统一执行→回填 tool 消息→续写，最多 5 轮防死循环）；`OpenAIChatModel._call_via_http` 把 `tool_registry.schemas()` 注入请求体 `tools` 字段并解析响应 tool_calls，assistant 消息携带 tool_calls 元数据以便按 OpenAI 协议重发。
    - **autoconfig 装配 EmbeddingModel + RedisVectorStore**：`configure_ai()` 新增 `aiEmbeddingModel` Bean 装配（含熔断器），VectorStore 注入 EmbeddingModel 实现检索自动嵌入；新增 `RedisVectorStore` 用 Redis hash 持久化文档（`springpy:ai:vectorstore:{collection}` 键），支持跨实例检索与无 client 安全降级，让 RAG 真正自动可用。
@@ -404,7 +404,7 @@
    - **切片器委托 langchain-text-splitters**：`TokenTextSplitter`/`CharacterTextSplitter` 的 `split()` 在安装 `langchain-text-splitters` 时优先委托其 `RecursiveCharacterTextSplitter`/`CharacterTextSplitter`（自动按 `\n\n`/`\n`/空格/标点逐级切分，语义更佳），并把切片结果映射回框架 `TextDocument` 并补齐 `chunk_index` 元数据；未安装时自动降级内置实现，保证开箱即用。overlap 夹紧（`min(overlap, chunk_size-1)`）以兼容 LangChain 约束与框架默认 `chunk_size=30` 场景。已测试 `langchain-text-splitters==0.3.8`（兼容 `langchain-core==0.3.51`），写入 `requirements-ai.txt`。
    - **LangChainVectorStore 向量库适配器**：新增薄适配器，包装 langchain 生态成熟的 `VectorStore`（FAISS/Chroma 等，`add_texts`/`similarity_search_by_vector`），映射为框架统一的 `VectorStore` 接口，不自行实现向量索引与检索。新增测试用 stub 模拟 langchain store 验证 add/add_texts/similarity_search/count 委托与 metadata 透传，以及未传 store 时静默空。
    - 相关文档同步：AI_MODULE.md 的 §6（ETL）新增 LangChain 优先说明与 §6.1 向量存储适配器，模块组成表同步；TEST_REPORT.md 统计更新为 707 用例。
-10. **新增 SpringPy Excel 模块（spring/excel/，42 用例）**：对齐 alibaba EasyExcel 的注解驱动 Excel 读写。**复用项目既有范式不重复造轮子**——字段级 `@ExcelProperty`/`@ExcelIgnore` 镜像 ORM 层 `Column`/`Id` 的元数据描述符范式（`cls.__dict__`+MRO 反射、`__excel_property__` 标记），类级 `@excel_sheet` 镜像 `@entity`。模块组成 7 文件：annotations（注解+列模型解析）、converters（`Converter` 接口+内置 int/float/bool/str/date/Decimal 转换器，按 `__init__` 类型注解自动选择，支持 `Optional[T]`）、reader（表头映射/类型转换/多 sheet/`head_row_number`）、writer（表头/顺序/样式/大数字防丢精度/多 sheet/冻结表头/自适应列宽）、easy_excel（`EasyExcel` 流式构建入口+`read_excel`/`write_excel` 便捷函数）、style（默认表头/内容样式）、exceptions（`ExcelError` 异常族）。功能：注解映射、无注解纯 `__init__` 模型自动回退、自定义转换器、长 ID/大数 >15 位按字符串写入避免 Excel 精度截断、多 sheet 读写、表头非首行、`num_format`/`width`。**可选依赖降级**：注解声明无需 openpyxl，未安装时 read/write 抛 `ExcelDependencyError` 提示 `pip install springpy-framework[excel]`。**打包**：pyproject.toml 新增 `excel` 与 `ai` 两个 optional-dependencies extra（`pip install springpy-framework[excel]` / `pip install springpy-framework[ai]`），`full` 同步纳入；新增 `requirements-excel.txt`。测试 42 用例覆盖注解元数据解析/转换器双向/读写 round-trip/多 sheet/配置降级/样式格式，Python 3.11.9 + openpyxl 3.1.5 全部通过。使用报告见 [EXCEL_MODULE.md](EXCEL_MODULE.md)。
+10. **新增 SpringBootAI Excel 模块（spring/excel/，42 用例）**：对齐 alibaba EasyExcel 的注解驱动 Excel 读写。**复用项目既有范式不重复造轮子**——字段级 `@ExcelProperty`/`@ExcelIgnore` 镜像 ORM 层 `Column`/`Id` 的元数据描述符范式（`cls.__dict__`+MRO 反射、`__excel_property__` 标记），类级 `@excel_sheet` 镜像 `@entity`。模块组成 7 文件：annotations（注解+列模型解析）、converters（`Converter` 接口+内置 int/float/bool/str/date/Decimal 转换器，按 `__init__` 类型注解自动选择，支持 `Optional[T]`）、reader（表头映射/类型转换/多 sheet/`head_row_number`）、writer（表头/顺序/样式/大数字防丢精度/多 sheet/冻结表头/自适应列宽）、easy_excel（`EasyExcel` 流式构建入口+`read_excel`/`write_excel` 便捷函数）、style（默认表头/内容样式）、exceptions（`ExcelError` 异常族）。功能：注解映射、无注解纯 `__init__` 模型自动回退、自定义转换器、长 ID/大数 >15 位按字符串写入避免 Excel 精度截断、多 sheet 读写、表头非首行、`num_format`/`width`。**可选依赖降级**：注解声明无需 openpyxl，未安装时 read/write 抛 `ExcelDependencyError` 提示 `pip install springbootAI[excel]`。**打包**：pyproject.toml 新增 `excel` 与 `ai` 两个 optional-dependencies extra（`pip install springbootAI[excel]` / `pip install springbootAI[ai]`），`full` 同步纳入；新增 `requirements-excel.txt`。测试 42 用例覆盖注解元数据解析/转换器双向/读写 round-trip/多 sheet/配置降级/样式格式，Python 3.11.9 + openpyxl 3.1.5 全部通过。使用报告见 [EXCEL_MODULE.md](EXCEL_MODULE.md)。
 
 11. **新增 TOP5 注解模块测试套件（5 文件，166 用例，2026-08-09）**：补齐缺失注解模块分析中推荐的 TOP5，全部复用既有范式（描述符/`SpringAnnotation`/`comprehensive_aop` 分发/ORM 反射），不引入第三方库：
     - **Bean Validation（test_validation_module.py，30 用例）**：14 个字段约束（`@NotNull`/`@NotBlank`/`@NotEmpty`/`@Size`/`@Min`/`@Max`/`@Positive`族/`@Pattern`/`@Email`/`@AssertTrue`/`@AssertFalse`）作为 `Constraint` 描述符，`BeanValidator` 按 MRO 反射收集并校验，`@BeanValidate` 方法级 AOP 注册到 `comprehensive_aop`（对齐 Jakarta `@Validated`）。
@@ -452,14 +452,14 @@
 
 ## 八、测试结论
 
-SpringPy 1.5.0 框架全部功能和注解测试通过，覆盖：
+SpringBootAI 1.5.0 框架全部功能和注解测试通过，覆盖：
 
 1. **88个注解** - 核心基础(19) + Web层(19) + AOP高级(17) + 安全(3) + Cloud(10) + ORM(8) + 消息(2) + 事件(1) + AI(4) + 其他(5)
 2. **28个功能模块** - DI容器/配置加载/事件发布/重试/Sentinel/Tracer/Seata/Gateway/LoadBalancer/JWT/密码加密/SQL注入检测/DDL Auto/连接池/安全上下文/健康检查 + AI(ChatClient/ChatModel/EmbeddingModel/Advisor/Memory/VectorStore/ETL/Tools/AutoConfig/Provider/注解/集成)
 3. **4个Docker中间件** - MySQL 8.0.46 / Redis 7 / RabbitMQ 3 / Nacos 2.5.1（均已实测连通）
 4. **每个测试套件≥10个用例** - 16个套件共681用例，最少10个，最多83个
 5. **组合注解全覆盖** - 28个用例验证类级/方法级/重复/跨层/Cloud/异步调度/顺序继承/Configuration-Bean 共8类组合场景
-6. **SpringPy AI 模块企业级就绪** - 66个用例验证对齐 Spring AI 2.0 的 ChatClient/Advisor/ETL/Tools 抽象，复用 LangChain 生态模型适配，保留 Spring 风格统一配置与依赖注入；并补齐 5 项企业级能力——Function Calling 闭环（tools 注入+tool_call 循环执行回填续写）、autoconfig 装配 EmbeddingModel+RedisVectorStore（RAG 自动可用）、@Retryable/@CircuitBreaker 韧性（复用框架 AOP 与重试基础设施）、真流式 SSE+async（聊天场景刚需）、Prometheus 观测（复用框架 prometheus 配置，记录调用/token/延迟/熔断状态）；配置读取改造为混合方式——类型化 `AIProperties` dataclass 绑定 + env 覆盖安全网 + 类型注解驱动自动转换，保证 环境变量 > application.yml > 默认值 的优先级；Redis 封装集成断裂修复——`RedisVectorStore` 与 `RedisChatMemory` 统一复用框架 `RedisClient` 封装接口，`configure_ai` 自动复用全局 redis_client 单例，`RedisChatMemory` TTL 修复防止 Redis 无限增长
+6. **SpringBootAI AI 模块企业级就绪** - 66个用例验证对齐 Spring AI 2.0 的 ChatClient/Advisor/ETL/Tools 抽象，复用 LangChain 生态模型适配，保留 Spring 风格统一配置与依赖注入；并补齐 5 项企业级能力——Function Calling 闭环（tools 注入+tool_call 循环执行回填续写）、autoconfig 装配 EmbeddingModel+RedisVectorStore（RAG 自动可用）、@Retryable/@CircuitBreaker 韧性（复用框架 AOP 与重试基础设施）、真流式 SSE+async（聊天场景刚需）、Prometheus 观测（复用框架 prometheus 配置，记录调用/token/延迟/熔断状态）；配置读取改造为混合方式——类型化 `AIProperties` dataclass 绑定 + env 覆盖安全网 + 类型注解驱动自动转换，保证 环境变量 > application.yml > 默认值 的优先级；Redis 封装集成断裂修复——`RedisVectorStore` 与 `RedisChatMemory` 统一复用框架 `RedisClient` 封装接口，`configure_ai` 自动复用全局 redis_client 单例，`RedisChatMemory` TTL 修复防止 Redis 无限增长
 
 **框架已具备企业开发就绪水平，并具备 LLM 应用（RAG/多轮对话/函数调用）开发能力。**
 
@@ -468,10 +468,10 @@ SpringPy 1.5.0 框架全部功能和注解测试通过，覆盖：
 # 第二部分 example_all 集成测试报告
 
 **测试时间**: 2026-08-04  
-**项目**: SpringPy (springboot Python 框架)  
+**项目**: SpringBootAI (springboot Python 框架)  
 **测试范围**: 全注解用例集合 example_all  
 **测试环境**: Docker (MySQL 8.0, Redis 7-alpine, RabbitMQ 3-management-alpine), Prometheus 内嵌  
-**测试结果**: **5/5 测试套件通过**；框架版本已升级至 SpringPy 1.5.0 / PyMyBatis 1.4.0，新增27个Cloud新功能测试全部通过；历史集成报告覆盖 27 个 API 端点，当前测试脚本另含 9 个框架兼容性探针
+**测试结果**: **5/5 测试套件通过**；框架版本已升级至 SpringBootAI 1.5.0 / PyMyBatis 1.4.0，新增27个Cloud新功能测试全部通过；历史集成报告覆盖 27 个 API 端点，当前测试脚本另含 9 个框架兼容性探针
 
 ## 一、测试结论
 
@@ -702,7 +702,7 @@ python test_all_features.py
 
 ---
 
-# 第三部分 企业生产就绪评估（SpringPy / PyMyBatis）
+# 第三部分 企业生产就绪评估（SpringBootAI / PyMyBatis）
 
 ## 一、结论
 

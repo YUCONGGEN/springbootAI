@@ -1,4 +1,4 @@
-"""SpringPy Bean Validation 模块测试 —— 覆盖约束注解/验证器/方法级 AOP。
+"""SpringBootAI Bean Validation 模块测试 —— 覆盖约束注解/验证器/方法级 AOP。
 
 对齐 tests/test_excel_module.py 的 pytest 风格（class TestXxx + test_* 方法）。
 覆盖：14 个约束的单值校验、BeanValidator 反射收集/多字段校验/分组、函数装饰器形式、

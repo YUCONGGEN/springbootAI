@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $repoRoot 'docker-compose.performance.yml'
-$projectName = 'springpy-conditional-benchmark'
+$projectName = 'springbootai-conditional-benchmark'
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $resultName = "conditional-assembly-$timestamp.json"
 $resultContainerPath = "/results/$resultName"

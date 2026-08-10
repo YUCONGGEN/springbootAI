@@ -1,5 +1,5 @@
 """
-SpringPy AI 自动配置 - 读取 application.yml 的 spring.ai.* 配置，
+SpringBootAI AI 自动配置 - 读取 application.yml 的 spring.ai.* 配置，
 按 provider 创建 ChatModel/EmbeddingModel/ChatClient/VectorStore/Memory Bean，
 注册到 BeanRegistry，实现 Spring 风格的统一配置与依赖注入。
 

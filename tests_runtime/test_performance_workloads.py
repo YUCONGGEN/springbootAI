@@ -95,7 +95,7 @@ def test_feature_workloads_execute_real_framework_paths():
     assert actuator["contexts"]["application"]["beans"]
     assert openapi["info"]["title"]
     assert openapi["paths"]["/benchmark/data"]["get"]["operationId"] == "benchmarkData"
-    assert "SpringPy Benchmark" in openapi["paths"]["/benchmark/data"]["get"]["tags"]
+    assert "SpringBootAI Benchmark" in openapi["paths"]["/benchmark/data"]["get"]["tags"]
     assert openapi["components"]["securitySchemes"]["BenchmarkBearer"]["scheme"] == "bearer"
     assert responses["swagger_docs"].headers["content-type"].startswith("text/html")
     assert responses["swagger_redoc"].headers["content-type"].startswith("text/html")

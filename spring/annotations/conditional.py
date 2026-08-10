@@ -1,4 +1,4 @@
-"""SpringPy 条件装配注解 —— 对齐 Spring Boot 的条件化 Bean 注册。
+"""SpringBootAI 条件装配注解 —— 对齐 Spring Boot 的条件化 Bean 注册。
 
 本模块在既有 ``@Profile``（``spring.annotations.core.Profile``）基础上补齐 Spring Boot
 条件装配家族，复用同一 ``SpringAnnotation`` 元数据范式：

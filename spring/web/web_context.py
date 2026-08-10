@@ -452,7 +452,7 @@ class WebApplicationContext:
                     if inspect.iscoroutinefunction(handler):
                         result = await handler(**call_params)
                     else:
-                        # FastAPI normally offloads sync endpoints automatically.  SpringPy
+                        # FastAPI normally offloads sync endpoints automatically.  SpringBootAI
                         # wraps every controller in an async adapter, so it must preserve
                         # that behavior explicitly for blocking DB/HTTP/AI workloads.
                         result = await self._run_sync_handler(handler, call_params)

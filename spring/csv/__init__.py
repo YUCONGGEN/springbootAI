@@ -1,4 +1,4 @@
-"""SpringPy CSV 模块 —— 注解驱动的 CSV 读写（对齐 alibaba EasyExcel / commons-csv）。
+"""SpringBootAI CSV 模块 —— 注解驱动的 CSV 读写（对齐 alibaba EasyExcel / commons-csv）。
 
 模块组成（镜像 ``spring.excel`` 架构）：
 - annotations:  ``@CsvProperty`` / ``@CsvIgnore`` / ``@csv_file`` 字段+类级注解
@@ -10,8 +10,8 @@
 - exceptions:   ``CsvError`` 异常族
 
 与 Excel 模块的核心区别：
-- **无可选依赖**：CSV 使用 Python 标准库 ``csv``，``pip install springpy`` 即可用，
-  无需 ``springpy[excel]`` 等额外 extras。
+- **无可选依赖**：CSV 使用 Python 标准库 ``csv``，``pip install springbootAI`` 即可用，
+  无需 ``springbootAI[excel]`` 等额外 extras。
 - 转换器复用 Excel 模块（``spring.excel.converters`` 不依赖 openpyxl，可安全导入）。
 - 无单元格样式/数字格式（CSV 格式本身不支持）。
 

@@ -1,4 +1,4 @@
-"""SpringPy ``EasyCsv`` —— 流式构建入口（对齐 ``EasyExcel`` API）。
+"""SpringBootAI ``EasyCsv`` —— 流式构建入口（对齐 ``EasyExcel`` API）。
 
 用法::
 

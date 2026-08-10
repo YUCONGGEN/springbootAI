@@ -1,4 +1,4 @@
-"""SpringPy Excel 写入引擎。
+"""SpringBootAI Excel 写入引擎。
 
 按 ``@ExcelProperty`` / ``@ExcelIgnore`` / ``@excel_sheet`` 注解把实体对象列表写入 Excel。
 底层依赖 openpyxl（仅 ``doWrite`` 时检测，注解声明无需安装）。
@@ -28,7 +28,7 @@ def _require_openpyxl():
         return openpyxl
     except ImportError as e:
         raise ExcelDependencyError(
-            "Excel 写入依赖 openpyxl，请先安装：pip install springpy[excel]"
+            "Excel 写入依赖 openpyxl，请先安装：pip install springbootAI[excel]"
         ) from e
 
 

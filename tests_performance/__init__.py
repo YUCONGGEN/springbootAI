@@ -1,1 +1,1 @@
-"""SpringPy performance-test fixtures."""
+"""SpringBootAI performance-test fixtures."""

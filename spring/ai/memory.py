@@ -49,7 +49,7 @@ class InMemoryChatMemory(ChatMemory):
 
 
 class RedisChatMemory(ChatMemory):
-    """Redis 会话记忆 - 生产用，复用 SpringPy RedisClient"""
+    """Redis 会话记忆 - 生产用，复用 SpringBootAI RedisClient"""
 
     KEY_PREFIX = "springpy:ai:memory:"
 

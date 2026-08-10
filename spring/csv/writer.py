@@ -1,4 +1,4 @@
-"""SpringPy CSV 写入引擎。
+"""SpringBootAI CSV 写入引擎。
 
 按 ``@CsvProperty`` / ``@CsvIgnore`` / ``@csv_file`` 注解把实体对象列表写入 CSV。
 底层使用 Python 标准库 ``csv``（**无可选依赖**，开箱即用）。

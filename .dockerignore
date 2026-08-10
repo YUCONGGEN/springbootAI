@@ -1,4 +1,4 @@
-# Docker ignore file for SpringPy project
+# Docker ignore file for SpringBootAI project
 # 排除虚拟环境和Python缓存
 __pycache__/
 *.py[cod]

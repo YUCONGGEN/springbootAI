@@ -1,4 +1,4 @@
-"""SpringPy Excel 模块异常定义。
+"""SpringBootAI Excel 模块异常定义。
 
 设计对齐 EasyExcel 的错误语义：注解配置错误、读写过程错误、可选依赖缺失均通过
 本模块的异常抛出，便于上层统一捕获。
@@ -27,5 +27,5 @@ class ExcelDependencyError(ExcelError):
     Excel 读写引擎底层依赖 openpyxl。注解声明（@ExcelProperty 等）不依赖任何第三方库，
     仅在实际 read/write 时检测。未安装时给出明确的安装提示::
 
-        pip install springpy[excel]
+        pip install springbootAI[excel]
     """

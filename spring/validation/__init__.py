@@ -1,4 +1,4 @@
-"""SpringPy Bean Validation 模块 —— 字段约束注解 + 验证器 + 方法级 AOP。
+"""SpringBootAI Bean Validation 模块 —— 字段约束注解 + 验证器 + 方法级 AOP。
 
 对齐 Jakarta Bean Validation（Hibernate Validator）的核心能力：
 - 字段级约束（``@NotNull``/``@NotBlank``/``@Size``/``@Min``/``@Max``/``@Pattern``/``@Email`` 等）

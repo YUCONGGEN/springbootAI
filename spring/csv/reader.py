@@ -1,4 +1,4 @@
-"""SpringPy CSV 读取引擎。
+"""SpringBootAI CSV 读取引擎。
 
 按 ``@CsvProperty`` / ``@CsvIgnore`` / ``@csv_file`` 注解把 CSV 文件读为实体对象列表。
 底层使用 Python 标准库 ``csv``（**无可选依赖**，开箱即用）。

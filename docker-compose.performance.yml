@@ -1,8 +1,8 @@
-name: springpy-performance
+name: springbootai-performance
 
 services:
   app:
-    image: springpy-performance-app:local
+    image: springbootai-performance-app:local
     build:
       context: .
       dockerfile: tests_performance/Dockerfile

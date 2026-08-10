@@ -1,7 +1,7 @@
-# SpringPy 内嵌 PyMyBatis ORM 与 DDL 使用指南
+# SpringBootAI 内嵌 PyMyBatis ORM 与 DDL 使用指南
 
 > 本文档从 README.md 第 5.11 / 5.12 节（注解）与第 8 节（功能说明）分离而来。
-> 框架版本：SpringPy 1.6.1 / 内嵌 PyMyBatis 1.4.0
+> 框架版本：SpringBootAI 1.6.1 / 内嵌 PyMyBatis 1.4.0
 
 ---
 
@@ -13,7 +13,7 @@
 
 | 注解 | 放在哪里 | 作用 | 生效条件 |
 |------|----------|------|----------|
-| `@MapperScan` | SpringPy 启动类 | 指定 Mapper 包 | `database.enabled: true` 且 ORM 为 `mybatis`/`both` |
+| `@MapperScan` | SpringBootAI 启动类 | 指定 Mapper 包 | `database.enabled: true` 且 ORM 为 `mybatis`/`both` |
 | `@Mapper` | Mapper 类 | 让扫描器把类注册成受管 Mapper 代理 | 类必须位于扫描包内 |
 | `@Select` | Mapper 方法 | 执行查询 | 代理读取 SQL，并消费 `result_map`、`result_type`、`fetch_size`、`timeout`、`cache`；单条/列表仍受方法名规则影响 |
 | `@Insert` | Mapper 方法 | 执行插入 | 支持 `use_generated_keys` 和 `key_property` 主键回写 |
@@ -64,12 +64,12 @@ class User:
 | `pymybatis.SqlSession` | `spring.orm.pymybatis.SqlSession` |
 | `pymybatis.annotations` | `spring.orm.pymybatis.annotations` |
 
-两份 ORM 源码由契约测试约束一致，只允许包内相对导入路径不同。核心 `Configuration`、`SqlSessionFactory`、`SqlSession`、连接池、事务、动态 SQL、安全和缓存行为一致。SpringPy 额外提供 Mapper 扫描、Bean 注册、按调用管理 Session 和事务上下文绑定。
+两份 ORM 源码由契约测试约束一致，只允许包内相对导入路径不同。核心 `Configuration`、`SqlSessionFactory`、`SqlSession`、连接池、事务、动态 SQL、安全和缓存行为一致。SpringBootAI 额外提供 Mapper 扫描、Bean 注册、按调用管理 Session 和事务上下文绑定。
 
 | 场景 | 导入路径 |
 |------|----------|
 | 独立 ORM 项目 | `from pymybatis import ...` |
-| SpringPy 内嵌 ORM | `from spring.orm.pymybatis import ...` |
+| SpringBootAI 内嵌 ORM | `from spring.orm.pymybatis import ...` |
 | Spring 容器集成 | `from spring.orm import Mapper, MapperScan, ...` |
 
 ### 8.2 数据库配置
@@ -396,7 +396,7 @@ class Role:
 
 ### 8.10 XML 功能矩阵
 
-| Java MyBatis XML | SpringPy 状态 | 说明 |
+| Java MyBatis XML | SpringBootAI 状态 | 说明 |
 |---|---|---|
 | `<select>` / `<insert>` / `<update>` / `<delete>` | 支持 | `id` 必须在 namespace 中唯一 |
 | `<resultMap>` 的 `<id>`、`<result>` | 支持 | 支持列到属性、继承 `extends` 和目标类型构造 |

@@ -1,5 +1,5 @@
 """
-SpringPy AI 注解 - @AiClient / @Tool / @AiAdvisor / @AiMemory
+SpringBootAI AI 注解 - @AiClient / @Tool / @AiAdvisor / @AiMemory
 
 复用 spring.annotations.core.SpringAnnotation 基础设施，
 保持与现有注解一致的元数据收集机制（__spring_annotations__）。

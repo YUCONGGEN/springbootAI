@@ -1,4 +1,4 @@
-"""SpringPy JPA @Version / @Transient 模块测试 —— 覆盖注解/DDL生成/瞬态跳过/乐观锁执行器。
+"""SpringBootAI JPA @Version / @Transient 模块测试 —— 覆盖注解/DDL生成/瞬态跳过/乐观锁执行器。
 
 对齐 tests/test_orm_pymybatis_full.py 的 pytest 风格。使用 DdlAutoManager 解析实体生成 DDL
 （不依赖真实数据库，dialect=sqlite），乐观锁执行器用内存 sqlite 真实执行。

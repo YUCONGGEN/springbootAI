@@ -1,4 +1,4 @@
-"""Measure repeated setup and teardown of SpringPy test slices."""
+"""Measure repeated setup and teardown of SpringBootAI test slices."""
 
 import argparse
 import json

@@ -1,4 +1,4 @@
-"""SpringPy 缓存增强注解测试 —— 覆盖 @CachePut / @CacheEvict / @CacheConfig / @Caching。
+"""SpringBootAI 缓存增强注解测试 —— 覆盖 @CachePut / @CacheEvict / @CacheConfig / @Caching。
 
 对齐 tests/test_validation_module.py 的 pytest 风格。通过 ``BeanFactory._apply_aop_proxy``
 走真实 AOP 集成路径（与 IoC 容器受管 Bean 一致），验证：

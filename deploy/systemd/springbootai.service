@@ -1,0 +1,45 @@
+[Unit]
+Description=SpringBootAI Application
+After=network.target docker.service
+Requires=network.target
+
+[Service]
+Type=simple
+User=springbootai
+Group=springbootai
+
+WorkingDirectory=/opt/springbootai
+
+EnvironmentFile=-/etc/springbootai/env
+Environment="PYTHONPATH=/opt/springbootai"
+Environment="PATH=/opt/springbootai/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PROMETHEUS_MULTIPROC_DIR=/run/springbootai-prometheus"
+RuntimeDirectory=springbootai-prometheus
+RuntimeDirectoryMode=0750
+
+ExecStart=/opt/springbootai/venv/bin/gunicorn \
+    --config /opt/springbootai/deploy/gunicorn/gunicorn.conf.py \
+    "wsgi:app"
+
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=30
+
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/springbootai/logs /tmp
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

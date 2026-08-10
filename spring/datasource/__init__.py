@@ -1,4 +1,4 @@
-"""SpringPy 多数据源读写分离模块（对齐 Spring ``AbstractRoutingDataSource`` +
+"""SpringBootAI 多数据源读写分离模块（对齐 Spring ``AbstractRoutingDataSource`` +
 ``dynamic-datasource-spring-boot-starter`` 的 ``@DS``/``@Master``/``@Slave``）。
 
 模块组成：

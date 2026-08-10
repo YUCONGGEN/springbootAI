@@ -1,8 +1,8 @@
-# SpringPy 综合使用指南
+# SpringBootAI 综合使用指南
 
-SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力、内嵌的 PyMyBatis ORM，以及企业级 AI 模块（对齐 Spring AI 2.0：ChatClient/Advisor/Tools/RAG/Function Calling）。本指南为框架核心综合使用文档；**AI / ORM / Cloud / Excel 等模块的完整注解与功能说明已分离为独立文档**（见下方“模块文档”），本指南相应章节保留概览与跳转链接。
+SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力、内嵌的 PyMyBatis ORM，以及企业级 AI 模块（对齐 Spring AI 2.0：ChatClient/Advisor/Tools/RAG/Function Calling）。本指南为框架核心综合使用文档；**AI / ORM / Cloud / Excel 等模块的完整注解与功能说明已分离为独立文档**（见下方“模块文档”），本指南相应章节保留概览与跳转链接。
 
-- SpringPy 版本：`1.6.1`
+- SpringBootAI 版本：`1.6.1`
 - 内嵌 PyMyBatis 版本：`1.4.0`
 - Python：3.10+
 - 状态：Beta（企业试点）
@@ -15,11 +15,11 @@ SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供�
 
 | 模块 | 文档 | 安装 | 说明 |
 |------|------|------|------|
-| AI（对齐 Spring AI 2.0） | [AI_MODULE.md](doc/AI_MODULE.md) | `pip install springpy-framework[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测 |
+| AI（对齐 Spring AI 2.0） | [AI_MODULE.md](doc/AI_MODULE.md) | `pip install springbootAI[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测 |
 | 内嵌 PyMyBatis ORM 与 DDL | [ORM_MODULE.md](doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 |
 | Spring Cloud（对齐 Cloud Alibaba） | [CLOUD_MODULE.md](doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 负载均衡 / 分布式事务 |
-| Excel（对齐 alibaba EasyExcel） | [EXCEL_MODULE.md](doc/EXCEL_MODULE.md) | `pip install springpy-framework[excel]` | `@ExcelProperty` / `@ExcelIgnore` / `@excel_sheet` 注解驱动读写 |
-| CSV（注解驱动读写） | [CSV_MODULE.md](doc/CSV_MODULE.md) | `pip install springpy-framework[csv]` | `@CsvProperty` / `@CsvIgnore` / `@csv_file` 注解驱动读写 / 转换器 / 流式 |
+| Excel（对齐 alibaba EasyExcel） | [EXCEL_MODULE.md](doc/EXCEL_MODULE.md) | `pip install springbootAI[excel]` | `@ExcelProperty` / `@ExcelIgnore` / `@excel_sheet` 注解驱动读写 |
+| CSV（注解驱动读写） | [CSV_MODULE.md](doc/CSV_MODULE.md) | `pip install springbootAI[csv]` | `@CsvProperty` / `@CsvIgnore` / `@csv_file` 注解驱动读写 / 转换器 / 流式 |
 | Swagger / OpenAPI（对齐 SpringDoc） | [SWAGGER_MODULE.md](doc/SWAGGER_MODULE.md) | 随核心包 | `@Tag` / `@Operation` / `@ApiResponse` / `@Parameter` / `@Schema` / `@SecurityScheme` 注解驱动 API 文档 + Swagger2 别名 |
 | P0/P1/P2 八大模块 | [EIGHT_MODULES.md](doc/EIGHT_MODULES.md) | 随核心包 | Spring Data Repository / Actuator / 多数据源读写分离 / 事务事件 / 配置松散绑定 / 测试切片 / i18n / WebSocket |
 | 安全 | [SECURITY.md](doc/SECURITY.md) | 随核心包 | JWT 生成校验 / 密码加密（SHA256/MD5/BCrypt）/ SQL 注入防护 / 访问控制 |
@@ -40,7 +40,7 @@ SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供�
 9. [事务](#9-事务)
 10. [安全与权限](#10-安全与权限)
 11. [缓存、任务与高级 AOP](#11-缓存任务与高级-aop)
-12. [SpringPy AI 模块](#12-springpy-ai-模块)
+12. [SpringBootAI AI 模块](#12-springbootai-ai-模块)
 13. [Java 迁移指南](#13-java-迁移指南)
 14. [生产部署](#14-生产部署)
 15. [项目结构](#15-项目结构)
@@ -52,7 +52,7 @@ SpringPy 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供�
 
 ## 1. 框架概述与定位
 
-SpringPy 借鉴了 Spring Boot 的注解和分层习惯，但运行时是 Python、FastAPI 和 Uvicorn。**它不兼容 Java 字节码、Spring Bean 后处理器、JPA、Java MyBatis 插件或 Maven/Gradle 生态。**
+SpringBootAI 借鉴了 Spring Boot 的注解和分层习惯，但运行时是 Python、FastAPI 和 Uvicorn。**它不兼容 Java 字节码、Spring Bean 后处理器、JPA、Java MyBatis 插件或 Maven/Gradle 生态。**
 
 ### 1.1 版本
 
@@ -79,7 +79,7 @@ SpringPy 借鉴了 Spring Boot 的注解和分层习惯，但运行时是 Python
 
 ### 1.4 注解使用总览
 
-SpringPy 注解会先把元数据放到 `__spring_annotations__`。之后是否生效，取决于是否存在对应的扫描器或切面：
+SpringBootAI 注解会先把元数据放到 `__spring_annotations__`。之后是否生效，取决于是否存在对应的扫描器或切面：
 
 | 状态 | 含义 |
 |------|------|
@@ -88,7 +88,7 @@ SpringPy 注解会先把元数据放到 `__spring_annotations__`。之后是否�
 | 直接执行 | 装饰器本身返回包装函数，不依赖 IoC 容器 |
 | 仅元数据 | 当前有注解类，但主运行链路没有消费者，写上不会得到注解名字所暗示的功能 |
 
-这也是 SpringPy 与 Java Spring 最容易混淆的地方：名称相似不代表参数和运行语义完全相同。
+这也是 SpringBootAI 与 Java Spring 最容易混淆的地方：名称相似不代表参数和运行语义完全相同。
 
 ---
 
@@ -114,7 +114,7 @@ SpringPy 注解会先把元数据放到 `__spring_annotations__`。之后是否�
 | Prometheus 监控 | ✅ 可用 | Counter/Gauge/Histogram 指标暴露 |
 | Feign 声明式 HTTP | ✅ 可用 | 声明式接口、Fallback 降级、自动传播 XID 和 trace 头 |
 | 高级 AOP | ✅ 可用 | 限流、熔断、幂等、审计、锁、指标、追踪、缓存 |
-| SpringPy AI 模块 | ✅ 可用 | 对齐 Spring AI 2.0：ChatClient/ChatModel/EmbeddingModel/Advisor/Tools，OpenAI/Ollama/DeepSeek/Moonshot 适配，Function Calling 闭环、RAG、会话记忆、Redis 向量存储、熔断重试、真流式 async、Prometheus 观测、类型化配置绑定 |
+| SpringBootAI AI 模块 | ✅ 可用 | 对齐 Spring AI 2.0：ChatClient/ChatModel/EmbeddingModel/Advisor/Tools，OpenAI/Ollama/DeepSeek/Moonshot 适配，Function Calling 闭环、RAG、会话记忆、Redis 向量存储、熔断重试、真流式 async、Prometheus 观测、类型化配置绑定 |
 
 ---
 
@@ -180,7 +180,7 @@ python -c "from spring.orm.pymybatis import __version__; print(__version__)"
 
 ### 3.5 最小应用
 
-仓库中的 `example`、`example1`、`example5` 只用于源码参考和回归验证，不会打包进 `springpy`。安装后请按下面结构创建自己的应用包，不要从 site-packages 导入这些示例。**每个被扫描目录都必须包含 `__init__.py`，并从项目根目录启动。**
+仓库中的 `example`、`example1`、`example5` 只用于源码参考和回归验证，不会打包进 `springbootAI`。安装后请按下面结构创建自己的应用包，不要从 site-packages 导入这些示例。**每个被扫描目录都必须包含 `__init__.py`，并从项目根目录启动。**
 
 创建包结构：
 
@@ -1938,13 +1938,13 @@ class CleanupJob:
 
 ---
 
-## 12. SpringPy AI 模块
+## 12. SpringBootAI AI 模块
 
-> 本节（新手入门、快速开始、配置、AI 注解、ChatClient 链式 API、Advisor、ETL、工具调用、自动装配、企业级能力、DeepSeek 全特性演示）已分离至独立文档：[AI_MODULE.md](doc/AI_MODULE.md)。安装：`pip install springpy-framework[ai]`。
+> 本节（新手入门、快速开始、配置、AI 注解、ChatClient 链式 API、Advisor、ETL、工具调用、自动装配、企业级能力、DeepSeek 全特性演示）已分离至独立文档：[AI_MODULE.md](doc/AI_MODULE.md)。安装：`pip install springbootAI[ai]`。
 
 ## 13. Java 迁移指南
 
-本文说明如何把现有的 Java Spring Boot、Spring Cloud Alibaba 和 MyBatis 分层代码迁移到 SpringPy。目标是保留清晰的 Controller / Service / Mapper 边界、配置习惯和常用注解意图，而不是让 Python 运行 Java 代码。
+本文说明如何把现有的 Java Spring Boot、Spring Cloud Alibaba 和 MyBatis 分层代码迁移到 SpringBootAI。目标是保留清晰的 Controller / Service / Mapper 边界、配置习惯和常用注解意图，而不是让 Python 运行 Java 代码。
 
 ### 13.1 迁移原则
 
@@ -1956,7 +1956,7 @@ class CleanupJob:
 
 ### 13.2 项目结构对照
 
-| Java Spring Boot | SpringPy |
+| Java Spring Boot | SpringBootAI |
 |---|---|
 | `src/main/java/com/acme/Application.java` | `acme/Application.py` |
 | `src/main/resources/application.yml` | `acme/application.yml` 或 `acme/config/application.yml` |
@@ -2001,7 +2001,7 @@ if __name__ == "__main__":
 
 **Bean 注解映射**：
 
-| Java 注解 | SpringPy 写法 | 行为和边界 |
+| Java 注解 | SpringBootAI 写法 | 行为和边界 |
 |---|---|---|
 | `@Component` | `@Component` | 受管单例 Bean |
 | `@Service` | `@Service` | 受管业务 Bean |
@@ -2032,7 +2032,7 @@ class UserService:
 
 ### 13.4 Web 层迁移
 
-| Java Spring MVC | SpringPy |
+| Java Spring MVC | SpringBootAI |
 |---|---|
 | `@RequestMapping` | `@RequestMapping`，可标在类和方法上 |
 | `@GetMapping` / `@PostMapping` | 同名注解 |
@@ -2074,7 +2074,7 @@ class UserController:
 
 ### 13.5 AOP、任务和本地事务
 
-| Java 能力 | SpringPy | 注意事项 |
+| Java 能力 | SpringBootAI | 注意事项 |
 |---|---|---|
 | `@Transactional` | `@Transactional` | 支持 `REQUIRED`、`REQUIRES_NEW`、`NESTED`、`SUPPORTS`、`MANDATORY`、`NOT_SUPPORTED`、`NEVER`。`REQUIRES_NEW` 使用独立 Session/连接，连接池必须能同时提供外层和内层连接 |
 | `@Cacheable` | `@Cacheable` | 本地缓存默认 TTL 300 秒；Redis 后端需要额外部署 |
@@ -2136,7 +2136,7 @@ class UserMapper:
 
 ### 13.7 Spring Cloud Alibaba 对照
 
-| Java 注解/组件 | SpringPy 对应 | 当前状态 |
+| Java 注解/组件 | SpringBootAI 对应 | 当前状态 |
 |---|---|---|
 | `@EnableDiscoveryClient` + Nacos | `@EnableDiscoveryClient` + `discovery` 配置 | 注解元数据与 Nacos 客户端配置可用；需部署 Nacos 并做注册/发现集成测试 |
 | `@NacosValue` / `@RefreshScope` | 同名注解 | 元数据可用；`@RefreshScope` 已接入容器刷新机制，复杂配置刷新和 Java proxy 语义不等价 |
@@ -2148,7 +2148,7 @@ class UserMapper:
 
 **Cloud 高级功能迁移对照**：
 
-| Java Spring Cloud | SpringPy 写法 | 说明 |
+| Java Spring Cloud | SpringBootAI 写法 | 说明 |
 |---|---|---|
 | Sentinel Dashboard + `@SentinelResource` | `@SentinelResource` | 内嵌引擎，无需 Dashboard；支持 QPS 限流、异常比例/异常数/慢调用熔断、热点参数限流 |
 | SkyWalking Agent + OAP Server | `@Trace` + 内嵌 Tracer | 原生 OpenTelemetry(W3C traceparent)，无需 OAP Server；自动注入 HTTP/Feign 追踪头 |
@@ -2175,7 +2175,7 @@ public class User {
 }
 ```
 
-SpringPy：
+SpringBootAI：
 
 ```python
 from spring.orm import entity, Index
@@ -2463,7 +2463,7 @@ curl http://127.0.0.1:8848/nacos/v1/console/health/readiness
 
 ## 15. 项目结构
 
-`example`、`example1`、`example5` 是仓库级示例，不属于 `springpy` 安装包，不会被打包。实际项目应创建自己的应用包。
+`example`、`example1`、`example5` 是仓库级示例，不属于 `springbootAI` 安装包，不会被打包。实际项目应创建自己的应用包。
 
 推荐目录结构：
 
@@ -2491,7 +2491,7 @@ myapp/
 
 **Java 项目结构对照**（详见第 13 章）：
 
-| Java Spring Boot | SpringPy |
+| Java Spring Boot | SpringBootAI |
 |---|---|
 | `src/main/java/com/acme/Application.java` | `acme/Application.py` |
 | `src/main/resources/application.yml` | `acme/application.yml` 或 `acme/config/application.yml` |
@@ -2584,7 +2584,7 @@ JWT_SECRET_KEY=<至少32字符随机密钥>
 
 ## 18. 性能与容量验证
 
-仓库提供 Docker 化的 SpringPy 基准服务和 k6 `smoke`、`baseline`、`stress`、`soak` 四档压测。快速验证：
+仓库提供 Docker 化的 SpringBootAI 基准服务和 k6 `smoke`、`baseline`、`stress`、`soak` 四档压测。快速验证：
 
 ```powershell
 .\scripts\run-load-test.ps1 -Profile smoke
