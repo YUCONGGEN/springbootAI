@@ -21,8 +21,8 @@ langchain-core==0.3.51
 
 # 文档切分器（RecursiveCharacterTextSplitter / CharacterTextSplitter）
 # 供 spring/ai/etl.py 的 TokenTextSplitter / CharacterTextSplitter 优先委托使用；
-# 未安装时自动降级内置实现。已测试（langchain-text-splitters==0.3.8，兼容 core==0.3.51）
-langchain-text-splitters==0.3.8
+# 未安装时自动降级内置实现。已测试（langchain-text-splitters==1.1.2，兼容 core==0.3.51）
+langchain-text-splitters==1.1.2
 
 # Ollama 本地模型适配（Llama3 / Qwen / Phi3 等）
 langchain-community==0.3.24

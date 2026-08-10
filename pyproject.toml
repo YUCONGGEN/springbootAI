@@ -102,7 +102,7 @@ excel = ["openpyxl==3.1.5"]
 ai = [
     "langchain-openai==0.3.27",
     "langchain-core==0.3.51",
-    "langchain-text-splitters==0.3.8",
+    "langchain-text-splitters==1.1.2",
     "langchain-community==0.3.24",
     "numpy==2.0.2",
 ]
@@ -116,7 +116,7 @@ ai = [
 langchain = [
     "langchain-openai==0.3.27",
     "langchain-core==0.3.51",
-    "langchain-text-splitters==0.3.8",
+    "langchain-text-splitters==1.1.2",
     "langchain-community==0.3.24",
     "numpy==2.0.2",
     # 默认装上的向量库/文档/工具依赖（轻量）
@@ -164,7 +164,7 @@ full = [
     "openpyxl==3.1.5",
     "langchain-openai==0.3.27",
     "langchain-core==0.3.51",
-    "langchain-text-splitters==0.3.8",
+    "langchain-text-splitters==1.1.2",
     "langchain-community==0.3.24",
     "numpy==2.0.2",
     # LangChain 模块默认依赖（partner 包按需 pip install）
