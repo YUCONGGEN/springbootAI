@@ -90,11 +90,17 @@ class _FakeContext:
 
 @pytest.fixture
 def app_with_actuator():
-    """构造一个挂载 actuator_router 的 FastAPI 应用 + 桩上下文。"""
+    """构造一个挂载 actuator_router 的 FastAPI 应用 + 桩上下文。
+
+    功能测试禁用 Actuator 鉴权（``management.endpoints.web.security.enabled=false``），
+    专注于端点逻辑（脱敏、日志级别、beans 等）；鉴权行为由专门的安全测试覆盖。
+    """
     ctx = _FakeContext(
         config={
             "server": {"port": 8080, "host": "0.0.0.0"},
             "database": {"password": "super-secret", "enabled": False, "url": "sqlite:///x.db"},
+            # 功能测试禁用鉴权；生产环境默认 enabled=true
+            "management": {"endpoints": {"web": {"security": {"enabled": False}}}},
         },
         definitions={
             "user_service": _FakeBeanDefinition(

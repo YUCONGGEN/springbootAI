@@ -334,7 +334,10 @@ class TestJWTUtils:
         access = self.jwt.generate_token({'user_id': 'refresh_user'}, expires_in=1)
         refresh = self.jwt.generate_refresh_token({'user_id': 'refresh_user'}, expires_in=86400)
 
-        assert self.jwt.validate_token(refresh) is True
+        # refresh token 必须显式按 refresh 类型验证（默认只接受 access token）
+        assert self.jwt.validate_token(refresh, expected_token_type='refresh') is True
+        # refresh token 不能作为 access token 通过验证（安全加固）
+        assert self.jwt.validate_token(refresh) is False
 
         new_access = self.jwt.refresh_token(refresh, expires_in=3600)
         assert self.jwt.validate_token(new_access) is True

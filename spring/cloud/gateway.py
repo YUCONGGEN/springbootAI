@@ -198,6 +198,7 @@ class GatewayRouter:
 
     def __init__(self, discovery_client=None, default_filters: List[GatewayFilter] = None,
                  timeout: float = 10.0, max_body_size: int = 10 * 1024 * 1024,
+                 max_response_size: int = 50 * 1024 * 1024,
                  transport: Optional[httpx.AsyncBaseTransport] = None):
         self.discovery = discovery_client
         self.routes: List[Route] = []
@@ -210,6 +211,9 @@ class GatewayRouter:
         self._path_pattern_cache: Dict[str, re.Pattern] = {}
         self.timeout = float(timeout)
         self.max_body_size = int(max_body_size)
+        # 上游响应大小上限（字节）：防止大文件下载/并发请求整体载入内存耗尽 worker。
+        # 旧版本直接 upstream.content 整体载入，无大小限制。0 表示禁用限制（不推荐）。
+        self.max_response_size = int(max_response_size)
         self._transport = transport
         self._client: Optional[httpx.AsyncClient] = None
         self._client_lock = threading.Lock()
@@ -410,33 +414,102 @@ class GatewayRouter:
         }
         try:
             target_url = target_uri + forward_path
-            upstream = await self._get_client().request(
+            # 使用 stream=True 避免上游响应整体载入内存：
+            # 旧版本 upstream.content 一次性载入全部响应体，大文件下载或并发请求
+            # 可能耗尽 worker 内存。流式读取配合 max_response_size 可在超限时提前中止。
+            req = self._get_client().build_request(
                 method,
                 target_url,
                 params=query_items,
                 headers=request_headers,
                 content=body,
             )
+            upstream = await self._get_client().send(req, stream=True)
 
-            ctx.response_status = upstream.status_code
-            response_headers = {
-                key: value for key, value in upstream.headers.items()
-                if key.lower() not in self._HOP_BY_HOP_HEADERS | {'content-length'}
-            }
-            ctx.response_headers.update(response_headers)
+            try:
+                ctx.response_status = upstream.status_code
+                response_headers = {
+                    key: value for key, value in upstream.headers.items()
+                    if key.lower() not in self._HOP_BY_HOP_HEADERS | {'content-length'}
+                }
+                ctx.response_headers.update(response_headers)
 
-            # 执行后置过滤器
-            for flt in self.filters:
-                try:
-                    await self._run_filter(flt, 'post_filter', ctx)
-                except Exception:
-                    logger.exception("[Gateway] post filter failed")
+                # 执行后置过滤器
+                for flt in self.filters:
+                    try:
+                        await self._run_filter(flt, 'post_filter', ctx)
+                    except Exception:
+                        logger.exception("[Gateway] post filter failed")
 
-            return Response(
-                content=upstream.content,
-                status_code=upstream.status_code,
-                headers=ctx.response_headers,
-            )
+                # 响应大小限制：
+                # (1) 先检查 Content-Length 头（快速路径，无需读取响应体即可拒绝）
+                # (2) 流式读取时累计字节数，超限立即中止并返回 502
+                if self.max_response_size > 0:
+                    content_length = upstream.headers.get('content-length')
+                    if content_length:
+                        try:
+                            if int(content_length) > self.max_response_size:
+                                logger.warning(
+                                    "[Gateway] Upstream response Content-Length %s exceeds limit %d",
+                                    content_length, self.max_response_size,
+                                )
+                                return JSONResponse(
+                                    {"error": "Upstream response too large",
+                                     "limit_bytes": self.max_response_size},
+                                    status_code=502,
+                                )
+                        except ValueError:
+                            pass
+
+                    # is_stream_consumed=True 表示响应体已预载（如 MockTransport 或
+                    # 非 stream 模式）；此时 aiter_raw() 会抛 StreamConsumed，
+                    # 直接用 .content 检查大小即可。
+                    if upstream.is_stream_consumed:
+                        response_body = upstream.content
+                        if len(response_body) > self.max_response_size:
+                            logger.warning(
+                                "[Gateway] Upstream response %d bytes exceeds limit %d",
+                                len(response_body), self.max_response_size,
+                            )
+                            return JSONResponse(
+                                {"error": "Upstream response too large",
+                                 "limit_bytes": self.max_response_size},
+                                status_code=502,
+                            )
+                    else:
+                        chunks = []
+                        response_size = 0
+                        too_large = False
+                        async for chunk in upstream.aiter_raw():
+                            response_size += len(chunk)
+                            if response_size > self.max_response_size:
+                                logger.warning(
+                                    "[Gateway] Upstream response exceeded %d bytes (got %d+), aborting",
+                                    self.max_response_size, response_size,
+                                )
+                                too_large = True
+                                break
+                            chunks.append(chunk)
+
+                        if too_large:
+                            return JSONResponse(
+                                {"error": "Upstream response too large",
+                                 "limit_bytes": self.max_response_size},
+                                status_code=502,
+                            )
+                        response_body = b''.join(chunks)
+                else:
+                    # 无限制：直接读取完整响应（向后兼容，不推荐在生产使用）
+                    response_body = await upstream.aread()
+
+                return Response(
+                    content=response_body,
+                    status_code=upstream.status_code,
+                    headers=ctx.response_headers,
+                )
+            finally:
+                # stream=True 模式下必须显式关闭响应，否则连接不会归还连接池
+                await upstream.aclose()
         except httpx.TimeoutException as exc:
             logger.warning(f"[Gateway] Upstream timeout: {exc}")
             return JSONResponse({"error": "Gateway timeout"}, status_code=504)

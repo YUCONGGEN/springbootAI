@@ -236,6 +236,109 @@ def test_gateway_supports_async_filters():
     assert asyncio.run(scenario()).status_code == 418
 
 
+def test_gateway_response_size_limit_rejects_via_content_length():
+    """上游响应 Content-Length 超过 max_response_size → 502（快速路径，不读取响应体）"""
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        # 返回大 Content-Length 但实际 body 较小（模拟头部声明超限）
+        return httpx.Response(
+            200, content=b"small",
+            headers={"content-length": "999999999"},
+        )
+
+    gateway = GatewayRouter(
+        default_filters=[], max_response_size=1024,
+        transport=httpx.MockTransport(upstream),
+    )
+    gateway.route("/api/**", uri="https://upstream.test")
+    app = FastAPI()
+    app.add_api_route("/api/{path:path}", gateway.handle_asgi, methods=["GET"])
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://gateway") as client:
+            return await client.get("/api/data")
+
+    response = asyncio.run(scenario())
+    assert response.status_code == 502
+    assert "too large" in response.json()["error"]
+
+
+def test_gateway_response_size_limit_rejects_actual_body():
+    """上游响应体实际大小超过 max_response_size → 502（预载路径）"""
+    large_body = b"x" * 2048  # 2KB，超过 1KB 限制
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=large_body)
+
+    gateway = GatewayRouter(
+        default_filters=[], max_response_size=1024,
+        transport=httpx.MockTransport(upstream),
+    )
+    gateway.route("/api/**", uri="https://upstream.test")
+    app = FastAPI()
+    app.add_api_route("/api/{path:path}", gateway.handle_asgi, methods=["GET"])
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://gateway") as client:
+            return await client.get("/api/data")
+
+    response = asyncio.run(scenario())
+    assert response.status_code == 502
+    assert "too large" in response.json()["error"]
+
+
+def test_gateway_response_size_limit_allows_within_limit():
+    """上游响应体大小在 max_response_size 内 → 正常转发"""
+    body = b"x" * 512  # 512B，在 1KB 限制内
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"x-custom": "kept"})
+
+    gateway = GatewayRouter(
+        default_filters=[], max_response_size=1024,
+        transport=httpx.MockTransport(upstream),
+    )
+    gateway.route("/api/**", uri="https://upstream.test")
+    app = FastAPI()
+    app.add_api_route("/api/{path:path}", gateway.handle_asgi, methods=["GET"])
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://gateway") as client:
+            return await client.get("/api/data")
+
+    response = asyncio.run(scenario())
+    assert response.status_code == 200
+    assert response.content == body
+    assert response.headers.get("x-custom") == "kept"
+
+
+def test_gateway_response_size_limit_zero_disables_check():
+    """max_response_size=0 → 禁用响应大小检查（向后兼容）"""
+    large_body = b"x" * (60 * 1024 * 1024)  # 60MB，超过默认 50MB 限制
+
+    async def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=large_body)
+
+    gateway = GatewayRouter(
+        default_filters=[], max_response_size=0,
+        transport=httpx.MockTransport(upstream),
+    )
+    gateway.route("/api/**", uri="https://upstream.test")
+    app = FastAPI()
+    app.add_api_route("/api/{path:path}", gateway.handle_asgi, methods=["GET"])
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://gateway") as client:
+            return await client.get("/api/data")
+
+    response = asyncio.run(scenario())
+    assert response.status_code == 200
+    assert len(response.content) == 60 * 1024 * 1024
+
+
 def test_seata_context_is_isolated_between_async_tasks():
     manager = SeataTransactionManager()
     manager.set_mode("local")
@@ -340,15 +443,22 @@ def test_async_http_transaction_coordination_io_runs_off_event_loop(monkeypatch,
 
 
 def test_distributed_seata_initialization_fails_closed(monkeypatch):
-    import spring.cloud.seata as seata_module
+    """distributed 模式初始化失败时必须 fail-closed，不能静默降级到 local。
 
+    当前实现：``set_mode('distributed')`` 先设置 mode 再调用 ``_init_seata_client()``，
+    后者在 ``application_id`` 缺失或 bridge 不可达时抛 ``RuntimeError``。
+    即使初始化失败，mode 仍保持 ``distributed``，后续 ``begin_transaction`` 会因
+    bridge 未初始化而抛异常，确保不会用 local 模式执行核心业务。
+    """
     manager = SeataTransactionManager()
     manager.set_mode("local")
     manager._seata_client_initialized = False
-    monkeypatch.setattr(seata_module, "_seata_available", False)
+    # application_id 未配置 → _init_seata_client 抛 RuntimeError
+    manager.application_id = ""
 
-    with pytest.raises(RuntimeError, match="compatible Seata Python SDK"):
+    with pytest.raises(RuntimeError, match="application_id is required"):
         manager.set_mode("distributed")
+    # 即使初始化失败，mode 仍保持 distributed（fail-closed，不降级到 local）
     assert manager.get_mode() == "distributed"
     with pytest.raises(RuntimeError, match="not initialized"):
         manager.begin_transaction(name="must-not-fallback")
@@ -392,6 +502,86 @@ def test_health_and_readiness_include_every_enabled_component(monkeypatch):
     assert json.loads(aggregate.body)["status"] == "DEGRADED"
     assert readiness.status_code == 503
     assert "nacos" in json.loads(readiness.body)["reason"]
+
+
+def test_health_check_timeout_does_not_leak_threads(monkeypatch):
+    """健康检查组件卡死时，线程数应受 _HEALTH_CHECK_POOL.max_workers 限制，不会无限增长。
+
+    修复线程泄漏（P1）：旧版本每次健康检查创建新的 daemon 线程，
+    组件永久卡住时线程不断积累。新版本使用模块级有界线程池。
+    """
+    import spring.web.health as health
+
+    # 模拟永久卡住的组件检查（永远不会返回）
+    hang_event = threading.Event()
+
+    def _hanging_check():
+        hang_event.wait(timeout=30)  # 永久阻塞
+        return {"status": "UP", "enabled": True}
+
+    # 替换组件检查为永久卡住的函数
+    monkeypatch.setattr(health, "_COMPONENT_CHECKS", {
+        f"hang_{i}": (lambda: _hanging_check()) for i in range(3)
+    })
+    # 缩短超时以加快测试
+    monkeypatch.setattr(health, "_CHECK_TIMEOUT_SECONDS", 0.3)
+
+    # 记录初始线程数
+    initial_threads = threading.active_count()
+
+    # 连续调用 5 次健康检查（模拟频繁探针）
+    for _ in range(5):
+        results = health._collect_component_health()
+        # 每次都应返回 DOWN + timeout
+        for name, result in results.items():
+            assert result["status"] == "DOWN"
+            assert "timeout" in result["reason"]
+
+    # 等待一下让线程池稳定
+    time.sleep(0.5)
+
+    # 关键断言：线程数不应超过初始值 + max_workers
+    # 旧版本会创建 5 × 3 = 15 个新线程；新版本受 max_workers 限制
+    max_allowed = initial_threads + health._HEALTH_CHECK_WORKERS + 2  # 容忍少量调度线程
+    actual_threads = threading.active_count()
+    assert actual_threads <= max_allowed, (
+        f"线程泄漏：当前 {actual_threads} 线程，预期不超过 {max_allowed} "
+        f"（初始 {initial_threads} + 池大小 {health._HEALTH_CHECK_WORKERS}）"
+    )
+
+    # 清理：释放卡住的线程
+    hang_event.set()
+    time.sleep(0.5)
+
+
+def test_health_check_pool_is_reused_across_calls(monkeypatch):
+    """多次健康检查复用同一个线程池，不创建新的 ThreadPoolExecutor。"""
+    import spring.web.health as health
+
+    monkeypatch.setattr(health, "_COMPONENT_CHECKS", {
+        "ok": lambda: {"status": "UP", "enabled": True},
+    })
+
+    pool_before = id(health._HEALTH_CHECK_POOL)
+    health._collect_component_health()
+    health._collect_component_health()
+    health._collect_component_health()
+    pool_after = id(health._HEALTH_CHECK_POOL)
+
+    assert pool_before == pool_after, "线程池应跨调用复用，不应每次创建新池"
+
+
+def test_run_with_timeout_returns_down_on_exception(monkeypatch):
+    """_run_with_timeout 捕获组件异常，返回 DOWN 而非传播异常。"""
+    import spring.web.health as health
+
+    def _failing_check():
+        raise ConnectionError("component unavailable")
+
+    result = health._run_with_timeout(_failing_check, timeout=1.0)
+    assert result["status"] == "DOWN"
+    assert result["enabled"] is True
+    assert "component unavailable" in result["reason"]
 
 
 def test_http_compensation_health_reports_store_without_claiming_at(monkeypatch, tmp_path):

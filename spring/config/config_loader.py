@@ -346,6 +346,16 @@ class ConfigLoader:
         self._config['seata']['transaction_group'] = self._get_env_any(
             'SEATA_TX_GROUP', 'SEATA_TRANSACTION_GROUP',
             default=self._config['seata'].get('transaction_group', 'my_tx_group'))
+        self._config['seata']['mode'] = os.getenv(
+            'SEATA_MODE', self._config['seata'].get('mode', 'local'))
+        self._config['seata']['bridge_url'] = os.getenv(
+            'SEATA_BRIDGE_URL',
+            self._config['seata'].get('bridge_url', 'http://localhost:18091'))
+        self._config['seata']['bridge_token'] = os.getenv(
+            'SEATA_BRIDGE_TOKEN', self._config['seata'].get('bridge_token', ''))
+        self._config['seata']['bridge_timeout_s'] = float(os.getenv(
+            'SEATA_BRIDGE_TIMEOUT_S',
+            self._config['seata'].get('bridge_timeout_s', 5.0)))
         self._config['seata']['enabled'] = _to_bool(
             os.getenv('SEATA_ENABLED', self._config['seata'].get('enabled', False)), False)
 
@@ -373,7 +383,7 @@ class ConfigLoader:
         # 日志配置
         self._config.setdefault('logging', {})
         self._config['logging']['level'] = os.getenv('LOG_LEVEL', self._config['logging'].get('level', 'INFO'))
-        self._config['logging']['log_dir'] = os.getenv('LOG_DIR', self._config['logging'].get('log_dir', 'logs'))
+        self._config['logging']['log_dir'] = os.getenv('LOG_DIR', self._config['logging'].get('log_dir'))
         self._config['logging']['retention'] = os.getenv('LOG_RETENTION', self._config['logging'].get('retention', '30 days'))
         self._config['logging']['rotation'] = os.getenv('LOG_ROTATION', self._config['logging'].get('rotation', '100 MB'))
 
@@ -468,6 +478,54 @@ class ConfigLoader:
                     "生产环境启用 Seata 时只允许 mode=distributed；"
                     "实验性 HTTP/local 模式不能提供跨服务一致性"
                 )
+            if len(str(seata_config.get('bridge_token', ''))) < 16:
+                raise ConfigurationError(
+                    "生产环境 Seata distributed 模式要求 SEATA_BRIDGE_TOKEN 至少 16 个字符"
+                )
+
+        # 生产环境 AI 服务加固：禁止静默使用 FakeChatModel，强制校验 API Key
+        # 旧版本默认 AI_ALLOW_FAKE=true，缺失 api-key 时无声返回 FakeChatModel，
+        # 业务可能启动成功并持续返回测试数据，而非明确失败。
+        # 双重加固：
+        # (1) 强制 AI_ALLOW_FAKE=false，使 autoconfig 缺 key 时抛 ValueError；
+        # (2) 在此显式校验默认 provider 的 api-key 已配置，给出清晰错误。
+        os.environ['AI_ALLOW_FAKE'] = 'false'
+        ai_config = self._config.get('ai', {}) or {}
+        spring_ai = self._config.get('spring', {}).get('ai', {}) or {}
+        # AI 模块默认启用（未显式 enabled=false 即视为启用）
+        ai_enabled = ai_config.get('enabled', spring_ai.get('enabled', True))
+        if _to_bool(ai_enabled, True):
+            provider = str(
+                spring_ai.get('default-provider')
+                or ai_config.get('default_provider')
+                or ai_config.get('default-provider')
+                or 'openai'
+            ).lower()
+            # ollama 本地部署无需 api-key；其余 provider 必须配置 api-key
+            if provider != 'ollama':
+                # 兼容 spring.ai.<provider>.api-key（kebab）与 ai.<provider>.api_key（snake）
+                provider_cfg = (
+                    spring_ai.get(provider, {})
+                    or ai_config.get(provider, {})
+                    or {}
+                )
+                api_key = (
+                    provider_cfg.get('api-key')
+                    or provider_cfg.get('api_key')
+                    or ''
+                )
+                if not api_key:
+                    env_hint = {
+                        'openai': 'OPENAI_API_KEY',
+                        'deepseek': 'DEEPSEEK_API_KEY',
+                        'moonshot': 'MOONSHOT_API_KEY',
+                        'zhipu': 'ZHIPUAI_API_KEY',
+                    }.get(provider, f'{provider.upper()}_API_KEY')
+                    raise ConfigurationError(
+                        f"生产环境 AI 服务 (provider={provider}) 必须配置 api-key；"
+                        f"请设置 {env_hint} 环境变量或 application.yml 的 "
+                        f"spring.ai.{provider}.api-key。生产环境不允许静默使用 FakeChatModel。"
+                    )
     
     def get_config(self) -> Dict[str, Any]:
         """获取完整配置"""

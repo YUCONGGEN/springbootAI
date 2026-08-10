@@ -60,10 +60,24 @@ from spring.context.registry import BeanRegistry
 
 logger = logging.getLogger("Spring.AI")
 
-# 生产环境安全开关：AI_ALLOW_FAKE=true（默认）时，api_key 缺失降级 FakeChatModel；
-# 设为 false 时，api_key 缺失直接抛 ConfigurationError，防止生产配错无声返回假数据。
-_AI_ALLOW_FAKE = os.environ.get("AI_ALLOW_FAKE", "true").strip().lower() in (
-    "true", "1", "yes", "on")
+
+def _ai_allow_fake() -> bool:
+    """读取 ``AI_ALLOW_FAKE`` 环境变量，决定 api_key 缺失时是否降级 ``FakeChatModel``。
+
+    安全默认：``false``。开发/测试环境需**显式**设置 ``AI_ALLOW_FAKE=true``
+    才允许降级，防止生产环境配错时无声返回测试数据。
+
+    设计要点：
+    - 每次调用实时读取环境变量（非模块导入时一次性读取），便于 ``config_loader``
+      在生产 profile 下运行时强制 ``AI_ALLOW_FAKE=false``，避免导入时序导致的绕过。
+    - 接受 ``true/1/yes/on``（大小写不敏感）为 True，其余为 False，与框架
+      ``_to_bool`` 规则一致。
+    - 生产环境由 ``config_loader._validate_config`` 双重加固：
+      (1) 强制 ``AI_ALLOW_FAKE=false``；
+      (2) 校验默认 provider 的 api-key 已配置，缺失直接抛 ``ConfigurationError``。
+    """
+    return os.environ.get("AI_ALLOW_FAKE", "false").strip().lower() in (
+        "true", "1", "yes", "on")
 
 
 # ==================== 类型化配置 dataclass ====================
@@ -258,7 +272,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
 
     if provider == "openai":
         if not props.openai.api_key:
-            if not _AI_ALLOW_FAKE:
+            if not _ai_allow_fake():
                 raise ValueError(
                     "AI_ALLOW_FAKE=false 但 spring.ai.openai.api-key 未配置。"
                     " 请设置 OPENAI_API_KEY 环境变量或 application.yml 的 api-key。")
@@ -295,7 +309,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
     if provider in _COMPAT_SPECS:
         pname, lc_mod, lc_cls, cfg = _COMPAT_SPECS[provider]
         if not cfg.api_key:
-            if not _AI_ALLOW_FAKE:
+            if not _ai_allow_fake():
                 raise ValueError(
                     f"AI_ALLOW_FAKE=false 但 spring.ai.{provider}.api-key 未配置。"
                     f" 请设置 {provider.upper()}_API_KEY 环境变量。")
@@ -309,7 +323,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
         )
 
     logger.warning("未知 AI provider: %s", provider)
-    if not _AI_ALLOW_FAKE:
+    if not _ai_allow_fake():
         raise ValueError(
             f"AI_ALLOW_FAKE=false 但未知 provider: {provider}。"
             " 请检查 application.yml 的 spring.ai.default-provider 配置。")
@@ -323,7 +337,7 @@ def _build_embedding_model(props: AIProperties, redis_client=None):
 
     if provider == "openai":
         if not props.openai.api_key:
-            if not _AI_ALLOW_FAKE:
+            if not _ai_allow_fake():
                 raise ValueError(
                     "AI_ALLOW_FAKE=false 但 Embedding 未配置 api-key。"
                     " 请设置 OPENAI_API_KEY 环境变量。")
@@ -351,7 +365,7 @@ def _build_embedding_model(props: AIProperties, redis_client=None):
     if provider in ("deepseek", "moonshot", "zhipu"):
         cfg = getattr(props, provider)
         if not cfg.api_key:
-            if not _AI_ALLOW_FAKE:
+            if not _ai_allow_fake():
                 raise ValueError(
                     f"AI_ALLOW_FAKE=false 但 Embedding 未配置 {provider} api-key。")
             logger.warning("Embedding 未配置 %s api-key，降级 FakeEmbeddingModel",
@@ -364,7 +378,7 @@ def _build_embedding_model(props: AIProperties, redis_client=None):
             circuit_breaker=cb,
         )
 
-    if not _AI_ALLOW_FAKE:
+    if not _ai_allow_fake():
         raise ValueError(
             "AI_ALLOW_FAKE=false 但未知 Embedding provider。"
             " 请检查 application.yml 的 spring.ai.default-provider 配置。")

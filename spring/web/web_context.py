@@ -747,7 +747,12 @@ class WebApplicationContext:
         # 优先使用 uvicorn，fallback 到其他方案
         try:
             import uvicorn
-            uvicorn.run(self.fastapi_app, host=host, port=port)
+            # log_config=None 禁用 Uvicorn 默认 LOGGING_CONFIG，
+            # 避免其为 uvicorn/uvicorn.access logger 添加 StreamHandler（propagate=False）
+            # 覆盖 SpringLogger._intercept_third_party_loggers 的 LoguruHandler 拦截。
+            # 拦截由 init_logging → _setup_loguru → _intercept_third_party_loggers 完成，
+            # 使访问日志（GET /api/xxx 200 OK）和启动日志也写入配置的日志文件。
+            uvicorn.run(self.fastapi_app, host=host, port=port, log_config=None)
         except ImportError:
             try:
                 from a2wsgi import ASGIMiddleware, WSGIServer

@@ -2,10 +2,10 @@
 健康检查模块
 提供Actuator风格的健康检查端点
 """
+import atexit
 import time
 import logging
-import threading
-import queue
+import concurrent.futures
 import platform
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter
@@ -41,15 +41,35 @@ _COMPONENT_CHECKS = {
     'seata': lambda: _check_seata(),
 }
 
+# 模块级有界线程池：限制健康检查的总线程数，防止组件卡死时线程无限增长。
+#
+# 修复线程泄漏（P1）：
+# 旧版本每次 /actuator/health 调用都为每个组件创建新的 daemon 线程，
+# 组件永久卡住时线程不会终止，频繁探针（如 Docker HEALTHCHECK 每 5s）
+# 会不断积累后台线程，最终耗尽内存。
+#
+# 新版本使用模块级有界线程池：
+# - max_workers 限制总线程数（组件数 × 2，留出并发余量）
+# - 卡住的 worker 占用槽位但不会新增线程
+# - future.result(timeout=...) 保证响应不阻塞
+# - 超时的 future 调用 cancel() 清理队列中的待运行任务
+# - 进程退出时 atexit 注册 shutdown(wait=False) 不等待卡住的任务
+_HEALTH_CHECK_WORKERS = max(len(_COMPONENT_CHECKS) * 2, 10)
+_HEALTH_CHECK_POOL = ThreadPoolExecutor(
+    max_workers=_HEALTH_CHECK_WORKERS,
+    thread_name_prefix="health-check",
+)
+atexit.register(_HEALTH_CHECK_POOL.shutdown, wait=False)
+
 
 def _run_with_timeout(func, timeout: float = _CHECK_TIMEOUT_SECONDS):
     """
-    在独立 daemon 线程中执行健康检查，超时则立即返回 DOWN，不阻塞主请求。
+    在共享有界线程池中执行健康检查，超时返回 DOWN。
 
-    使用 daemon 线程而非 concurrent.futures.ThreadPoolExecutor，
-    因为后者在 with 块退出时会 shutdown(wait=True) 阻塞等待卡住的任务完成，
-    反而会让超时机制失效。daemon 线程超时后主线程立即返回，
-    卡住的线程在后台继续运行但不影响响应，进程退出时自动清理。
+    修复线程泄漏：旧版本每次调用创建新的 daemon 线程，组件永久卡死时
+    线程不会终止，频繁探针会不断积累后台线程。改用模块级
+    ``_HEALTH_CHECK_POOL``，max_workers 限制总线程数，卡住的 worker
+    占用有界槽位但不会新增。
 
     Args:
         func: 无参的可调用对象，返回状态字典
@@ -58,43 +78,48 @@ def _run_with_timeout(func, timeout: float = _CHECK_TIMEOUT_SECONDS):
     Returns:
         检查结果字典；若超时则返回 DOWN + reason
     """
-    result_q: "queue.Queue" = queue.Queue()
-
-    def _worker():
-        try:
-            result_q.put(('ok', func()))
-        except Exception as e:
-            result_q.put(('err', e))
-
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-    t.join(timeout=timeout)
-
-    if t.is_alive():
-        # 超时：daemon 线程继续在后台跑，主线程立即返回
+    future = _HEALTH_CHECK_POOL.submit(func)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        # 超时：尝试取消任务（仅当任务还在队列中未开始时生效；
+        # 已运行的无法强制终止，但占用的是有界槽位，不会新增线程）
+        future.cancel()
         return {
             'status': 'DOWN',
             'enabled': True,
             'reason': f'health check timeout after {timeout}s'
         }
-
-    try:
-        kind, val = result_q.get_nowait()
-        if kind == 'ok':
-            return val
-        return {'status': 'DOWN', 'enabled': True, 'reason': str(val)}
-    except queue.Empty:
-        return {'status': 'DOWN', 'enabled': True, 'reason': 'health check returned no result'}
+    except Exception as e:
+        return {'status': 'DOWN', 'enabled': True, 'reason': str(e)}
 
 
 def _collect_component_health() -> dict:
-    """并发执行各组件检查，使探针耗时接近单个检查的最大超时。"""
-    with ThreadPoolExecutor(max_workers=len(_COMPONENT_CHECKS)) as executor:
-        futures = {
-            name: executor.submit(_run_with_timeout, check)
-            for name, check in _COMPONENT_CHECKS.items()
-        }
-        return {name: future.result() for name, future in futures.items()}
+    """并发执行各组件检查，复用模块级有界线程池，探针耗时接近单个检查的最大超时。
+
+    修复线程泄漏：旧版本每次调用创建新的 ``ThreadPoolExecutor``（with 块退出时
+    ``shutdown(wait=True)`` 阻塞等待卡住任务，反而让超时失效），并在每个
+    ``_run_with_timeout`` 内再创建 daemon 线程，导致线程数 = 组件数 × 2 每次调用。
+    新版本直接提交到共享有界池，``future.result(timeout=...)`` 保证不阻塞。
+    """
+    futures = {
+        name: _HEALTH_CHECK_POOL.submit(check)
+        for name, check in _COMPONENT_CHECKS.items()
+    }
+    results = {}
+    for name, future in futures.items():
+        try:
+            results[name] = future.result(timeout=_CHECK_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            results[name] = {
+                'status': 'DOWN',
+                'enabled': True,
+                'reason': f'health check timeout after {_CHECK_TIMEOUT_SECONDS}s'
+            }
+        except Exception as e:
+            results[name] = {'status': 'DOWN', 'enabled': True, 'reason': str(e)}
+    return results
 
 
 def _enabled_down_components(components: dict) -> list:
@@ -389,17 +414,13 @@ def _check_seata() -> dict:
                 'status': 'DOWN', 'enabled': True,
                 'reason': 'Local mode does not provide distributed transaction guarantees',
             }
-        if seata_manager._seata_client_initialized:
-            return {
-                'status': 'UP',
-                'enabled': True,
-                'server_addr': seata_manager.server_addr,
-                'application_id': seata_manager.application_id,
-                'transaction_group': seata_manager.transaction_group
-            }
+        health = seata_manager.check_health()
         return {
-            'status': 'DOWN', 'enabled': True,
-            'reason': 'Distributed Seata client is not initialized',
+            **health,
+            'enabled': True,
+            'bridge_url': seata_manager.bridge_url,
+            'application_id': seata_manager.application_id,
+            'transaction_group': seata_manager.transaction_group,
         }
     except Exception as e:
         return {

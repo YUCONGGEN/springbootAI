@@ -18,6 +18,47 @@ except ImportError:
     loguru_logger = None
 
 
+# ---------------------------------------------------------------------------
+# LoguruHandler：将标准 logging 日志转发到 Loguru
+# 必须定义在 SpringLogger 之前，因为 _setup_loguru / _intercept_third_party_loggers
+# 需要引用它来拦截 Uvicorn/Starlette/FastAPI 的标准 logging 输出。
+# ---------------------------------------------------------------------------
+if _loguru_available:
+    class LoguruHandler(logging.Handler):
+        """将标准 logging 日志转发到 Loguru 的处理器。
+
+        Uvicorn/Starlette/FastAPI 使用标准 ``logging`` 模块输出日志，
+        默认配置了各自的 StreamHandler 且 ``propagate=False``，
+        导致日志只输出到控制台、不经过 Loguru 的文件 handler。
+        本处理器替换它们的 StreamHandler，使日志统一写入配置的日志文件。
+        """
+
+        def emit(self, record: logging.LogRecord):
+            """将 LogRecord 转发到 loguru。"""
+            try:
+                # 将标准 logging 级名映射到 loguru 级名
+                try:
+                    level = loguru_logger.level(record.levelname).name
+                except (ValueError, TypeError):
+                    level = record.levelname.lower()
+                # 使用 bind 附加原始 logger 名称作为上下文，再 log
+                # 不使用 opt(depth=...) 因为标准 logging 的调用栈深度不固定，
+                # 容易导致栈越界异常被 handleError 静默吞掉
+                message = record.getMessage()
+                if record.exc_info:
+                    loguru_logger.bind(name=record.name).opt(
+                        exception=record.exc_info).log(level, message)
+                else:
+                    loguru_logger.bind(name=record.name).log(level, message)
+            except Exception:
+                self.handleError(record)
+
+    # 将 root logger 的日志也转发到 Loguru（兼容未拦截的第三方库）
+    logging.basicConfig(handlers=[LoguruHandler()], level=logging.INFO)
+else:
+    LoguruHandler = None
+
+
 def _format_config_error(config_key: str, config_value, reason: str,
                          suggestions: list = None) -> str:
     """格式化配置错误信息为清晰可读的多行文本。
@@ -119,24 +160,25 @@ class SpringLogger:
             self.level = level.upper()
         if log_format is not None:
             self.log_format = log_format
-        # 记录是否是用户显式配置了 log_dir：只有显式配置才 strict 校验，
-        # 保留旧值（log_dir=None）时用非严格模式，避免默认 'logs' 在只读 CWD 报错
-        log_dir_explicitly_set = log_dir is not None
+        # 记录是否是用户显式配置了 log_dir：
+        # - 有值 → strict 校验 + 创建文件 handler（日志写入用户指定目录）
+        # - None（未配置）→ 不创建文件 handler，只有控制台输出
+        log_dir_explicitly_set = log_dir is not None and str(log_dir).strip() != ''
         if log_dir_explicitly_set:
             self.log_dir = log_dir
         if retention is not None:
             self.retention = retention
         if rotation is not None:
             self.rotation = rotation
-        # 重建日志处理器：用户显式配置 log_dir 时 strict=True（路径错必须报错），
-        # 否则 strict=False（保留旧值/默认值时允许降级）。
-        # reconfigure 始终启用文件 handler（enable_file=True），
-        # 因为此时用户配置已读取，应该创建日志文件。
+        # 重建日志处理器：
+        # - 用户显式配置 log_dir → strict=True + enable_file=True（路径错必须报错）
+        # - 用户未配置 log_dir → strict=False + enable_file=False（只有控制台，不创建文件）
         strict_mode = log_dir_explicitly_set
+        enable_file = log_dir_explicitly_set
         if self._use_loguru:
-            self._setup_loguru(strict=strict_mode, enable_file=True)
+            self._setup_loguru(strict=strict_mode, enable_file=enable_file)
         else:
-            self._setup_std_logging(strict=strict_mode, enable_file=True)
+            self._setup_std_logging(strict=strict_mode, enable_file=enable_file)
 
     def _validate_log_dir(self, strict: bool) -> bool:
         """校验日志目录可创建且可写入。
@@ -279,6 +321,49 @@ class SpringLogger:
             encoding="utf-8",
         )
 
+        # 拦截 Uvicorn/Starlette/FastAPI 的标准 logging，转发到 Loguru
+        # 使访问日志（GET /api/xxx 200 OK）和启动日志也写入日志文件
+        self._intercept_third_party_loggers()
+
+    def _intercept_third_party_loggers(self):
+        """拦截第三方库（Uvicorn/Starlette/FastAPI）的标准 logging，转发到 Loguru。
+
+        Uvicorn 默认 LOGGING_CONFIG 为 ``uvicorn`` 和 ``uvicorn.access`` logger
+        配置了各自的 StreamHandler 且 ``propagate=False``，导致：
+
+        1. 访问日志（``GET /api/xxx 200 OK``）只输出到控制台，不写入日志文件
+        2. 启动/关闭日志（``Started server process``、``Application startup complete``）同理
+
+        本方法移除这些 logger 的 StreamHandler，替换为 ``LoguruHandler``，
+        使其日志统一通过 Loguru 输出（含控制台 + 文件）。
+
+        配合 ``WebApplicationContext.run()`` 传 ``log_config=None`` 给 Uvicorn，
+        防止 Uvicorn 启动时重新添加 StreamHandler 覆盖本拦截。
+
+        拦截的 logger：
+        - ``uvicorn`` — 服务器启动/关闭日志
+        - ``uvicorn.error`` — 服务器错误日志
+        - ``uvicorn.access`` — HTTP 访问日志（请求方法/路径/状态码）
+        - ``fastapi`` — FastAPI 框架日志
+        - ``starlette`` — Starlette ASGI 框架日志
+        """
+        if not self._use_loguru or LoguruHandler is None:
+            # 非 loguru 模式：让第三方 logger 传播到 root（root 有 Spring logger 的 handler）
+            for name in ('uvicorn', 'uvicorn.error', 'uvicorn.access',
+                         'fastapi', 'starlette'):
+                logging.getLogger(name).propagate = True
+            return
+
+        for name in ('uvicorn', 'uvicorn.error', 'uvicorn.access',
+                     'fastapi', 'starlette'):
+            third_party_logger = logging.getLogger(name)
+            # 移除原有 handler（Uvicorn 的 StreamHandler），避免控制台重复输出
+            third_party_logger.handlers.clear()
+            # 添加 LoguruHandler 转发到 loguru（统一控制台 + 文件输出）
+            third_party_logger.addHandler(LoguruHandler())
+            # 不传播到 root（root 也有 LoguruHandler，避免重复转发）
+            third_party_logger.propagate = False
+
     def _setup_std_logging(self, strict: bool = False, enable_file: bool = True):
         """配置标准logging（fallback）。
 
@@ -393,10 +478,10 @@ def init_logging(config: dict) -> None:
     通过 ``reconfigure`` 重新配置单例 SpringLogger，使 ``logging.log_dir`` / ``level``
     等配置生效。直接 ``SpringLogger(log_dir=...)`` 因单例 ``_initialized`` 守卫不会更新参数。
 
-    如果用户配置的 ``log_dir`` 路径不合法/不可创建/不可写入，``reconfigure`` 会抛出
-    ``LoggingConfigError``。本函数捕获后打印明确错误横幅到 stderr（确保用户看到），
-    然后重新抛出，让上层 fail-fast 终止启动——配置写错必须让用户知道，而不是静默
-    降级到默认目录。
+    行为说明：
+    - 用户**配置了** ``log_dir`` → 控制台 + 日志文件（strict 校验路径，错则抛异常）
+    - 用户**未配置** ``log_dir`` → **仅控制台输出**，不创建日志文件
+    - 用户配置的 ``log_dir`` 路径不合法/不可创建/不可写入 → 抛 ``LoggingConfigError``
 
     Args:
         config: 配置字典（logging 子字典），包含 level/log_dir/retention/rotation 等
@@ -417,21 +502,3 @@ def init_logging(config: dict) -> None:
         # 只打印格式化的错误信息（含配置项/值/原因/建议），不输出框架 traceback
         print(f"\n{e}\n", file=sys.stderr)
         raise
-
-
-# 兼容标准logging模块
-if _loguru_available:
-    class LoguruHandler(logging.Handler):
-        """Loguru处理器，用于将标准logging日志转发到Loguru"""
-        
-        def emit(self, record: logging.LogRecord):
-            """处理日志记录"""
-            try:
-                level = loguru_logger.level(record.levelname).name
-                message = self.format(record)
-                loguru_logger.log(level, message)
-            except Exception:
-                self.handleError(record)
-    
-    # 将标准logging日志转发到Loguru
-    logging.basicConfig(handlers=[LoguruHandler()], level=logging.INFO)

@@ -540,8 +540,10 @@ class TestAiAnnotations:
 # ==================== AutoConfig ====================
 
 class TestAutoConfig:
-    def test_configure_ai_with_fake_provider_registers_beans(self):
+    def test_configure_ai_with_fake_provider_registers_beans(self, monkeypatch):
         """configure_ai 装配 ChatModel/Memory/ChatClient/VectorStore Bean"""
+        # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
+        monkeypatch.setenv("AI_ALLOW_FAKE", "true")
         from spring.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {
@@ -560,8 +562,10 @@ class TestAutoConfig:
         assert registry.contains("aiChatClient")
         assert registry.get_by_type(ChatClient) is not None
 
-    def test_configure_ai_openai_without_key_falls_back_to_fake(self):
+    def test_configure_ai_openai_without_key_falls_back_to_fake(self, monkeypatch):
         """配置 openai 但无 api-key → 降级 FakeChatModel"""
+        # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
+        monkeypatch.setenv("AI_ALLOW_FAKE", "true")
         from spring.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {
@@ -575,8 +579,10 @@ class TestAutoConfig:
         beans = configure_ai(registry=registry, config=loader)
         assert isinstance(beans["aiChatModel"], FakeChatModel)
 
-    def test_configure_ai_chat_client_callable_after_assembly(self):
+    def test_configure_ai_chat_client_callable_after_assembly(self, monkeypatch):
         """装配后的 ChatClient 可直接调用"""
+        # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
+        monkeypatch.setenv("AI_ALLOW_FAKE", "true")
         from spring.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {"default-provider": "fake"}}}
@@ -713,8 +719,10 @@ class TestFunctionCallingClosure:
 class TestEmbeddingAutoconfigAndRedisVectorStore:
     """缺口2: EmbeddingModel 装配 + RedisVectorStore"""
 
-    def test_autoconfig_assembles_embedding_model_bean(self):
+    def test_autoconfig_assembles_embedding_model_bean(self, monkeypatch):
         """configure_ai 装配 aiEmbeddingModel Bean"""
+        # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
+        monkeypatch.setenv("AI_ALLOW_FAKE", "true")
         from spring.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {"default-provider": "unknown"}}}
@@ -725,8 +733,10 @@ class TestEmbeddingAutoconfigAndRedisVectorStore:
         assert isinstance(beans["aiEmbeddingModel"], FakeEmbeddingModel)
         assert registry.contains("aiEmbeddingModel")
 
-    def test_autoconfig_wires_embedding_into_vector_store(self):
+    def test_autoconfig_wires_embedding_into_vector_store(self, monkeypatch):
         """VectorStore 注入了 EmbeddingModel，可自动嵌入检索"""
+        # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
+        monkeypatch.setenv("AI_ALLOW_FAKE", "true")
         from spring.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {"default-provider": "unknown"}}}
@@ -1158,7 +1168,7 @@ class TestP1Fixes:
             ac._build_chat_model(props)
 
     def test_ai_allow_fake_true_returns_fake_on_missing_key(self, monkeypatch):
-        """AI_ALLOW_FAKE=true（默认）+ api_key 缺失 → FakeChatModel"""
+        """AI_ALLOW_FAKE=true（显式启用）+ api_key 缺失 → FakeChatModel"""
         monkeypatch.setenv("AI_ALLOW_FAKE", "true")
         import importlib
         import spring.ai.autoconfig as ac

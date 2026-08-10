@@ -1,11 +1,11 @@
 """
 分布式事务模块
-集成真实 Seata，并提供仅供开发验证的 HTTP 补偿协调器
+通过官方 Java 客户端桥接真实 Apache Seata，并提供仅供开发验证的 HTTP 补偿协调器
 
 支持三种模式：
 - local: 本地模式，仅追踪事务状态（默认）
 - http: 实验性 HTTP 补偿模式，不提供 AT 强一致性，禁止用于生产
-- distributed: 真实Seata Server模式（需要seata SDK）
+- distributed: 真实 Seata Server + TCC 模式（需要官方 Java 客户端桥接服务）
 
 实验性 HTTP 补偿模式工作原理：
 1. TM（事务发起方）开启全局事务，生成XID
@@ -14,11 +14,9 @@
 4. TM 提交时通知所有分支提交；回滚时通知所有分支回滚
 5. 分支服务暴露 /seata/branch/{branchId}/commit 和 /seata/branch/{branchId}/rollback 端点
 
-注意：分布式模式(distributed)要启用完整的分布式事务功能，请：
-1. 安装Seata Server（https://seata.io/zh-cn/docs/overview/what-is-seata.html）
-2. 安装并验证与本适配层 API 兼容的企业 Seata Python SDK
-3. 配置registry.conf和file.conf
-4. 在启动时设置SEATA_ENABLED=true
+distributed 模式不使用非官方 Python SDK。Python 通过受令牌保护的 HTTP
+桥接服务调用 Apache Seata 官方 Java TM/RM 客户端；业务分支按 TCC 协议实现
+prepare/commit/rollback 回调。
 """
 import logging
 import time
@@ -30,22 +28,8 @@ import tempfile
 from contextvars import ContextVar
 from typing import Dict, Any, Optional, List, Callable
 from urllib import request as urlrequest
-from urllib.error import URLError, HTTPError
 from spring.cloud.transaction_store import SQLiteTransactionStore
-
-# 可选导入Seata
-try:
-    import seata
-    from seata.rm import DataSourceProxy
-    from seata.tm import GlobalTransaction
-    from seata.core.context.RootContext import RootContext
-    _seata_available = True
-except ImportError:
-    seata = None
-    DataSourceProxy = None
-    GlobalTransaction = None
-    RootContext = None
-    _seata_available = False
+from spring.cloud.seata_bridge import SeataBridgeClient, SeataBridgeError
 
 logger = logging.getLogger("Spring.Cloud.Seata")
 
@@ -78,6 +62,10 @@ class SeataTransactionManager:
         self.server_addr = server_addr
         self.application_id = application_id
         self.transaction_group = transaction_group
+        self.bridge_url = os.getenv("SEATA_BRIDGE_URL", "http://localhost:18091")
+        self.bridge_token = os.getenv("SEATA_BRIDGE_TOKEN", "")
+        self.bridge_timeout_s = 5.0
+        self._bridge_client: Optional[SeataBridgeClient] = None
         self.mode = mode  # 'local', 'http', or 'distributed'
         self._transaction_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
             'springpy_seata_transaction_context', default=None
@@ -104,15 +92,36 @@ class SeataTransactionManager:
         if mode == "distributed":
             self.set_mode(mode)
 
-    def configure(self, server_addr: str = "localhost:8091", application_id: str = "",
-                  transaction_group: str = "my_tx_group", mode: str = "local",
-                  store_path: Optional[str] = None,
-                  recovery_grace_ms: int = 30000,
-                  recovery_interval_s: float = 30.0) -> None:
+    def configure(
+        self,
+        server_addr: str = "localhost:8091",
+        application_id: str = "",
+        transaction_group: str = "my_tx_group",
+        mode: str = "local",
+        bridge_url: str = "http://localhost:18091",
+        bridge_token: str = "",
+        bridge_timeout_s: float = 5.0,
+        store_path: Optional[str] = None,
+        recovery_grace_ms: int = 30000,
+        recovery_interval_s: float = 30.0,
+    ) -> None:
         """重新配置单例；初始化入口不能依赖第二次构造调用。"""
+        client_config_changed = (
+            application_id != self.application_id
+            or transaction_group != self.transaction_group
+            or bridge_url.rstrip('/') != self.bridge_url.rstrip('/')
+            or bridge_token != self.bridge_token
+            or float(bridge_timeout_s) != self.bridge_timeout_s
+        )
         self.server_addr = server_addr
         self.application_id = application_id
         self.transaction_group = transaction_group
+        self.bridge_url = bridge_url
+        self.bridge_token = bridge_token
+        self.bridge_timeout_s = float(bridge_timeout_s)
+        if client_config_changed:
+            self._bridge_client = None
+            self._seata_client_initialized = False
         if store_path is not None:
             normalized_path = os.path.abspath(os.path.expanduser(store_path))
             if normalized_path != self._transaction_store_path:
@@ -141,33 +150,45 @@ class SeataTransactionManager:
         self._transaction_context.set(current)
     
     def _init_seata_client(self):
-        """初始化 Seata 客户端；分布式模式禁止静默降级。"""
-        if not _seata_available:
-            raise RuntimeError("seata.mode=distributed requires a compatible Seata Python SDK")
+        """连接官方 Java Seata bridge；分布式模式禁止静默降级。"""
         if not self.application_id:
             raise RuntimeError("seata.application_id is required in distributed mode")
         try:
-            # 设置Seata配置环境变量
-            import os
-            os.environ.setdefault('SEATA_IP', self.server_addr.split(':')[0])
-            os.environ.setdefault('SEATA_PORT', self.server_addr.split(':')[1] if ':' in self.server_addr else '8091')
-            os.environ.setdefault('SEATA_APPLICATION_ID', self.application_id)
-            os.environ.setdefault('SEATA_TX_GROUP', self.transaction_group)
-            
-            logger.info(f"[Seata] Initializing Seata client with server: {self.server_addr}, application_id: {self.application_id}")
-            
-            if hasattr(seata, 'init'):
-                seata.init()
-            elif hasattr(seata, 'config') and hasattr(seata.config, 'init'):
-                seata.config.init()
-            else:
-                raise RuntimeError("installed Seata SDK does not expose a supported init API")
-
+            client = SeataBridgeClient(
+                self.bridge_url,
+                self.bridge_token,
+                timeout_s=self.bridge_timeout_s,
+            )
+            health = client.health()
+            if health.get('status') != 'UP':
+                raise RuntimeError(f"Seata bridge is not ready: {health}")
+            bridge_group = health.get('transactionGroup')
+            if bridge_group and bridge_group != self.transaction_group:
+                raise RuntimeError(
+                    "Seata transaction group mismatch: "
+                    f"client={self.transaction_group}, bridge={bridge_group}"
+                )
+            self._bridge_client = client
             self._seata_client_initialized = True
-            logger.info("[Seata] Client initialized successfully in distributed mode")
+            logger.info(
+                "[Seata] Official client bridge ready: bridge=%s server=%s application_id=%s",
+                self.bridge_url,
+                health.get('serverAddr', self.server_addr),
+                self.application_id,
+            )
         except Exception as e:
+            self._bridge_client = None
             self._seata_client_initialized = False
             raise RuntimeError(f"failed to initialize distributed Seata client: {e}") from e
+
+    def check_health(self) -> Dict[str, Any]:
+        """Return live bridge and coordinator health for readiness checks."""
+        if self.mode != "distributed" or self._bridge_client is None:
+            return {"status": "DOWN", "reason": "distributed bridge is not initialized"}
+        try:
+            return self._bridge_client.health()
+        except SeataBridgeError as exc:
+            return {"status": "DOWN", "reason": str(exc)}
     
     def begin_transaction(self, timeout: int = 60000, name: str = "") -> str:
         """
@@ -232,16 +253,24 @@ class SeataTransactionManager:
             logger.info(f"[Seata-HTTP] Begin global transaction: {tx_id}")
         
         elif self.mode == "distributed":
-            if not (_seata_available and self._seata_client_initialized):
+            if not (self._bridge_client and self._seata_client_initialized):
                 self._cleanup_context()
                 raise RuntimeError("distributed Seata client is not initialized")
             try:
-                GlobalTransaction.begin(timeout, name)
-                seata_tx_id = RootContext.getXID()
+                response = self._bridge_client.begin(
+                    timeout_ms=timeout,
+                    name=name or "springpy-global-transaction",
+                    application_id=self.application_id,
+                    transaction_group=self.transaction_group,
+                )
+                seata_tx_id = str(response.get('xid', ''))
                 if not seata_tx_id:
                     raise RuntimeError("Seata transaction began without an XID")
                 tx_id = seata_tx_id
-                self._set_context(tx_id=tx_id)
+                self._set_context(
+                    tx_id=tx_id,
+                    status=str(response.get('status', 'Begin')),
+                )
                 logger.info(f"[Seata] Begin global transaction (distributed): {tx_id}")
                 return tx_id
             except Exception as e:
@@ -283,9 +312,14 @@ class SeataTransactionManager:
 
     def register_branch(self, xid: str, branch_id: str = "", resource_id: str = "",
                         callback_url: str = "", commit_cb: Callable = None,
-                        rollback_cb: Callable = None, service_name: str = "") -> str:
+                        rollback_cb: Callable = None, service_name: str = "",
+                        metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        注册分支事务（实验性 HTTP 补偿模式）
+        注册分支事务。
+
+        ``http`` 模式把回调写入本地补偿存储；``distributed`` 模式通过
+        官方 Java RM 客户端向 Seata TC 注册真正的 TCC 分支，并立即执行
+        ``callback_url/{branch_id}/prepare``。
         
         Args:
             xid: 全局事务ID
@@ -295,6 +329,7 @@ class SeataTransactionManager:
             commit_cb: 本地提交回调函数
             rollback_cb: 本地回滚回调函数
             service_name: 服务名
+            metadata: 传给三阶段回调的业务参数；不要放密钥或大对象
 
         Returns:
             branch_id
@@ -307,6 +342,28 @@ class SeataTransactionManager:
             if transaction is None or transaction['status'] in {'COMMITTED', 'ROLLED_BACK'}:
                 raise ValueError(f"Unknown or completed HTTP transaction: {xid}")
 
+        if self.mode == 'distributed':
+            if not (self._bridge_client and self._seata_client_initialized):
+                raise RuntimeError("distributed Seata client is not initialized")
+            if commit_cb or rollback_cb:
+                raise ValueError(
+                    "distributed TCC branches require durable callback_url endpoints; "
+                    "process-local callbacks are not restart safe"
+                )
+            if not callback_url:
+                raise ValueError("distributed TCC branches require callback_url")
+            response = self._bridge_client.register_branch(
+                xid,
+                branch_id=branch_id,
+                resource_id=resource_id,
+                callback_url=callback_url,
+                service_name=service_name or self.application_id,
+                metadata=metadata,
+            )
+            returned_branch_id = str(response.get('branchId', ''))
+            if returned_branch_id != branch_id:
+                raise RuntimeError("Seata bridge returned a mismatched branch ID")
+
         branch = {
             'branch_id': branch_id,
             'xid': xid,
@@ -315,6 +372,7 @@ class SeataTransactionManager:
             'service_name': service_name or self.application_id,
             'status': BranchStatus.REGISTERED,
             'registered_at': time.time(),
+            'metadata': metadata or {},
         }
 
         if self.mode == 'http':
@@ -334,8 +392,14 @@ class SeataTransactionManager:
                     'rollback': rollback_cb,
                 }
 
-        logger.info(f"[Seata-HTTP] Branch registered: xid={xid[:16]}... branch_id={branch_id[:16]}... "
-                     f"service={service_name} url={callback_url}")
+        logger.info(
+            "[Seata-%s] Branch registered: xid=%s... branch_id=%s... service=%s url=%s",
+            "TCC" if self.mode == "distributed" else "HTTP",
+            xid[:16],
+            branch_id[:16],
+            service_name,
+            callback_url,
+        )
         return branch_id
 
     def _notify_branch(self, branch: dict, action: str) -> bool:
@@ -462,17 +526,18 @@ class SeataTransactionManager:
             
             # 分布式模式
             if self.mode == "distributed":
-                if not (_seata_available and self._seata_client_initialized):
+                if not (self._bridge_client and self._seata_client_initialized):
                     logger.error("Distributed Seata client is not initialized; commit rejected")
                     return False
                 try:
-                    GlobalTransaction.commit()
-                    self._set_context(status='COMMITTED')
+                    response = self._bridge_client.commit(tx_id)
+                    if not response.get('success', False):
+                        raise SeataBridgeError(f"commit rejected: {response}")
+                    self._set_context(status=str(response.get('status', 'Committed')))
                     logger.info(f"[Seata] Commit global transaction: {tx_id}, duration={duration:.2f}ms")
                     return True
                 except Exception as e:
-                    logger.error(f"[Seata] Failed to commit global transaction: {e}. Rolling back...")
-                    self.rollback_transaction(tx_id)
+                    logger.error(f"[Seata] Failed to commit global transaction: {e}")
                     return False
             
             # 本地模式
@@ -547,12 +612,14 @@ class SeataTransactionManager:
             
             # 分布式模式
             if self.mode == "distributed":
-                if not (_seata_available and self._seata_client_initialized):
+                if not (self._bridge_client and self._seata_client_initialized):
                     logger.error("Distributed Seata client is not initialized; rollback failed")
                     return False
                 try:
-                    GlobalTransaction.rollback()
-                    self._set_context(status='ROLLED_BACK')
+                    response = self._bridge_client.rollback(tx_id)
+                    if not response.get('success', False):
+                        raise SeataBridgeError(f"rollback rejected: {response}")
+                    self._set_context(status=str(response.get('status', 'Rollbacked')))
                     logger.info(f"[Seata] Rollback global transaction: {tx_id}")
                     return True
                 except Exception as e:
@@ -569,13 +636,6 @@ class SeataTransactionManager:
     def _cleanup_context(self):
         """清理事务上下文"""
         self._transaction_context.set(None)
-        
-        # 清理Seata上下文
-        if _seata_available and RootContext:
-            try:
-                RootContext.unbindXID()
-            except Exception:
-                pass
 
     def _cleanup_http_transaction(self, tx_id: str) -> None:
         """Drop process-local callback caches; durable audit state remains stored."""
@@ -695,15 +755,6 @@ class SeataTransactionManager:
     
     def get_current_tx_id(self) -> str:
         """获取当前事务ID"""
-        # 优先从Seata获取
-        if _seata_available and RootContext:
-            try:
-                seata_tx_id = RootContext.getXID()
-                if seata_tx_id:
-                    return seata_tx_id
-            except Exception:
-                pass
-        
         return self._get_context().get('tx_id', "")
     
     def get_transaction_status(self) -> str:
@@ -729,7 +780,7 @@ class SeataTransactionManager:
             # 即使初始化失败也保持 distributed，后续事务必须失败关闭，
             # 不能沿用之前的 local 模式继续执行核心业务。
             self.mode = mode
-            if not self._seata_client_initialized:
+            if not self._seata_client_initialized or self._bridge_client is None:
                 self._init_seata_client()
             return
         self.mode = mode
@@ -780,26 +831,19 @@ def init_seata(config: dict) -> None:
         config: 配置字典，包含server_addr, application_id, transaction_group, mode等
     
     配置说明：
-        server_addr: Seata Server地址，默认 localhost:8091
-        application_id: 应用ID，必填（分布式模式）
-        transaction_group: 事务分组，默认 my_tx_group
-        mode: 事务模式，可选 'local'（默认）或 'distributed'
+        server_addr: Seata Server 地址，仅用于状态展示，默认 localhost:8091
+        application_id: Python 业务应用 ID，分布式模式必填
+        transaction_group: 事务分组，必须与 bridge 一致
+        mode: local、http 或 distributed
+        bridge_url: 官方 Java 客户端桥接地址，默认 http://localhost:18091
+        bridge_token: 调用 bridge 的共享令牌，分布式模式必填
+        bridge_timeout_s: bridge HTTP 请求超时秒数
     
     分布式模式要求：
-        1. 部署Seata Server
-        2. 创建seata_undo_log表（MySQL示例）：
-           CREATE TABLE IF NOT EXISTS `seata_undo_log` (
-               `id` BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '主键',
-               `branch_id` BIGINT(20) NOT NULL COMMENT '分支事务ID',
-               `xid` VARCHAR(100) NOT NULL COMMENT '全局事务ID',
-               `context` VARCHAR(128) NOT NULL COMMENT '上下文',
-               `rollback_info` LONGBLOB NOT NULL COMMENT '回滚信息',
-               `log_status` INT(11) NOT NULL COMMENT '状态',
-               `log_created` DATETIME NOT NULL COMMENT '创建时间',
-               `log_modified` DATETIME NOT NULL COMMENT '修改时间',
-               PRIMARY KEY (`id`),
-               UNIQUE KEY `ux_undo_log` (`xid`,`branch_id`)
-           ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8 COMMENT='Seata回滚日志表';
+        1. 部署 Seata Server 和 deploy/seata-bridge
+        2. 创建官方 ``tcc_fence_log`` 表
+        3. 每个业务分支暴露幂等的 prepare/commit/rollback 回调
+        4. 用 callback host allow-list 和 bridge token 限制内部调用
     """
     mode = str(config.get('mode', 'local')).lower()
     http_enabled = (
@@ -816,6 +860,9 @@ def init_seata(config: dict) -> None:
         application_id=config.get('application_id', ''),
         transaction_group=config.get('transaction_group', 'my_tx_group'),
         mode=mode,
+        bridge_url=config.get('bridge_url', config.get('bridge-url', 'http://localhost:18091')),
+        bridge_token=config.get('bridge_token', config.get('bridge-token', '')),
+        bridge_timeout_s=config.get('bridge_timeout_s', config.get('bridge-timeout-s', 5.0)),
         store_path=config.get('store_path') or config.get('store-path'),
         recovery_grace_ms=config.get('recovery_grace_ms', config.get('recovery-grace-ms', 30000)),
         recovery_interval_s=config.get('recovery_interval_s', config.get('recovery-interval-s', 30.0)),

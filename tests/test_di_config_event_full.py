@@ -119,6 +119,88 @@ class TestConfigurationError:
     def test_configuration_error_is_value_error(self):
         assert issubclass(ConfigurationError, ValueError)
 
+    # ===== 生产环境 AI api-key 强制校验（safe-by-default）=====
+
+    @staticmethod
+    def _make_prod_loader(monkeypatch, ai_config):
+        """构造一个生产 profile 下的 ConfigLoader（绕过 init 时的 prod 校验）。
+
+        1. 先在非 prod profile 下创建实例（init 通过校验）；
+        2. 再切换 SPRING_PROFILES_ACTIVE=prod 并替换 _config；
+        3. 调用方负责调用 _validate_config()。
+        """
+        monkeypatch.delenv("SPRING_PROFILES_ACTIVE", raising=False)
+        monkeypatch.delenv("APP_ENV", raising=False)
+        loader = ConfigLoader(config_path="application.yml")
+        monkeypatch.setenv("SPRING_PROFILES_ACTIVE", "prod")
+        loader._config = {
+            "spring": {"profiles": {"active": "prod"}, "ai": ai_config},
+            "jwt": {"secret_key": "x" * 48, "algorithm": "HS256"},
+        }
+        return loader
+
+    def test_prod_profile_missing_ai_api_key_raises(self, monkeypatch):
+        """生产 profile + AI 启用 + 缺 api-key → ConfigurationError"""
+        loader = self._make_prod_loader(monkeypatch, {
+            "default-provider": "openai",
+            "openai": {"api-key": ""},
+        })
+        with pytest.raises(ConfigurationError, match="api-key"):
+            loader._validate_config()
+
+    def test_prod_profile_ai_with_api_key_passes(self, monkeypatch):
+        """生产 profile + AI 启用 + 配置 api-key → 通过"""
+        monkeypatch.delenv("AI_ALLOW_FAKE", raising=False)
+        loader = self._make_prod_loader(monkeypatch, {
+            "default-provider": "openai",
+            "openai": {"api-key": "sk-prod-real-key-1234567890"},
+        })
+        loader._validate_config()
+        # 生产 profile 必须强制 AI_ALLOW_FAKE=false（防止后续 autoconfig 静默降级）
+        assert os.environ.get("AI_ALLOW_FAKE") == "false"
+
+    def test_prod_profile_ollama_without_api_key_passes(self, monkeypatch):
+        """生产 profile + ollama provider（本地部署无需 api-key）→ 通过"""
+        loader = self._make_prod_loader(monkeypatch, {
+            "default-provider": "ollama",
+            "ollama": {"base-url": "http://ollama:11434"},
+        })
+        # ollama 无需 api-key，不应抛异常
+        loader._validate_config()
+
+    def test_prod_profile_ai_disabled_passes(self, monkeypatch):
+        """生产 profile + AI 显式禁用 → 不校验 api-key"""
+        loader = self._make_prod_loader(monkeypatch, {
+            "enabled": False,
+            "default-provider": "openai",
+            "openai": {"api-key": ""},
+        })
+        loader._validate_config()
+
+    def test_non_prod_profile_skips_ai_validation(self, monkeypatch):
+        """非生产 profile + 缺 api-key → 不抛异常（开发环境允许 Fake 降级）"""
+        monkeypatch.delenv("SPRING_PROFILES_ACTIVE", raising=False)
+        monkeypatch.delenv("APP_ENV", raising=False)
+        loader = ConfigLoader(config_path="application.yml")
+        loader._config = {
+            "spring": {"profiles": {"active": "dev"}, "ai": {
+                "default-provider": "openai",
+                "openai": {"api-key": ""},
+            }},
+            "jwt": {"secret_key": "x" * 48, "algorithm": "HS256"},
+        }
+        # 开发环境不强制 AI 校验
+        loader._validate_config()
+
+    def test_prod_profile_deepseek_missing_key_raises(self, monkeypatch):
+        """生产 profile + DeepSeek provider + 缺 api-key → ConfigurationError（含环境变量提示）"""
+        loader = self._make_prod_loader(monkeypatch, {
+            "default-provider": "deepseek",
+            "deepseek": {"api-key": ""},
+        })
+        with pytest.raises(ConfigurationError, match="DEEPSEEK_API_KEY"):
+            loader._validate_config()
+
 
 # ==================== BeanRegistry 测试 ====================
 

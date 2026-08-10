@@ -2,7 +2,7 @@
 
 > 对齐 `org.springframework.beans.BeanUtils`（Spring）与 `org.apache.commons.beanutils.BeanUtils`（Apache Commons）。
 > 提供对象间属性复制、嵌套属性读写、属性描述符、字典填充/导出等能力。
-> 框架版本：SpringBootAI 1.8.4
+> 框架版本：SpringBootAI 1.8.8
 
 ---
 

@@ -79,6 +79,7 @@
 - `csv`：在内存中按 `@CsvProperty/@CsvIgnore` 完成写入和读取 round-trip；`-CsvRows` 控制每次请求的行数。
 - `jpa`：每次请求在隔离的 SQLite 事务中执行一次 `@Version` 成功更新、一次旧版本冲突，并确认 `@Transient` 未进入映射。
 - `conditional`：每次请求在真实应用上下文上重复求值五类 `@Conditional`；`-ConditionalEvaluations` 控制次数。
+- `seata`：调用官方 Java bridge 的真实 TC，按 9:1 比例执行全局提交/回滚；它验证 TM/TC 通道和协调延迟，不会伪造 Python AT，也不替代带业务分支回调的 TCC 故障测试。
 - `custom`：压测传入的真实业务路径。
 
 可以逐项建立基线：
@@ -131,16 +132,25 @@
 
 ## 真实 Seata 契约测试
 
-项目不会伪造 Seata AT 能力。安装兼容的企业 Seata Python 适配器并启动真实 Seata Server 后，执行：
+项目不再安装未完成的非官方 Python Seata 包。`docker-compose.integration.yml` 会启动 Apache Seata Server 2.5.0、Java 客户端 bridge 和 TCC fence 表。启动后执行：
 
 ```powershell
+$env:SEATA_BRIDGE_TOKEN='springpy-integration-secret'
 $env:RUN_SEATA_INTEGRATION_TESTS='1'
-$env:SEATA_APP_ID='springpy-contract-test'
-$env:SEATA_SERVER='127.0.0.1:8091'
+docker compose -f docker-compose.integration.yml up -d --build --wait seata-server seata-bridge
 pytest tests_integration/test_seata_distributed_contract.py -v
 ```
 
-该测试必须在核心交易服务上线前通过；还需要在业务数据库层验证提交、回滚、超时和进程崩溃恢复。
+测试会启动宿主机回调端点，验证 `prepare -> commit` 和 `prepare -> rollback` 都由真实 Seata TC 驱动，并检查 XID、分支 ID、metadata 与共享 token。它还需要在业务数据库层验证提交、回滚、超时和进程崩溃恢复；TCC 回调必须由业务服务自己实现幂等、防空回滚和防悬挂。
+
+只压测 TC 的 TM 通道（不启动基准应用）：
+
+```powershell
+.scripts\run-load-test.ps1 -Profile smoke -Workload seata -TargetUrl http://127.0.0.1:18091 -SeataBridgeToken springpy-integration-secret -Rate 5 -Duration 20s
+.scripts\run-load-test.ps1 -Profile soak -Workload seata -TargetUrl http://127.0.0.1:18091 -SeataBridgeToken springpy-integration-secret -Rate 100 -Duration 9h -MaxVus 1000
+```
+
+这个 workload 每次迭代创建一个真实全局事务并提交或回滚；它不注册业务 TCC 分支，因此不能代表订单、库存等业务最终一致性。业务压测应把 `custom` 指向真实业务接口，并让业务接口注册自己的 TCC 回调。
 
 ## 9 小时注解混合压测
 

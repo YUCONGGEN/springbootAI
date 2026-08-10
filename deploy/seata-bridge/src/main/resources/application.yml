@@ -1,0 +1,44 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: springpy-seata-bridge
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://mysql:3306/springpy?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:root123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 1
+      connection-timeout: 5000
+
+seata:
+  enabled: true
+  application-id: ${SEATA_APPLICATION_ID:springpy-seata-bridge}
+  tx-service-group: springpy_tx_group
+  enable-auto-data-source-proxy: false
+  registry:
+    type: file
+  config:
+    type: file
+  service:
+    vgroup-mapping:
+      springpy_tx_group: default
+    grouplist:
+      default: ${SEATA_SERVER_ADDR:seata-server:8091}
+
+bridge:
+  token: ${BRIDGE_TOKEN:}
+  callback-allowed-hosts: ${BRIDGE_CALLBACK_ALLOWED_HOSTS:}
+  callback-timeout-ms: ${BRIDGE_CALLBACK_TIMEOUT_MS:5000}
+  seata-server-addr: ${SEATA_SERVER_ADDR:seata-server:8091}
+
+logging:
+  level:
+    root: INFO
+    org.apache.seata: INFO

@@ -738,6 +738,11 @@ class BenchmarkApplication:
 app = create_app(BenchmarkApplication)
 benchmark_context = app.state.spring_application.application_context
 
+# 性能基准测试禁用 Actuator 鉴权（性能测试不验证安全行为，专注于框架路径执行）
+# 生产环境默认 enabled=true，由专门的安全测试覆盖鉴权行为。
+import spring.web.actuator as _actuator_mod
+_actuator_mod._actuator_secured = False
+
 gateway = GatewayRouter(
     default_filters=[],
     timeout=float(os.getenv("GATEWAY_TIMEOUT", "2")),

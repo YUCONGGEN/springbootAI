@@ -178,16 +178,18 @@ class LoadBalanced(SpringAnnotation):
 
 class GlobalTransactional(SpringAnnotation):
     """
-    Seata分布式事务注解
-    仅事务发起入口方法添加，所有参与分布式事务的微服务不需要添加该注解
+    Seata 分布式事务注解。
+
+    仅事务发起入口方法添加。distributed 模式使用官方 Java 客户端桥接和
+    Seata TCC；参与服务通过 ``register_branch`` 注册业务分支。
     
     使用注意：
-    - 数据库必须使用InnoDB引擎，支持行锁
-    - 业务表必须存在主键
-    - 必须配置Seata注册中心、事务组
+    - 必须配置 Seata Server、bridge、共享令牌和事务组
+    - TCC 分支必须实现持久化资源预留和幂等的 prepare/commit/rollback
+    - 回调要处理重复提交、空回滚和悬挂，不能只修改进程内变量
     - 不支持嵌套事务
-    - 只有RuntimeException才会触发全局回滚
-    - 禁止在异步线程中使用，事务上下文无法传递
+    - 业务方法抛出异常时会触发全局回滚
+    - 不要把 ContextVar 事务上下文直接复制到独立后台任务中继续使用
     """
     _annotation_type = "aop"
 

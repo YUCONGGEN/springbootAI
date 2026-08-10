@@ -140,16 +140,27 @@ def global_transactional_decorator(annotation: GlobalTransactional):
                 if seata_manager.is_in_transaction():
                     logger.warning("[GlobalTransactional] Nested transaction detected, skipping")
                     return await func(*args, **kwargs)
-                if seata_manager.get_mode() == "http":
+                mode = seata_manager.get_mode()
+                if mode in {"http", "distributed"}:
                     tx_id = await asyncio.to_thread(begin_transaction)
-                    transaction_context = await asyncio.to_thread(
-                        seata_manager.get_transaction_context, tx_id
-                    )
-                    if transaction_context is None:
-                        seata_manager._cleanup_context()
-                        raise RuntimeError(
-                            f"Unable to bind durable HTTP transaction context: {tx_id}"
+                    if mode == "http":
+                        transaction_context = await asyncio.to_thread(
+                            seata_manager.get_transaction_context, tx_id
                         )
+                        if transaction_context is None:
+                            seata_manager._cleanup_context()
+                            raise RuntimeError(
+                                f"Unable to bind durable HTTP transaction context: {tx_id}"
+                            )
+                    else:
+                        transaction_context = {
+                            'in_transaction': True,
+                            'tx_id': tx_id,
+                            'status': 'Begin',
+                            'timeout': annotation.timeout,
+                            'start_time': time.time(),
+                            'name': annotation.name or func.__name__,
+                        }
                     seata_manager.bind_transaction_context(transaction_context)
                 else:
                     tx_id = begin_transaction()

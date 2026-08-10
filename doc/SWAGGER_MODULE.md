@@ -1,6 +1,6 @@
 # SpringBootAI Swagger / OpenAPI 模块使用文档
 
-> 版本：SpringBootAI Swagger 1.0.0 ｜ 框架版本：SpringBootAI 1.8.4
+> 版本：SpringBootAI Swagger 1.0.0 ｜ 框架版本：SpringBootAI 1.8.8
 > 对齐 SpringDoc OpenAPI 3 注解体系（`@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`/`@Schema`/`@SecurityScheme`/`@SecurityRequirement`），同时提供 Swagger 2 风格别名（`@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam`），**无新增第三方依赖**（复用 FastAPI 自带的 OpenAPI 生成），`pip install springbootAI` 即可用。
 > 设计原则：**复用项目既有范式，不重复造轮子**——注解复用 `SpringAnnotation` 描述符，元数据在 `WebApplicationContext` 注册路由时同步注入 FastAPI 路由参数，全局 `securitySchemes`/`@Schema`/`@Parameter` 通过自定义 `app.openapi()` 后处理注入。
 

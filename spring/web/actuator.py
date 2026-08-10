@@ -20,20 +20,110 @@ import time
 import traceback
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
 actuator_router = APIRouter()
 _application_context = None
 
 # 敏感键关键词（命中即脱敏，对齐 Spring Boot env 脱敏）
-_SENSITIVE_KEYS = ("password", "secret", "token", "credential", "passwd", "api_key", "apikey")
+# 注意：必须同时包含 api_key（下划线）和 api-key（连字符），因为 YAML/JSON 中两种风格都常见
+_SENSITIVE_KEYS = (
+    "password", "secret", "token", "credential", "passwd",
+    "api_key", "apikey", "api-key",  # 覆盖下划线、无分隔、连字符三种命名风格
+    "private_key", "access_key", "secret_key",
+)
+
+# 需要鉴权的敏感端点（health/info 保留开放，供 K8s/Docker 探针使用）
+_SENSITIVE_ENDPOINTS = frozenset({
+    "env", "loggers", "metrics", "beans", "configprops", "mappings", "threaddump"
+})
+
+# Actuator 鉴权开关（由 configure_actuator 从配置读取）
+_actuator_secured = True
+_actuator_admin_roles = frozenset({"ADMIN", "ACTUATOR"})
 
 
 def configure_actuator(application_context) -> None:
-    """注入应用上下文（与 ``health.configure_health_checks`` 平行调用）。"""
-    global _application_context
+    """注入应用上下文 + 读取 Actuator 鉴权配置。
+
+    从 ``management.endpoints.web.security`` 读取：
+    - ``enabled``: 是否对敏感端点启用鉴权（生产环境默认 True）
+    - ``roles``: 允许访问的角色列表（默认 ADMIN/ACTUATOR）
+    """
+    global _application_context, _actuator_secured, _actuator_admin_roles
     _application_context = application_context
+    try:
+        config = application_context.get_config()
+        mgmt = config.get('management', {}).get('endpoints', {}).get('web', {}).get('security', {})
+        _actuator_secured = mgmt.get('enabled', True)
+        roles = mgmt.get('roles')
+        if roles:
+            _actuator_admin_roles = frozenset(r.upper() for r in roles)
+    except Exception:
+        pass  # 配置读取失败时保持默认（secured=True）
+
+
+def _check_actuator_auth():
+    """FastAPI 依赖：对敏感端点验证 JWT token + 角色权限。
+
+    - ``_actuator_secured=False`` 时跳过鉴权（开发环境）
+    - ``_actuator_secured=True`` 时要求 Bearer JWT 且 roles 包含 ADMIN/ACTUATOR
+    """
+    if not _actuator_secured:
+        return  # 鉴权关闭，放行
+
+    from fastapi import Request, HTTPException
+    from spring.security.jwt_utils import jwt_utils
+
+    # FastAPI 依赖注入需要 Request 对象；此函数被 endpoints 直接调用时使用全局 request
+    from fastapi import Request as _Req
+    # 通过 inspect 获取 request 参数（兼容 FastAPI 依赖系统）
+    raise HTTPException(status_code=401, detail="Actuator authentication required")
+
+
+def _create_actuator_dependency(endpoint_name: str):
+    """为指定端点创建鉴权依赖函数。
+
+    敏感端点（env/loggers/threaddump 等）要求 JWT + ADMIN 角色；
+    非敏感端点（health/info）无鉴权。
+    """
+    if endpoint_name not in _SENSITIVE_ENDPOINTS:
+        # 非敏感端点（health/info），不鉴权
+        return None
+
+    def _auth_dependency(request: Request) -> None:
+        """验证 Actuator 敏感端点访问权限。"""
+        if not _actuator_secured:
+            return  # 鉴权关闭（开发环境）
+
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.lower().startswith('bearer '):
+            raise HTTPException(status_code=401, detail="Bearer token required for actuator access")
+
+        token = auth_header[7:].strip()
+        try:
+            from spring.security.jwt_utils import jwt_utils
+            payload = jwt_utils.decode_token(token)
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+
+        # 验证 token_type 必须是 access（refresh token 不能访问 actuator）
+        if payload.get('token_type') != 'access':
+            raise HTTPException(
+                status_code=401,
+                detail="Access token required (refresh tokens are not allowed)"
+            )
+
+        # 验证角色
+        roles = [r.upper() for r in payload.get('roles', [])]
+        if not any(r in _actuator_admin_roles for r in roles):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Insufficient role. Required: {sorted(_actuator_admin_roles)}, got: {roles}"
+            )
+
+    return _auth_dependency
 
 
 def _get_context():
@@ -264,23 +354,35 @@ def actuator_root():
     return JSONResponse(content=get_endpoint_directory(), status_code=200)
 
 
+# ==================== HTTP 端点（薄包装 + 鉴权） ====================
+
+# 敏感端点鉴权依赖（闭包捕获 endpoint_name）
+_env_auth = _create_actuator_dependency("env")
+_loggers_auth = _create_actuator_dependency("loggers")
+_metrics_auth = _create_actuator_dependency("metrics")
+_beans_auth = _create_actuator_dependency("beans")
+_configprops_auth = _create_actuator_dependency("configprops")
+_mappings_auth = _create_actuator_dependency("mappings")
+_threaddump_auth = _create_actuator_dependency("threaddump")
+
+
 @actuator_router.get('/env')
-def env_endpoint():
+def env_endpoint(_: None = Depends(_env_auth)):
     return JSONResponse(content=get_env_info(_get_context()), status_code=200)
 
 
 @actuator_router.get('/loggers')
-def loggers_endpoint():
+def loggers_endpoint(_: None = Depends(_loggers_auth)):
     return JSONResponse(content=get_loggers(), status_code=200)
 
 
 @actuator_router.get('/loggers/{name}')
-def logger_detail(name: str):
+def logger_detail(name: str, _: None = Depends(_loggers_auth)):
     return JSONResponse(content=get_logger_level(name), status_code=200)
 
 
 @actuator_router.post('/loggers/{name}')
-def logger_update(name: str, body: dict = Body(default={})):
+def logger_update(name: str, body: dict = Body(default={}), _: None = Depends(_loggers_auth)):
     """请求体 ``{"configuredLevel": "DEBUG"}`` 动态修改级别。"""
     level = (body or {}).get("configuredLevel", "INFO")
     try:
@@ -291,22 +393,22 @@ def logger_update(name: str, body: dict = Body(default={})):
 
 
 @actuator_router.get('/metrics')
-def metrics_endpoint():
+def metrics_endpoint(_: None = Depends(_metrics_auth)):
     return JSONResponse(content=get_metrics(), status_code=200)
 
 
 @actuator_router.get('/beans')
-def beans_endpoint():
+def beans_endpoint(_: None = Depends(_beans_auth)):
     return JSONResponse(content=get_beans(_get_context()), status_code=200)
 
 
 @actuator_router.get('/configprops')
-def configprops_endpoint():
+def configprops_endpoint(_: None = Depends(_configprops_auth)):
     return JSONResponse(content=get_configprops(_get_context()), status_code=200)
 
 
 @actuator_router.get('/mappings')
-def mappings_endpoint():
+def mappings_endpoint(_: None = Depends(_mappings_auth)):
     app = None
     ctx = _get_context()
     if ctx is not None and hasattr(ctx, "web_context"):
@@ -315,5 +417,5 @@ def mappings_endpoint():
 
 
 @actuator_router.get('/threaddump')
-def threaddump_endpoint():
+def threaddump_endpoint(_: None = Depends(_threaddump_auth)):
     return JSONResponse(content=get_threaddump(), status_code=200)

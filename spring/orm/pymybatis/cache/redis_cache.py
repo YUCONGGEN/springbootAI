@@ -14,6 +14,7 @@ PyMyBatis Redis二级缓存模块
 import json
 import hashlib
 import logging
+import time
 from typing import Dict, Any, Optional, List
 from enum import Enum
 
@@ -81,7 +82,15 @@ class RedisSecondLevelCache:
         self._pubsub_thread = None
 
         # 本地缓存（用于减少Redis访问）
-        self._local_cache: Dict[str, Any] = {}
+        # 修复：存储 (value, expire_ts) 元组，本地缓存有自己的 TTL，
+        # 避免 Redis 键过期后本地缓存永久返回旧数据
+        self._local_cache: Dict[str, tuple] = {}  # {key: (value, expire_timestamp)}
+        self._local_cache_ttl = min(self.ttl, 60) if self.ttl > 0 else 60  # 本地缓存 TTL ≤ Redis TTL
+
+        # 修复：维护 table_name → 本地缓存 key 集合的映射，
+        # 用于收到表级失效通知时正确清除相关本地缓存（旧版本用 key.startswith(table_name)
+        # 匹配 SHA256 哈希键，条件永远无法成立）
+        self._table_key_map: Dict[str, set] = {}  # {table_name: {key1, key2, ...}}
 
         # 启动缓存失效通知监听器
         self._start_pubsub_listener()
@@ -117,17 +126,27 @@ class RedisSecondLevelCache:
             return pickle.dumps(value)
 
     def _deserialize(self, value: bytes) -> Any:
-        """反序列化值"""
+        """反序列化值。
+
+        安全加固：当 ``serialization=JSON`` 时，JSON 解码失败**不再回退 pickle**。
+        旧版本在 JSON 解码失败时自动调用 ``pickle.loads()``，即使明确配置 JSON 模式，
+        构造的 pickle 数据仍会被接受——攻击者/受侵入的 Redis 可借此触发 RCE。
+        现在改为记录错误并返回 None，拒绝执行任何 pickle 数据。
+        """
         if value is None:
             return None
 
         if self.serialization == SerializationType.JSON:
             try:
                 return json.loads(value.decode('utf-8'))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                logger.warning("JSON反序列化失败，尝试pickle")
-                import pickle
-                return pickle.loads(value)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                # 安全加固：JSON 模式下禁止 pickle 回退（防止 RCE）
+                # 旧版本此处调用 pickle.loads(value)，可被攻击者利用执行任意代码
+                logger.error(
+                    f"JSON反序列化失败，已拒绝pickle回退（安全加固）。"
+                    f"数据可能被篡改或序列化配置不一致: {exc}"
+                )
+                return None
         else:
             import pickle
             return pickle.loads(value)
@@ -163,18 +182,33 @@ class RedisSecondLevelCache:
         key = self._generate_key(table_name, params)
         full_key = f"{self.channel_prefix}{key}"
 
-        # 先从本地缓存查找
+        # 先从本地缓存查找（修复：检查 TTL 过期）
         if key in self._local_cache:
-            logger.debug(f"本地缓存命中: {full_key}")
-            return self._local_cache[key]
+            value, expire_ts = self._local_cache[key]
+            if time.time() < expire_ts:
+                logger.debug(f"本地缓存命中: {full_key}")
+                return value
+            else:
+                # 本地缓存已过期，删除并继续查 Redis
+                del self._local_cache[key]
+                # 同时从 table_key_map 中清理
+                self._table_key_map.get(table_name, set()).discard(key)
 
         try:
             redis = self._connect()
+            # 修复：检查 Redis TTL，避免返回已过期的数据
+            remaining_ttl = redis.ttl(full_key)
+            if remaining_ttl is not None and remaining_ttl <= 0:
+                # 键已过期或不存在
+                return None
             value = redis.get(full_key)
             if value is not None:
                 result = self._deserialize(value)
-                # 更新本地缓存
-                self._local_cache[key] = result
+                # 更新本地缓存（带 TTL）
+                expire_ts = time.time() + self._local_cache_ttl
+                self._local_cache[key] = (result, expire_ts)
+                # 更新 table → key 映射
+                self._table_key_map.setdefault(table_name, set()).add(key)
                 logger.debug(f"Redis缓存命中: {full_key}")
                 return result
         except Exception as e:
@@ -194,8 +228,11 @@ class RedisSecondLevelCache:
         key = self._generate_key(table_name, params)
         full_key = f"{self.channel_prefix}{key}"
 
-        # 更新本地缓存
-        self._local_cache[key] = value
+        # 更新本地缓存（带 TTL）
+        expire_ts = time.time() + self._local_cache_ttl
+        self._local_cache[key] = (value, expire_ts)
+        # 更新 table → key 映射
+        self._table_key_map.setdefault(table_name, set()).add(key)
 
         try:
             redis = self._connect()
@@ -235,6 +272,9 @@ class RedisSecondLevelCache:
                 # 更新本地缓存
                 self._local_cache.pop(key.decode(), None)
 
+            # 修复：清理 table_key_map 中的映射
+            self._table_key_map.pop(table_name, None)
+
             # 删除表映射
             redis.delete(table_key)
 
@@ -260,6 +300,7 @@ class RedisSecondLevelCache:
 
         # 更新本地缓存
         self._local_cache.pop(key, None)
+        self._table_key_map.get(table_name, set()).discard(key)
 
         try:
             redis = self._connect()
@@ -288,6 +329,7 @@ class RedisSecondLevelCache:
 
             # 清空本地缓存
             self._local_cache.clear()
+            self._table_key_map.clear()
 
             # 发布缓存失效通知
             channel = f"{self.channel_prefix}invalidate"
@@ -355,7 +397,7 @@ class RedisSecondLevelCache:
             }
 
     def _start_pubsub_listener(self):
-        """启动缓存失效通知监听器"""
+        """启动缓存失效通知监听器（含自动重连）"""
         if self._pubsub_thread is not None:
             return
 
@@ -363,35 +405,44 @@ class RedisSecondLevelCache:
             import threading
 
             def listener():
-                redis = self._connect()
-                self._pubsub = redis.pubsub()
                 channel = f"{self.channel_prefix}invalidate"
-                self._pubsub.subscribe(channel)
+                # 修复：添加重连机制，Redis 断线时自动重连
+                while True:
+                    try:
+                        redis = self._connect()
+                        self._pubsub = redis.pubsub()
+                        self._pubsub.subscribe(channel)
+                        logger.info(f"Redis缓存失效通知监听器已启动: {channel}")
 
-                logger.info(f"Redis缓存失效通知监听器已启动: {channel}")
+                        for message in self._pubsub.listen():
+                            if message['type'] == 'message':
+                                try:
+                                    data = json.loads(message['data'].decode('utf-8'))
+                                    table_name = data.get('table_name')
 
-                for message in self._pubsub.listen():
-                    if message['type'] == 'message':
-                        try:
-                            data = json.loads(message['data'].decode('utf-8'))
-                            table_name = data.get('table_name')
-
-                            if table_name == '__ALL__':
-                                # 全部失效
-                                self._local_cache.clear()
-                                logger.info("收到缓存全部失效通知")
-                            else:
-                                # 特定表失效
-                                # 移除该表相关的本地缓存
-                                keys_to_remove = []
-                                for key in self._local_cache:
-                                    if key.startswith(table_name):
-                                        keys_to_remove.append(key)
-                                for key in keys_to_remove:
-                                    self._local_cache.pop(key, None)
-                                logger.info(f"收到缓存失效通知: 表 {table_name}")
-                        except Exception as e:
-                            logger.error(f"处理缓存失效通知失败: {e}")
+                                    if table_name == '__ALL__':
+                                        # 全部失效
+                                        self._local_cache.clear()
+                                        self._table_key_map.clear()
+                                        logger.info("收到缓存全部失效通知")
+                                    else:
+                                        # 修复：用 table_key_map 查找相关本地缓存 key
+                                        # 旧版本用 key.startswith(table_name) 匹配 SHA256 哈希键，
+                                        # 条件永远无法成立，导致跨实例失效不工作
+                                        keys_to_remove = list(
+                                            self._table_key_map.get(table_name, set())
+                                        )
+                                        for key in keys_to_remove:
+                                            self._local_cache.pop(key, None)
+                                        self._table_key_map.pop(table_name, None)
+                                        logger.info(f"收到缓存失效通知: 表 {table_name}，"
+                                                    f"清除 {len(keys_to_remove)} 个本地缓存项")
+                                except Exception as e:
+                                    logger.error(f"处理缓存失效通知失败: {e}")
+                    except Exception as e:
+                        logger.error(f"Redis pubsub 监听器异常，5秒后重连: {e}")
+                        import time as _time
+                        _time.sleep(5)  # 等待后重连
 
             self._pubsub_thread = threading.Thread(target=listener, daemon=True)
             self._pubsub_thread.start()

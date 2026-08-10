@@ -15,7 +15,7 @@ import time
 import pytest
 
 from spring.logging.loguru_logger import (
-    init_logging, spring_logger, LoggingConfigError, SpringLogger,
+    init_logging, spring_logger, LoggingConfigError, SpringLogger, LoguruHandler,
 )
 
 
@@ -88,12 +88,26 @@ class TestLogDirStrictValidation:
         assert "logging.log_dir" in msg
         assert "blocker_file" in msg
 
-    def test_empty_string_log_dir_raises(self, tmp_path):
-        """空字符串 log_dir 应抛 LoggingConfigError。"""
-        with pytest.raises(LoggingConfigError) as exc_info:
-            init_logging({"level": "INFO", "log_dir": ""})
-        assert "logging.log_dir" in str(exc_info.value)
-        assert "空字符串" in str(exc_info.value)
+    def test_empty_string_log_dir_no_file_output(self, tmp_path):
+        """空字符串 log_dir 视为未配置，只有控制台输出，不创建文件、不抛异常。"""
+        # 不应抛 LoggingConfigError（空字符串 = 未配置 = 仅控制台）
+        init_logging({"level": "INFO", "log_dir": ""})
+
+    def test_no_log_dir_means_console_only(self, tmp_path):
+        """不配置 log_dir 时只有控制台输出，不创建任何日志文件。"""
+        import os
+        original_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            init_logging({"level": "INFO"})  # 没有 log_dir 键
+            spring_logger.info("console only message")
+            time.sleep(0.2)
+            # 不应创建 logs/ 目录或任何 .log 文件
+            assert not (tmp_path / 'logs').exists(), "未配置 log_dir 时不应创建 logs/ 目录"
+            log_files = glob.glob(str(tmp_path / "*.log"))
+            assert len(log_files) == 0, f"未配置 log_dir 时不应创建日志文件，实际: {log_files}"
+        finally:
+            os.chdir(original_cwd)
 
     def test_file_path_not_directory_raises(self, tmp_path):
         """log_dir 指向一个已存在的文件（非目录）应抛 LoggingConfigError。"""
@@ -184,3 +198,110 @@ class TestLogDirStrictValidation:
         logger._setup_loguru(strict=False, enable_file=False)
         assert not (tmp_path / 'should_not_exist').exists(), \
             "enable_file=False 时不应创建日志目录"
+
+
+class TestUvicornLogInterception:
+    """验证 Uvicorn/Starlette/FastAPI 的标准 logging 被拦截转发到 Loguru。
+
+    回归场景：Uvicorn 默认 LOGGING_CONFIG 为 uvicorn 和 uvicorn.access logger
+    配置了各自的 StreamHandler 且 propagate=False，导致访问日志（GET /api/xxx 200 OK）
+    和启动日志（Started server process）只输出到控制台，不写入日志文件。
+    """
+
+    def test_uvicorn_loggers_have_loguru_handler(self, tmp_path):
+        """init_logging 后 Uvicorn logger 应使用 LoguruHandler 而非 StreamHandler。"""
+        import logging
+        custom = str(tmp_path / "uvicorn_test_logs")
+        init_logging({'level': 'INFO', 'log_dir': custom})
+
+        for name in ('uvicorn', 'uvicorn.error', 'uvicorn.access',
+                     'fastapi', 'starlette'):
+            logger = logging.getLogger(name)
+            handler_types = [type(h).__name__ for h in logger.handlers]
+            assert 'LoguruHandler' in handler_types, \
+                f"{name} logger 应有 LoguruHandler，实际: {handler_types}"
+            assert 'StreamHandler' not in handler_types, \
+                f"{name} logger 不应有 StreamHandler（会被 LoguruHandler 替代）"
+
+    def test_uvicorn_loggers_propagate_false(self, tmp_path):
+        """拦截后 Uvicorn logger 的 propagate 应为 False（避免重复转发到 root）。"""
+        import logging
+        custom = str(tmp_path / "propagate_test")
+        init_logging({'level': 'INFO', 'log_dir': custom})
+
+        for name in ('uvicorn', 'uvicorn.access', 'fastapi', 'starlette'):
+            logger = logging.getLogger(name)
+            assert logger.propagate is False, \
+                f"{name} logger propagate 应为 False，实际: {logger.propagate}"
+
+    def test_uvicorn_access_log_written_to_file(self, tmp_path):
+        """Uvicorn 访问日志应通过 LoguruHandler 写入配置的日志文件。
+
+        注意：pytest logging 插件会拦截标准 logging 调用，导致
+        ``access_logger.info()`` 的记录被 pytest 捕获而不到达 LoguruHandler。
+        本测试直接构造 LogRecord 并调用 LoguruHandler.handle()，绕过 pytest
+        干预，验证 LoguruHandler → loguru → 文件 handler 的完整链路。
+        生产环境无 pytest 干预，``access_logger.info()`` 正常到达 LoguruHandler。
+        """
+        import logging
+        import time
+        import os
+        custom = str(tmp_path / "access_log_test")
+        init_logging({'level': 'INFO', 'log_dir': custom})
+
+        # 直接构造 LogRecord 并调用 LoguruHandler.handle，绕过 pytest logging 插件
+        handler = logging.getLogger('uvicorn.access').handlers[0]
+        assert isinstance(handler, LoguruHandler), \
+            f"uvicorn.access handler 应为 LoguruHandler，实际: {type(handler)}"
+        record = logging.LogRecord(
+            name='uvicorn.access', level=logging.INFO, pathname=__file__,
+            lineno=1, msg='127.0.0.1:52073 - "GET /api/hello/Alice HTTP/1.1" 200 OK',
+            args=None, exc_info=None,
+        )
+        handler.handle(record)
+
+        time.sleep(0.3)
+
+        # 验证日志文件包含访问日志
+        log_files = glob.glob(os.path.join(custom, "*.log"))
+        assert len(log_files) > 0, f"期望日志文件出现在 {custom}"
+        all_content = ''
+        for lf in log_files:
+            with open(lf, 'r', encoding='utf-8') as f:
+                all_content += f.read()
+        assert 'GET /api/hello/Alice' in all_content, \
+            "Uvicorn 访问日志应通过 LoguruHandler 写入日志文件"
+        assert '200 OK' in all_content
+
+    def test_uvicorn_startup_log_written_to_file(self, tmp_path):
+        """Uvicorn 启动日志应通过 LoguruHandler 写入配置的日志文件。"""
+        import logging
+        import time
+        import os
+        custom = str(tmp_path / "startup_log_test")
+        init_logging({'level': 'INFO', 'log_dir': custom})
+
+        # 直接构造 LogRecord 并调用 LoguruHandler.handle，绕过 pytest logging 插件
+        handler = logging.getLogger('uvicorn').handlers[0]
+        assert isinstance(handler, LoguruHandler), \
+            f"uvicorn handler 应为 LoguruHandler，实际: {type(handler)}"
+        for msg in ('Started server process [49412]',
+                     'Application startup complete.',
+                     'Uvicorn running on http://127.0.0.1:8080'):
+            record = logging.LogRecord(
+                name='uvicorn', level=logging.INFO, pathname=__file__,
+                lineno=1, msg=msg, args=None, exc_info=None,
+            )
+            handler.handle(record)
+
+        time.sleep(0.3)
+
+        log_files = glob.glob(os.path.join(custom, "*.log"))
+        assert len(log_files) > 0
+        all_content = ''
+        for lf in log_files:
+            with open(lf, 'r', encoding='utf-8') as f:
+                all_content += f.read()
+        assert 'Started server process' in all_content
+        assert 'Application startup complete' in all_content
+        assert 'Uvicorn running on' in all_content

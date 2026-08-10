@@ -2,7 +2,7 @@
 
 SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力、内嵌的 PyMyBatis ORM，以及企业级 AI 模块（对齐 Spring AI 2.0：ChatClient/Advisor/Tools/RAG/Function Calling）。本指南为框架核心综合使用文档；**AI / ORM / Cloud / Excel 等模块的完整注解与功能说明已分离为独立文档**（见下方“模块文档”），本指南相应章节保留概览与跳转链接。
 
-- SpringBootAI 版本：`1.8.4`
+- SpringBootAI 版本：`1.8.8`
 - 内嵌 PyMyBatis 版本：`1.4.0`
 - Python：3.10+
 - 状态：Beta（企业试点）
@@ -69,7 +69,7 @@ SpringBootAI 借鉴了 Spring Boot 的注解和分层习惯，但运行时是 Py
 
 | 组件 | 当前版本 |
 |------|----------|
-| `spring` 框架 API | 1.8.4 |
+| `spring` 框架 API | 1.8.8 |
 | `spring.orm.pymybatis` | 1.4.0 |
 | Python | 3.10+ |
 
@@ -358,7 +358,7 @@ CORS_ALLOW_ORIGINS      CORS_ALLOW_CREDENTIALS
 LOG_LEVEL               LOG_DIR
 ```
 
-当前 `SPRING_PROFILES_ACTIVE` 用于 `@Profile` 组件筛选和生产安全校验，不会自动合并 `application-prod.yml`。需要多环境文件时，由部署流程生成最终 `application.yml` 或显式传入配置路径。
+`SPRING_PROFILES_ACTIVE` 用于 `@Profile` 组件筛选、生产安全校验，以及**自动加载并深度合并** `application-{profile}.yml`（v1.8.5 起实现，对齐 Spring Boot 语义）。Profile 文件与主 `application.yml` 同目录，加载顺序为：主配置 → profile 配置深度合并（profile 覆盖主配置的同名键，未涉及的键保留），合并后再解析 `${ENV:default}` 占位符和环境变量覆盖。例如 `SPRING_PROFILES_ACTIVE=prod` 会自动合并 `application-prod.yml`，无需部署流程生成最终 `application.yml`。
 
 ### 4.4 Docker 容器 IP 自动检测（开发环境）
 

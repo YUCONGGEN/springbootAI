@@ -42,8 +42,26 @@ jobs:
 
     - name: Check for hardcoded secrets
       run: |
-        echo "Checking for hardcoded passwords/secrets..."
-        grep -r "password.*=.*['\"][^'\"]\{6,\}'" spring/ --include="*.py" || echo "No hardcoded secrets found"
+        echo "Checking for hardcoded passwords/secrets in spring/..."
+        # 修复（P2）：旧版本 `grep ... || echo "No hardcoded secrets found"` 中 `||`
+        # 使步骤无论是否匹配都退出 0（成功），检查形同虚设。
+        # 新版本：匹配到潜在密钥则 exit 1（失败），并在 GitHub Actions UI 标注 error。
+        #
+        # 正则覆盖 password/passwd/secret/api_key/api-key/apikey/token/credential
+        # 赋值语句，要求引号内字面值至少 6 字符（排除空串和短占位符）。
+        # 第二个 grep -v 排除已知安全模式：枚举值、占位符、示例值、测试夹具。
+        matches=$(grep -rnE --include="*.py" \
+            "(password|passwd|secret|api[_-]?key|apikey|token|credential)[[:space:]]*=[[:space:]]*['\"][^'\"]{6,}['\"]" \
+            spring/ \
+            | grep -vE "(change-in-production|change-me|your-|placeholder|example|fake|dummy|insecure|xxxx|PASSWORD[[:space:]]*=[[:space:]]*'password')" \
+            || true)
+        if [ -n "$matches" ]; then
+          echo "::error::Potential hardcoded secrets detected:"
+          echo "$matches"
+          echo "::error::Move secrets to environment variables or application.yml \${ENV:default} placeholders."
+          exit 1
+        fi
+        echo "No hardcoded secrets found"
 
     - name: Upload security reports
       uses: actions/upload-artifact@v4

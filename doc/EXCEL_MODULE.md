@@ -1,7 +1,7 @@
 # SpringBootAI Excel 模块使用指南
 
 > 注解驱动的 Excel 读写，对齐 alibaba EasyExcel，复用 SpringBootAI 框架既有注解范式。
-> 模块版本：`spring.excel` 1.0.0 ｜ 框架版本：SpringBootAI 1.8.4
+> 模块版本：`spring.excel` 1.0.0 ｜ 框架版本：SpringBootAI 1.8.8
 
 ---
 

@@ -7,7 +7,7 @@ param(
         'mixed', 'async', 'sync', 'gateway', 'echo', 'cpu',
         'validation', 'cache', 'csv', 'jpa', 'conditional',
         'data', 'datasource', 'txevent', 'config', 'i18n', 'actuator',
-        'swagger', 'websocket', 'messaging', 'custom'
+        'swagger', 'websocket', 'messaging', 'custom', 'seata'
     )]
     [string]$Workload = 'mixed',
 
@@ -39,6 +39,10 @@ param(
     [string]$CustomMethod = 'GET',
     [string]$CustomBody = '',
     [string]$AuthToken = '',
+    [string]$SeataBridgeToken = '',
+    [string]$SeataApplicationId = 'springpy-k6',
+    [string]$SeataTransactionGroup = 'springpy_tx_group',
+    [int]$SeataTimeoutMs = 60000,
     [string]$ExpectedStatus = '200',
     [switch]$SkipBuild,
     [switch]$KeepApp
@@ -48,7 +52,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $composeFile = Join-Path $repoRoot 'docker-compose.performance.yml'
 $projectName = 'springbootai-performance'
-$startedBenchmark = [string]::IsNullOrWhiteSpace($TargetUrl)
+$startedBenchmark = [string]::IsNullOrWhiteSpace($TargetUrl) -and $Workload -ne 'seata'
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $resultContainerPath = "/results/$Profile-$Workload-$timestamp.json"
 
@@ -81,6 +85,9 @@ try {
         $effectiveTarget = 'http://app:8080'
     }
     else {
+        if ([string]::IsNullOrWhiteSpace($TargetUrl)) {
+            $TargetUrl = 'http://127.0.0.1:18091'
+        }
         $effectiveTarget = $TargetUrl.TrimEnd('/')
         $effectiveTarget = $effectiveTarget.Replace('://localhost', '://host.docker.internal')
         $effectiveTarget = $effectiveTarget.Replace('://127.0.0.1', '://host.docker.internal')
@@ -109,6 +116,10 @@ try {
         '-e', "SPRINGPY_CUSTOM_METHOD=$CustomMethod",
         '-e', "SPRINGPY_CUSTOM_BODY=$CustomBody",
         '-e', "SPRINGPY_AUTH_TOKEN=$AuthToken",
+        '-e', "SPRINGPY_SEATA_BRIDGE_TOKEN=$SeataBridgeToken",
+        '-e', "SPRINGPY_SEATA_APPLICATION_ID=$SeataApplicationId",
+        '-e', "SPRINGPY_SEATA_TRANSACTION_GROUP=$SeataTransactionGroup",
+        '-e', "SPRINGPY_SEATA_TIMEOUT_MS=$SeataTimeoutMs",
         '-e', "SPRINGPY_EXPECTED_STATUS=$ExpectedStatus"
     )
     if ($Rate -gt 0) { $runArgs += @('-e', "SPRINGPY_RATE=$Rate") }

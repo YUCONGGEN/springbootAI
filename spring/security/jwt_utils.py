@@ -97,18 +97,20 @@ class JwtUtils:
         return jwt.encode(decoded, self.secret_key, algorithm=self.algorithm)
     
     @_InstanceOrDefaultMethod
-    def validate_token(self, token: str) -> bool:
+    def validate_token(self, token: str, expected_token_type: Optional[str] = 'access') -> bool:
         """
         验证 Token 是否有效
-        
+
         Args:
             token: JWT Token
-        
+            expected_token_type: 期望的 token 类型（``'access'``/``'refresh'``）。
+                默认 ``'access'``，传 ``None`` 跳过类型检查（用于通用有效性验证）。
+
         Returns:
             是否有效
         """
         try:
-            self.decode_token(token)
+            self.decode_token(token, expected_token_type=expected_token_type)
             return True
         except (jwt.PyJWTError, ValueError, TypeError):
             return False
@@ -119,26 +121,32 @@ class JwtUtils:
         return self.decode_token(token)
     
     @_InstanceOrDefaultMethod
-    def decode_token(self, token: str) -> Dict[str, Any]:
+    def decode_token(self, token: str, expected_token_type: Optional[str] = 'access') -> Dict[str, Any]:
         """
         解码并验证 Token
-        
+
+        安全加固：默认只接受 access token（``expected_token_type='access'``），
+        refresh token 不能用于访问受保护接口（有效期更长，泄露风险更大）。
+        ``refresh_token()`` 方法显式传 ``expected_token_type='refresh'`` 来验证刷新令牌。
+
         Args:
             token: JWT Token
-        
+            expected_token_type: 期望的 token 类型（``'access'``/``'refresh'``）。
+                默认 ``'access'``，传 ``None`` 跳过类型检查。
+
         Returns:
             解码后的载荷数据
-        
+
         Raises:
             jwt.ExpiredSignatureError: Token已过期
-            jwt.InvalidTokenError: Token无效
+            jwt.InvalidTokenError: Token无效或类型不匹配
         """
         options = {
             'require': ['exp', 'iat', 'jti', 'token_type'],
             'verify_aud': self.audience is not None,
             'verify_iss': self.issuer is not None,
         }
-        return jwt.decode(
+        payload = jwt.decode(
             token,
             self.secret_key,
             algorithms=[self.algorithm],
@@ -147,6 +155,14 @@ class JwtUtils:
             leeway=self.leeway,
             options=options,
         )
+        # 安全加固：验证 token_type 匹配预期类型
+        if expected_token_type is not None and payload.get('token_type') != expected_token_type:
+            raise jwt.InvalidTokenError(
+                f"Expected {expected_token_type} token, got '{payload.get('token_type')}' token. "
+                f"{expected_token_type.capitalize()} tokens cannot be used as "
+                f"{'refresh' if expected_token_type == 'access' else 'access'} tokens."
+            )
+        return payload
     
     @_InstanceOrDefaultMethod
     def get_payload(self, token: str) -> Dict[str, Any]:
@@ -191,9 +207,7 @@ class JwtUtils:
         Returns:
             新的访问 Token
         """
-        payload = self.decode_token(refresh_token)
-        if payload.get('token_type') != 'refresh':
-            raise jwt.InvalidTokenError("访问令牌不能用于刷新")
+        payload = self.decode_token(refresh_token, expected_token_type='refresh')
         
         # 移除过期时间相关字段
         payload.pop('exp', None)

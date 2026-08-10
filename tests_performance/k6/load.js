@@ -96,6 +96,7 @@ export const options = {
     'springpy_endpoint_duration{endpoint:swagger}': [`p(95)<${p95Ms}`],
     'springpy_endpoint_duration{endpoint:websocket}': [`p(95)<${p95Ms}`],
     'springpy_endpoint_duration{endpoint:messaging}': [`p(95)<${p95Ms}`],
+    'springpy_endpoint_duration{endpoint:seata}': [`p(95)<${p95Ms}`],
   },
   userAgent: 'springpy-k6/1.0',
   noConnectionReuse: false,
@@ -144,6 +145,55 @@ function headers() {
     result.Authorization = `Bearer ${__ENV.SPRINGPY_AUTH_TOKEN}`;
   }
   return result;
+}
+
+function seataHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    'X-Seata-Bridge-Token': __ENV.SPRINGPY_SEATA_BRIDGE_TOKEN || '',
+  };
+}
+
+function runSeata() {
+  const startedAt = Date.now();
+  const begin = http.post(
+    `${baseUrl}/api/v1/transactions`,
+    JSON.stringify({
+      timeoutMs: intEnv('SPRINGPY_SEATA_TIMEOUT_MS', 60000),
+      name: `springpy-k6-${exec.scenario.iterationInTest}`,
+      applicationId: __ENV.SPRINGPY_SEATA_APPLICATION_ID || 'springpy-k6',
+      transactionGroup: __ENV.SPRINGPY_SEATA_TRANSACTION_GROUP || 'springpy_tx_group',
+    }),
+    { headers: seataHeaders(), tags: { endpoint: 'seata' } },
+  );
+  let xid = '';
+  try {
+    xid = begin.status === 200 ? String(begin.json('xid') || '') : '';
+  } catch (_) {
+    xid = '';
+  }
+  let finish = begin;
+  if (xid) {
+    const action = exec.scenario.iterationInTest % 10 === 0 ? 'rollback' : 'commit';
+    finish = http.post(
+      `${baseUrl}/api/v1/transactions/${encodeURIComponent(xid)}/${action}`,
+      '{}',
+      { headers: seataHeaders(), tags: { endpoint: 'seata' } },
+    );
+  }
+  endpointDuration.add(Date.now() - startedAt, { endpoint: 'seata' });
+  check(begin, { 'seata: begin succeeded': (res) => res.status === 200 && xid !== '' });
+  check(finish, {
+    'seata: phase two succeeded': (res) => {
+      if (res.status !== 200) return false;
+      try {
+        return res.json('success') === true;
+      } catch (_) {
+        return false;
+      }
+    },
+  });
 }
 
 function record(endpoint, response) {
@@ -469,6 +519,8 @@ export function runWorkload() {
       runWebSocket();
     } else if (workload === 'messaging') {
       runMessaging();
+    } else if (workload === 'seata') {
+      runSeata();
     } else if (workload === 'swagger') {
       runSwagger();
     } else {
