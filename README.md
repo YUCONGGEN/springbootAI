@@ -5,7 +5,7 @@ SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提
 - SpringBootAI 版本：`1.8.8`
 - 内嵌 PyMyBatis 版本：`1.4.0`
 - Python：3.10+
-- 状态：Beta（企业试点）
+- 状态：Beta（企业试点）0
 - 仓库：[GitHub - YUCONGGEN/springbootAI](https://github.com/YUCONGGEN/springbootAI)
 - License：MIT
 
@@ -18,6 +18,8 @@ SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提
 | 新手入门 | [BEGINNER_GUIDE.md](doc/BEGINNER_GUIDE.md) | 随核心包 | 从零安装、创建项目、运行接口、打开 Swagger、选择后续模块 |
 | 常用注解模块 | [ANNOTATION_MODULES.md](doc/ANNOTATION_MODULES.md) | 随核心包 | Bean Validation / 条件装配 / 缓存增强 / CSV / `@Version` / `@Transient` |
 | AI（对齐 Spring AI 2.0） | [AI_MODULE.md](doc/AI_MODULE.md) | `pip install springbootAI[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测 |
+| LangChain（封装 langchain classic 全套） | [LANGCHAIN_MODULE.md](doc/LANGCHAIN_MODULE.md) | `pip install springbootAI[ai]` | Chains / Agents / Memory / Retrievers / VectorStores / Parsers / Loaders / 30+ Partner 提供商 / 双向适配器 / 一键 RAG |
+| AI 与 LangChain 测试指南 | [AI_LANGCHAIN_TEST_GUIDE.md](doc/AI_LANGCHAIN_TEST_GUIDE.md) | — | 162 个测试用例详解（有什么用/怎么用/验证什么），覆盖核心抽象到端到端集成 |
 | 内嵌 PyMyBatis ORM 与 DDL | [ORM_MODULE.md](doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 |
 | Spring Cloud（对齐 Cloud Alibaba） | [CLOUD_MODULE.md](doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 负载均衡 / 分布式事务 |
 | Excel（对齐 alibaba EasyExcel） | [EXCEL_MODULE.md](doc/EXCEL_MODULE.md) | `pip install springbootAI[excel]` | `@ExcelProperty` / `@ExcelIgnore` / `@excel_sheet` 注解驱动读写 |
@@ -36,7 +38,7 @@ SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提
 2. 阅读本页第 4、6、7 章，理解配置、依赖注入和 Controller。
 3. 做数据库 CRUD 时阅读 [ORM_MODULE.md](doc/ORM_MODULE.md)。
 4. 需要输入校验、缓存或条件开关时阅读 [ANNOTATION_MODULES.md](doc/ANNOTATION_MODULES.md)。
-5. 最后再按业务需要选择安全、Cloud、AI、Excel、WebSocket 或性能测试文档。
+5. 最后再按业务需要选择安全、Cloud、AI、LangChain、Excel、WebSocket 或性能测试文档。
 
 ## 目录
 
@@ -51,7 +53,7 @@ SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提
 9. [事务](#9-事务)
 10. [安全与权限](#10-安全与权限)
 11. [缓存、任务与高级 AOP](#11-缓存任务与高级-aop)
-12. [SpringBootAI AI 模块](#12-springbootai-ai-模块)
+12. [SpringBootAI AI 与 LangChain 模块](#12-springbootai-ai-与-langchain-模块)
 13. [Java 迁移指南](#13-java-迁移指南)
 14. [生产部署](#14-生产部署)
 15. [项目结构](#15-项目结构)
@@ -71,6 +73,8 @@ SpringBootAI 借鉴了 Spring Boot 的注解和分层习惯，但运行时是 Py
 |------|----------|
 | `spring` 框架 API | 1.8.8 |
 | `spring.orm.pymybatis` | 1.4.0 |
+| `spring.ai` AI 模块 | 1.3.0 |
+| `spring.langchain` LangChain 模块 | 1.0.0 |
 | Python | 3.10+ |
 
 ### 1.2 推荐使用范围
@@ -126,6 +130,7 @@ SpringBootAI 注解会先把元数据放到 `__spring_annotations__`。之后是
 | Feign 声明式 HTTP | ✅ 可用 | 声明式接口、Fallback 降级、自动传播 XID 和 trace 头 |
 | 高级 AOP | ✅ 可用 | 限流、熔断、幂等、审计、锁、指标、追踪、缓存 |
 | SpringBootAI AI 模块 | ✅ 可用 | 对齐 Spring AI 2.0：ChatClient/ChatModel/EmbeddingModel/Advisor/Tools，OpenAI/Ollama/DeepSeek/Moonshot 适配，Function Calling 闭环、RAG、会话记忆、Redis 向量存储、熔断重试、真流式 async、Prometheus 观测、类型化配置绑定 |
+| LangChain 模块 | ✅ 可用 | 封装 langchain classic 全套：Chains/Agents(6 种)/Memory/Retrievers/VectorStores/Parsers/Loaders + 30+ Partner 提供商懒加载，双向适配器复用 spring.ai 模型 Bean，`configure_langchain()` 自动装配 14+ Bean |
 
 ---
 
@@ -178,6 +183,17 @@ AI 模块为可选依赖（未安装时降级原生 HTTP + FakeChatModel）：
 
 ```bash
 pip install -r requirements-ai.txt   # langchain-openai/langchain-community/numpy（==锁版本）
+```
+
+LangChain 模块复用 AI 模块的依赖，额外按需安装 partner 包（30+ 提供商懒加载，未安装的自动跳过）：
+
+```bash
+pip install langchain-anthropic      # Anthropic Claude
+pip install langchain-deepseek       # DeepSeek
+pip install langchain-ollama         # Ollama 本地模型
+pip install faiss-cpu                # FAISS 向量库
+pip install langchain-chroma         # Chroma 向量库
+# 完整 partner 列表见 spring.langchain.partners.PARTNER_REGISTRY
 ```
 
 `requirements.txt` 是仓库的完整开发环境，包含多种数据库和中间件客户端。应用接入时优先按需安装 extras。
@@ -1949,9 +1965,67 @@ class CleanupJob:
 
 ---
 
-## 12. SpringBootAI AI 模块
+## 12. SpringBootAI AI 与 LangChain 模块
+
+### 12.1 AI 模块（对齐 Spring AI 2.0）
 
 > 本节（新手入门、快速开始、配置、AI 注解、ChatClient 链式 API、Advisor、ETL、工具调用、自动装配、企业级能力、DeepSeek 全特性演示）已分离至独立文档：[AI_MODULE.md](doc/AI_MODULE.md)。安装：`pip install springbootAI[ai]`。
+
+### 12.2 LangChain 模块（封装 langchain classic 全套能力）
+
+> 把 LangChain classic 的 Chains / Agents / Memory / Retrievers / VectorStores / Parsers / Loaders 封装为 Spring 风格 `@Service` / `@Component` Bean，配合 30+ 第三方模型提供商（OpenAI / Anthropic / Ollama / DeepSeek / ZhipuAI / Tongyi …）开箱即用。
+> 完整文档：[LANGCHAIN_MODULE.md](doc/LANGCHAIN_MODULE.md)。安装：`pip install springbootAI[ai]`。
+
+**核心能力**：
+
+- **双向适配器**：springbootAI `ChatModel`/`EmbeddingModel` ↔ langchain `BaseChatModel`/`Embeddings`，复用 `spring.ai` 装配的模型 Bean
+- **30+ Partner 提供商**：按 `application.yml` 的 `spring.langchain.partners.<name>` 懒加载，未配置的不启动
+- **6 种 Agent**：react / chat-zero-shot-react / openai-functions / openai-tools / structured-chat / self-ask-with-search
+- **6 种 Chain**：LLMChain / ConversationChain / SequentialChain / RetrievalQA / 摘要 / LLMMath
+- **4 种 Memory**：buffer / summary / buffer-window / token-buffer
+- **7 种 VectorStore**：inmemory / faiss / chroma / pinecone / weaviate / pgvector / redis
+- **6 种 Retriever + 5 种 OutputParser + 6 种 DocumentLoader + 6 种 Utility + 3 种 Callback**
+- **一键 RAG**：`IndexService.create_from_texts()` + `query()` 三步完成知识库问答
+- **自动装配**：`configure_langchain()` 一次注册 14+ 个 `lc*` Bean，支持 `@Autowired` 注入
+
+**最小示例**（无需 API Key，降级 FakeChatModel）：
+
+```python
+from spring.context.registry import BeanRegistry
+from spring.ai.autoconfig import configure_ai
+from spring.langchain.autoconfig import configure_langchain
+
+registry = BeanRegistry()
+configure_ai(registry=registry)                  # 1. 装配 spring.ai（降级 Fake）
+beans = configure_langchain(registry=registry)   # 2. 装配 spring.langchain
+
+chain = beans["lcChainService"]                  # 拿到 ChainService Bean
+print(chain.run_llm_chain("回答: {q}", q="你好"))
+```
+
+**配置**（`application.yml`）：
+
+```yaml
+spring:
+  langchain:
+    enabled: ${LC_ENABLED:true}
+    default-llm: ${LC_DEFAULT_LLM:auto}     # auto=复用 spring.ai 的 aiChatModel
+    agents:
+      default-type: ${LC_AGENT_TYPE:react}  # react|openai-tools|structured-chat|...
+      max-iterations: ${LC_AGENT_MAX_ITER:10}
+    vector-store:
+      type: ${LC_VECTOR_STORE:faiss}        # inmemory|faiss|chroma|redis|...
+    memory:
+      type: ${LC_MEMORY:buffer}             # buffer|summary|buffer-window|token-buffer
+    partners:                               # 按 name 启用 partner，未配置的不加载
+      openai:
+        api-key: ${OPENAI_API_KEY:}
+        model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+```
+
+**示例应用**：[example_langchain/](example_langchain/) 提供完整的 `@SpringBootApplication` + `@RestController` + `@Service` 分层演示，暴露 12 个 HTTP 接口（问答 / 翻译 / 摘要 / Agent / RAG 入库检索 / Memory / Math / Parser / Embed / Partner 列表 / 能力清单）。
+
+**与 spring.ai 的关系**：两个模块互补——`spring.ai` 提供 `ChatClient`/`Advisor`/`Tools` 抽象（Spring AI 2.0 风格），`spring.langchain` 提供 `Chain`/`Agent`/`Memory` 抽象（LangChain 生态）。底层复用同一个 `aiChatModel` Bean，不会重复计费。
 
 ## 13. Java 迁移指南
 
@@ -2478,7 +2552,7 @@ curl http://127.0.0.1:8848/nacos/v1/console/health/readiness
 
 ## 15. 项目结构
 
-`example`、`example1`、`example5` 是仓库级示例，不属于 `springbootAI` 安装包，不会被打包。实际项目应创建自己的应用包。
+`example`、`example1`、`example5`、`example_langchain` 是仓库级示例，不属于 `springbootAI` 安装包，不会被打包。实际项目应创建自己的应用包。`example_langchain` 演示了 LangChain 模块的完整分层用法（`@SpringBootApplication` + `@RestController` + `@Service` + `@Configuration`），可作为 AI 应用脚手架参考。
 
 推荐目录结构：
 
@@ -2538,6 +2612,7 @@ python -m pytest -q tests
 - JWT access/refresh、生产密钥校验。
 - 配置占位符类型和 CORS/HTTP 错误状态。
 - AI 模块 87 用例（LangChain 切片委托 + 向量库适配器），全量 707 用例 0 失败。
+- LangChain 模块 75 用例（适配器/配置/自动装配/Partner/Prompt/Chain/Agent 6 种类型/Memory/Parser/VectorStore/Retriever/Index/Tool/Utility/Callback/安全求值器/端到端 RAG），覆盖双向桥接、bind_tools 工具绑定、沙箱逃逸防护。
 
 ---
 
@@ -2583,7 +2658,19 @@ JWT_SECRET_KEY=<至少32字符随机密钥>
 
 **`ConfigLoader()` 与上下文读取不同文件：** 确认应用通过 `ApplicationContext` 启动，而不是只在不同工作目录直接实例化加载器。上下文启动后会绑定全局实例和默认配置目录；需要加载独立配置时显式传入 `config_path` 或 `base_path`。
 
-### 17.7 上线前清单
+### 17.7 LangChain 模块排错
+
+**`@Autowired` 注入 `lcChainService` 报 `Cannot resolve parameter`：** 确认 `@Configuration` 类的 `__init__` 中调用了 `configure_ai()` + `configure_langchain()`，且该 `@Configuration` 类在 `@Service` 之前被实例化（SpringBootAI 默认保证这个顺序）。
+
+**`Partner 'xxx' 注册失败（跳过）`：** 该 partner 的依赖包未安装。按告警提示 `pip install langchain-<partner>`，或在 `application.yml` 的 `spring.langchain.partners` 下移除该 partner。未安装的 partner 不会阻塞启动。
+
+**`bind_tools` / `openai-tools` / `structured-chat` Agent 无法调用工具：** 确认使用的是真实 OpenAI 模型（非 FakeChatModel）。FakeChatModel 不返回 `tool_calls`，只能走 `react` 文本解析路径。
+
+**RAG 报 `嵌入模型未装配`：** `configure_ai` 默认会装 `aiEmbeddingModel`，但需要 `OPENAI_API_KEY` 或 `OLLAMA_BASE_URL`。无 Key 时设 `AI_ALLOW_FAKE=true` 会降级 `FakeEmbeddingModel(dim=16)`，RAG 可演示但不真实。
+
+**`run_conversation` 不记忆前文：** 便捷方法每次不传 memory 时会创建新 buffer。要多轮记忆需自己持有 memory 实例：`mem = MemoryFactory.create("buffer"); svc.run_conversation("...", memory=mem)`。
+
+### 17.8 上线前清单
 
 - 使用实际 MySQL/PostgreSQL/Oracle 版本运行 CRUD、事务、断连恢复和池耗尽测试。
 - 使用迁移工具管理结构，不让应用运行账号执行 DDL。
@@ -2680,9 +2767,28 @@ export PROMETHEUS_PORT=8000
 # Logging
 export LOG_LEVEL=INFO
 export LOG_DIR=logs
+
+# AI 模块（spring.ai.*，详见 AI_MODULE.md）
+export AI_PROVIDER=openai              # openai|ollama|deepseek|moonshot|zhipu
+export AI_ALLOW_FAKE=true              # 无 API Key 时降级 FakeChatModel（开发/测试）
+export OPENAI_API_KEY=sk-xxx
+export OPENAI_CHAT_MODEL=gpt-4o-mini
+export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_CHAT_MODEL=llama3
+
+# LangChain 模块（spring.langchain.*，详见 LANGCHAIN_MODULE.md）
+export LC_ENABLED=true
+export LC_DEFAULT_LLM=auto             # auto=复用 spring.ai 的 aiChatModel；或 partner 名
+export LC_AGENT_TYPE=react             # react|openai-tools|structured-chat|...
+export LC_AGENT_MAX_ITER=10
+export LC_VECTOR_STORE=faiss           # inmemory|faiss|chroma|redis|pinecone|weaviate|pgvector
+export LC_RETRIEVER=similarity         # similarity|multi-query|contextual-compression|...
+export LC_RETRIEVER_K=4
+export LC_MEMORY=buffer                # buffer|summary|buffer-window|token-buffer
+export LC_MEMORY_MAX=20
 ```
 
-> Sentinel 限流熔断、OpenTelemetry 分布式追踪和 API Gateway 可内嵌实现；HTTP 补偿事务通过 `SEATA_HTTP_*` 配置。AI 模块环境变量见第 12.2 节。
+> Sentinel 限流熔断、OpenTelemetry 分布式追踪和 API Gateway 可内嵌实现；HTTP 补偿事务通过 `SEATA_HTTP_*` 配置。AI 模块完整环境变量见 [AI_MODULE.md](doc/AI_MODULE.md)，LangChain 模块完整环境变量见 [LANGCHAIN_MODULE.md](doc/LANGCHAIN_MODULE.md)。
 
 ## 附录 B：Docker Compose 示例
 

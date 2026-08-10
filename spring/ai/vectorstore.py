@@ -73,7 +73,31 @@ class SimpleInMemoryVectorStore(VectorStore):
             self.add([Document(id=f"doc-{len(self._docs)}", content=text,
                                metadata=meta)])
 
-    def similarity_search(self, request: SearchRequest) -> List[Document]:
+    def similarity_search(self, request=None, **kwargs) -> List[Document]:
+        """相似度检索。
+
+        支持两种调用方式（向后兼容）：
+        1. similarity_search(SearchRequest(query="...", top_k=4))  # 原生接口
+        2. similarity_search("query", k=4) 或 similarity_search(query="...", k=4)
+           # langchain 风格便捷入口：首参为字符串时视为 query，k 等价于 top_k
+
+        Args:
+            request: SearchRequest 实例（与 kwargs 二选一）
+            kwargs: 当 request 为字符串或 None 时，支持 query / k / top_k /
+                    embedding / similarity_threshold / filter_expression
+        """
+        # 字符串首参 → 当作 query
+        if isinstance(request, str):
+            kwargs.setdefault("query", request)
+            request = None
+        if request is None:
+            request = SearchRequest(
+                query=kwargs.get("query", ""),
+                embedding=kwargs.get("embedding"),
+                top_k=kwargs.get("k", kwargs.get("top_k", 4)),
+                similarity_threshold=kwargs.get("similarity_threshold", 0.0),
+                filter_expression=kwargs.get("filter_expression"),
+            )
         emb = request.embedding
         if emb is None and self._embedding_model and request.query:
             emb = self._embedding_model.embed_one(request.query)
@@ -90,11 +114,49 @@ class SimpleInMemoryVectorStore(VectorStore):
         scored.sort(key=lambda x: x[0], reverse=True)
         return [d for _, d in scored[:request.top_k]]
 
+    def as_retriever(self, search_type: str = "similarity",
+                     search_kwargs: Optional[dict] = None) -> "_InMemoryRetriever":
+        """把内存向量库转为 Retriever（langchain VectorStore.as_retriever 风格）。
+
+        返回的 Retriever 暴露 invoke(query) / get_relevant_documents(query) 方法，
+        便于 RetrieverFactory 与 RetrievalQA 直接消费。
+        """
+        return _InMemoryRetriever(self, search_kwargs or {"k": 4})
+
     def count(self) -> int:
         return len(self._docs)
 
     def clear(self) -> None:
         self._docs.clear()
+
+
+class _InMemoryRetriever:
+    """SimpleInMemoryVectorStore 的 Retriever 适配器。
+
+    暴露 langchain Retriever 风格接口：invoke / get_relevant_documents /
+    ainvoke，内部委托回向量库的 similarity_search。轻量实现，不引入
+    langchain BaseRetriever 的 pydantic 依赖。
+    """
+
+    def __init__(self, store: "SimpleInMemoryVectorStore", search_kwargs: dict):
+        self._store = store
+        self._k = search_kwargs.get("k", 4)
+
+    def invoke(self, query, config=None):
+        """同步检索（langchain 1.x Runnable 风格入口）。"""
+        if isinstance(query, str):
+            return self._store.similarity_search(query, k=self._k)
+        # query 为 dict 等结构时取其 query 字段
+        q = getattr(query, "query", None) or (query.get("query") if isinstance(query, dict) else str(query))
+        return self._store.similarity_search(q, k=self._k)
+
+    def get_relevant_documents(self, query):
+        """langchain classic Retriever 入口。"""
+        return self.invoke(query)
+
+    async def ainvoke(self, query, config=None):
+        """异步检索（内存实现，直接同步返回）。"""
+        return self.invoke(query, config)
 
 
 class LangChainVectorStore(VectorStore):

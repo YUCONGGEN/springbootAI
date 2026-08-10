@@ -443,6 +443,13 @@ class BeanFactory:
         
         for name, method in inspect.getmembers(bean_class):
             if not name.startswith('_') and inspect.isfunction(method):
+                # 跳过 @staticmethod：getmembers 会把静态方法拆成底层函数，
+                # 若用 types.MethodType 绑定到实例，会把实例当作首个位置参数，
+                # 导致 MemoryFactory.create("buffer") 之类调用失败
+                # （memory_type 收到的是实例而非 "buffer"）。静态方法无需绑定。
+                raw_descriptor = inspect.getattr_static(bean_class, name, None)
+                if isinstance(raw_descriptor, staticmethod):
+                    continue
                 annotations = getattr(method, '__spring_annotations__', [])
                 
                 if annotations:

@@ -46,6 +46,50 @@ spring:
       enabled: ${AI_CB_ENABLED:true}
       failure-threshold: ${AI_CB_FAILURE_THRESHOLD:5}
       recovery-timeout: ${AI_CB_RECOVERY_TIMEOUT:30}
+  # LangChain 模块配置（封装 langchain classic 全套能力 + 30+ partner 提供商）
+  # 详见 doc/LANGCHAIN_MODULE.md
+  langchain:
+    enabled: ${LC_ENABLED:true}
+    # default-llm: auto=复用 spring.ai 的 aiChatModel；或指定 partner 名（openai/anthropic/ollama/...）
+    default-llm: ${LC_DEFAULT_LLM:auto}
+    chains:
+      default-verbose: ${LC_CHAIN_VERBOSE:false}
+    agents:
+      # react | chat-zero-shot-react | openai-functions | self-ask-with-search
+      default-type: ${LC_AGENT_TYPE:react}
+      max-iterations: ${LC_AGENT_MAX_ITER:10}
+    vector-store:
+      # inmemory | faiss | chroma | redis | pinecone | weaviate | pgvector
+      type: ${LC_VECTOR_STORE:faiss}
+      persist-dir: ${LC_PERSIST_DIR:./data/vectors}
+      collection: ${LC_COLLECTION:default}
+    retriever:
+      # similarity | multi-query | contextual-compression | self-query | time-weighted | ensemble
+      type: ${LC_RETRIEVER:similarity}
+      k: ${LC_RETRIEVER_K:4}
+    memory:
+      # buffer | summary | buffer-window | token-buffer
+      type: ${LC_MEMORY:buffer}
+      max-messages: ${LC_MEMORY_MAX:20}
+    # 各 partner 提供商配置：按 name 启用并配 key/model。
+    # 未列出的 partner 缺省不启用；列出但依赖未安装的会自动跳过并告警。
+    # 支持的全部 partner 见 spring.langchain.partners.PARTNER_REGISTRY
+    partners:
+      openai:
+        api-key: ${OPENAI_API_KEY:}
+        model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+        temperature: ${OPENAI_TEMPERATURE:0.7}
+      ollama:
+        base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+        model: ${OLLAMA_CHAT_MODEL:llama3}
+      # 示例：启用 Anthropic（需 pip install langchain-anthropic）
+      # anthropic:
+      #   api-key: ${ANTHROPIC_API_KEY:}
+      #   model: claude-3-5-sonnet-20241022
+      # 示例：启用 DeepSeek（需 pip install langchain-deepseek）
+      # deepseek:
+      #   api-key: ${DEEPSEEK_API_KEY:}
+      #   model: deepseek-chat
 
 startup:
   # 生产建议设为 true：关键依赖初始化失败时立即退出，让进程管理器重启，而不是启动一个半可用服务。

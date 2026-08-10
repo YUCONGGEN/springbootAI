@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # 发行名 springbootAI（PyPI 包名，pip install springbootAI）；导入包名仍为 spring
 name = "springbootAI"
-version = "1.8.8"
+version = "1.8.9"
 description = "Python版Spring Boot框架，集成PyMyBatis ORM"
 readme = "README.md"
 license = "MIT"
@@ -108,6 +108,35 @@ ai = [
 ]
 
 # ========================================
+# SpringBootAI LangChain 模块 - 封装 langchain classic 全套能力 + 30+ partner 提供商
+# 安装：pip install springbootAI[langchain]
+# 设计：partner 包按需启用，未安装的 partner 由 @ConditionalOnClass/友好错误自动跳过
+# 详见 doc/LANGCHAIN_MODULE.md
+# ========================================
+langchain = [
+    "langchain-openai==0.3.27",
+    "langchain-core==0.3.51",
+    "langchain-text-splitters==0.3.8",
+    "langchain-community==0.3.24",
+    "numpy==2.0.2",
+    # 默认装上的向量库/文档/工具依赖（轻量）
+    "faiss-cpu>=1.7.4",
+    "pypdf>=4.0.0",
+    "beautifulsoup4>=4.12.0",
+    "sqlalchemy>=2.0.0",
+    # partner 提供商包（按需启用，下面是常用几款；其余见 PARTNER_REGISTRY 文档按需 pip install）
+    "langchain-anthropic>=0.2.0",
+    "langchain-ollama>=0.2.0",
+    "langchain-chroma>=0.1.0",
+    "langchain-mistralai>=0.2.0",
+    "langchain-cohere>=0.3.0",
+    "langchain-google-vertexai>=2.0.0",
+    "langchain-deepseek>=0.1.0",
+    "langchain-zhipuai>=0.1.0",
+    "langchain-experimental>=0.3.0",
+]
+
+# ========================================
 # 开发依赖
 # ========================================
 dev = [
@@ -138,6 +167,12 @@ full = [
     "langchain-text-splitters==0.3.8",
     "langchain-community==0.3.24",
     "numpy==2.0.2",
+    # LangChain 模块默认依赖（partner 包按需 pip install）
+    "faiss-cpu>=1.7.4",
+    "pypdf>=4.0.0",
+    "beautifulsoup4>=4.12.0",
+    "sqlalchemy>=2.0.0",
+    "langchain-experimental>=0.3.0",
 ]
 
 [tool.pytest.ini_options]

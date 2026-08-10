@@ -1279,6 +1279,9 @@ class TestP1Fixes:
             return MockResp()
         monkeypatch.setattr(requests, "post", _mock_post)
         model = OpenAIChatModel(api_key="sk-test")
+        # 强制走 HTTP 路径（langchain_openai 已安装时会默认走 langchain 路径，
+        # 用 httpx 而非 requests，mock requests.post 无效）
+        model._llm = None
         results = list(model.stream([Message.user("hi")]))
         assert len(results) >= 1
         assert results[0].content() == "ok"  # 第二次尝试成功
