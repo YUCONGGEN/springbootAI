@@ -1253,7 +1253,8 @@ class TestChainsExt:
         assert isinstance(result, str)
 
     def test_17_create_llm_math_chain(self, chain_service):
-        """数学链创建。"""
+        """数学链创建（需要 numexpr 包）。"""
+        pytest.importorskip("numexpr", reason="LLMMathChain 需要 numexpr 包")
         chain = chain_service.create_llm_math_chain()
         assert chain is not None
 
