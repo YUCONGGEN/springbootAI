@@ -1,6 +1,6 @@
 # SpringBootAI P0/P1/P2 八大模块使用文档
 
-> 版本：SpringBootAI Data / Actuator / Dynamic Datasource / TX Events / Config Binding / Test Slicing / i18n / WebSocket 1.0.0 ｜ 框架版本：SpringBootAI 1.8.3
+> 版本：SpringBootAI Data / Actuator / Dynamic Datasource / TX Events / Config Binding / Test Slicing / i18n / WebSocket 1.0.0 ｜ 框架版本：SpringBootAI 1.8.4
 > 对齐 Spring Boot / Spring Data / Spring WebSocket 的核心抽象，**无新增第三方依赖**（复用 FastAPI/Starlette/Pydantic/PyYAML 核心栈），`pip install springbootAI` 即可用。
 > 设计原则：**复用项目既有范式，不重复造轮子**——注解元数据（`SpringAnnotation`）、AOP 分发（`comprehensive_aop`）、ORM 反射（`Column`/`@entity`）、`ApplicationContext` 装配全部复用。
 

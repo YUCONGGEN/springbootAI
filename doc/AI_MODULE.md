@@ -2,7 +2,7 @@
 
 > 对齐 Spring AI 2.0：ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测。
 > 本文档从 README.md 第 12 节分离而来，作为 AI 模块的独立完整说明。
-> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 1.8.3 / SpringBootAI AI 1.3.0
+> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 1.8.4 / SpringBootAI AI 1.3.0
 
 ---
 
