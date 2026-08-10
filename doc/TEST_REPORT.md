@@ -1,9 +1,34 @@
 # SpringBootAI 框架综合测试报告
 
-**测试日期**: 2026-08-08（Excel 模块补充测试 2026-08-09；TOP5 注解模块测试 2026-08-09；P0/P1/P2 八大模块测试 2026-08-09；Swagger/OpenAPI 模块测试 2026-08-09）
+**测试日期**: 2026-08-10（历史基线 2026-08-08；Excel/TOP5/P0/P1/P2/Swagger 增量测试 2026-08-09）
 **测试环境**: macOS + Python 3.9.6 + Docker ｜ Excel/TOP5/八大模块/Swagger 补充测试：Windows + Python 3.11.9 + openpyxl 3.1.5
-**框架版本**: SpringBootAI 1.8.2 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
-**测试结果**: ✅ **1368 个用例全部通过**（31 个测试套件，0 失败）；example_all 集成测试 4/5 套件通过（HTTP API 套件需 MySQL/Docker 环境，Windows 无 Docker 时跳过，非框架回归问题）
+**框架版本**: SpringBootAI 1.8.3 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
+**测试结果**: ✅ **1368 个核心用例全部通过**（31 个测试套件，0 失败）；本机当前 `example_all` 集成测试为 4/5 套件通过，失败的是需要真实中间件的 HTTP API 套件，因为本次运行时 Docker 没有运行。历史 Docker 环境报告见第二部分的 5/5 记录；两者不是同一次运行。
+
+## 给新手：这份报告如何阅读和复现
+
+测试报告不是“项目已经适合所有生产场景”的保证书。它回答的是三个更具体的问题：
+
+1. **功能有没有按预期工作**：例如注解是否能被识别、Controller 是否能返回 HTTP 响应、`@Version` 冲突时是否会拒绝旧数据。
+2. **框架边界是否被测试过**：例如同步 Controller 是否离开事件循环执行、Gateway 是否能转发请求、worker 崩溃后是否能恢复。
+3. **真实依赖是否连得上**：MySQL、Redis、RabbitMQ、Nacos 等 Docker 服务启动后，集成测试才有意义；只使用 mock 的测试只能证明 Python 代码路径，不代表网络、权限、连接池和故障恢复一定正确。
+
+第一次运行建议按下面顺序操作：
+
+```powershell
+# 1. 创建并启用虚拟环境（只需做一次）
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -X utf8 -m pip install -r requirements.txt
+
+# 2. 先跑快速单元测试，适合每次改代码后执行
+python -X utf8 -m pytest tests tests_runtime -q
+
+# 3. Docker 已启动时，再跑真实依赖集成测试
+python -X utf8 -m pytest tests_integration -q
+```
+
+看到 `1368 passed` 表示本报告对应的核心测试通过；`skipped` 表示测试明确判断当前环境缺少依赖，不能当成“功能已验证”。要定位失败原因，用 `-x -vv` 让 pytest 在第一个失败处停止并显示详细日志。压测不属于本报告的 1368 个单元/运行时用例，压测命令和 p95/p99 的解释见 [`tests_performance/README.md`](../tests_performance/README.md)。
 
 > 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 1.5.0 / PyMyBatis 1.4.0）。
 >
@@ -18,6 +43,8 @@
 > **2026-08-10 v1.8.2 BeanUtils 工具增量**：新增 `spring.utils.BeanUtils`（对齐 Spring `org.springframework.beans.BeanUtils` + Apache Commons BeanUtils），提供 `copy_properties` / `copy_property` / `clone` / `get_property` / `set_property` / `get_simple_property` / `get_property_descriptors` / `get_property_descriptor` / `populate` / `describe` 共 10 个方法，支持普通类 / dataclass / Pydantic v2 Model / ORM entity，默认浅拷贝、可选深拷贝、嵌套路径读写、只读 property 自动跳过。新增 34 用例（`tests/test_bean_utils.py`）。
 >
 > **2026-08-10 v1.8.2 Seata HTTP 持久化补偿增量**：兑现 `doc/CLOUD_MODULE.md` 早已承诺但未落地的持久化存储实现。新增 `spring/cloud/transaction_store.py`（`SQLiteTransactionStore`，WAL 模式 + 原子状态迁移 + 外键级联），`SeataTransactionManager` 集成持久化存储后支持：事务/分支元数据落盘、重启恢复（`recover_pending_transactions`）、幂等提交（超时 + 重启后重复 commit 仅执行一次回调）、过期分支回滚、并发 commit 单次 claim（`reclaim_stale_transaction`）、`PARTIAL_COMMIT`/`PARTIAL_ROLLBACK` 失败关闭持久化。`@GlobalTransactional` 异步路径用 `asyncio.to_thread` 包装 SQLite 阻塞操作避免事件循环阻塞。`init_seata` 读取 `http_compensation_enabled`/`store_path`/`recover_on_startup`/`recovery_grace_ms`/`recovery_interval_s`，并在启动时执行恢复；`SpringApplication` 启停 recovery worker；`/actuator/health` 的 seata http 探针由 DOWN 改为 UP 并附 `warning: Persistent compensation only; no Seata AT consistency` + 活跃事务计数。**架构限制仍未改变**：协调器运行在应用进程内，不具备 Seata AT 全局锁/undo_log 回滚/分支资源代理等强一致性语义，**不能据此宣称支付/订单/库存等场景具备企业级分布式一致性**；生产强一致必须使用 `distributed` 模式对接真实 Seata Server。新增 7 用例（`tests/test_seata_durable_store.py`），运行时加固套件增强（`tests_runtime/test_runtime_hardening.py` 21 用例），全量 1368 用例通过。
+
+> **2026-08-10 v1.8.3 修正发布**：v1.8.2 曾上传 PyPI 但为**不完整构建**（缺 `spring/cloud/transaction_store.py`，文档声称的持久化补偿未实际打包，文档与代码不符），已 **yank**。v1.8.3 是首个包含 Seata HTTP 持久化补偿完整实现的 PyPI 发布版（基于 cfdc5ad：transaction_store + seata 持久化 + BeanUtils + 新手文档）。版本号字段统一更新至 1.8.3；历史 v1.8.2 增量记录保留作为代码演进档案。**架构限制不变**：HTTP 补偿仍是进程内协调器，非 Seata AT 强一致性，不能据此宣称支付/订单/库存场景具备企业级分布式一致性。全量 1368 用例通过。
 
 ---
 
@@ -728,7 +755,7 @@ python test_all_features.py
 
 ## 一、结论
 
-当前代码已完成v1.5.0版本，核心功能、微服务治理和Cloud高级功能均已内嵌实现并通过27个新功能测试。适合企业内部系统、中后台API服务和AI集成场景。核心交易系统仍建议完成下方外部验证项后再采用。
+当前代码已完成 v1.8.3 版本，核心功能、微服务治理和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿模式仍不是 Seata AT 强一致事务；支付、订单、库存等核心交易必须完成真实 Seata/可靠消息方案和下方外部验证后再采用。
 
 ## 二、本轮已完成
 

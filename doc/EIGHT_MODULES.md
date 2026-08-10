@@ -1,10 +1,27 @@
 # SpringBootAI P0/P1/P2 八大模块使用文档
 
-> 版本：SpringBootAI Data / Actuator / Dynamic Datasource / TX Events / Config Binding / Test Slicing / i18n / WebSocket 1.0.0 ｜ 框架版本：SpringBootAI 1.8.2
+> 版本：SpringBootAI Data / Actuator / Dynamic Datasource / TX Events / Config Binding / Test Slicing / i18n / WebSocket 1.0.0 ｜ 框架版本：SpringBootAI 1.8.3
 > 对齐 Spring Boot / Spring Data / Spring WebSocket 的核心抽象，**无新增第三方依赖**（复用 FastAPI/Starlette/Pydantic/PyYAML 核心栈），`pip install springbootAI` 即可用。
 > 设计原则：**复用项目既有范式，不重复造轮子**——注解元数据（`SpringAnnotation`）、AOP 分发（`comprehensive_aop`）、ORM 反射（`Column`/`@entity`）、`ApplicationContext` 装配全部复用。
 
 ---
+
+## 新手阅读方式
+
+“八大模块”不是一个必须全部开启的功能包，而是八组彼此独立的能力。请按问题选择，不要为了“功能齐全”一次全部接入。
+
+| 你遇到的问题 | 应阅读的章节 |
+|---|---|
+| 列表接口需要分页、排序和动态筛选 | Spring Data Repository |
+| 运维需要查看健康、Bean、配置和指标 | Actuator |
+| 查询走从库、写入走主库 | 多数据源读写分离 |
+| 事务提交后才能发通知 | 事务事件监听 |
+| YAML 要自动绑定为类型对象 | 配置松散绑定与校验 |
+| 测试只想加载 Web 或数据层 | 测试切片 |
+| 接口需要中英文切换 | i18n |
+| 浏览器需要实时双向通信 | WebSocket |
+
+每一节都包含快速示例。实际接入时应只复制当前模块的代码，并执行对应测试；尤其是多数据源、事务事件和 WebSocket，需要验证并发、断线和进程重启，而不是只看单次调用成功。
 
 ## 模块总览
 

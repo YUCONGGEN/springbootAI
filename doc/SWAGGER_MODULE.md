@@ -1,10 +1,24 @@
 # SpringBootAI Swagger / OpenAPI 模块使用文档
 
-> 版本：SpringBootAI Swagger 1.0.0 ｜ 框架版本：SpringBootAI 1.8.2
+> 版本：SpringBootAI Swagger 1.0.0 ｜ 框架版本：SpringBootAI 1.8.3
 > 对齐 SpringDoc OpenAPI 3 注解体系（`@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`/`@Schema`/`@SecurityScheme`/`@SecurityRequirement`），同时提供 Swagger 2 风格别名（`@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam`），**无新增第三方依赖**（复用 FastAPI 自带的 OpenAPI 生成），`pip install springbootAI` 即可用。
 > 设计原则：**复用项目既有范式，不重复造轮子**——注解复用 `SpringAnnotation` 描述符，元数据在 `WebApplicationContext` 注册路由时同步注入 FastAPI 路由参数，全局 `securitySchemes`/`@Schema`/`@Parameter` 通过自定义 `app.openapi()` 后处理注入。
 
 ---
+
+## 零、新手先读
+
+Swagger UI 是给人看的交互式 API 页面，OpenAPI 是给工具读取的接口描述 JSON。写好文档后，前端、测试和其他服务可以知道接口路径、参数、返回值和认证方式，也可以直接在浏览器点击“Try it out”发请求。
+
+SpringBootAI 会基于 FastAPI 自动生成基础 OpenAPI；`@Tag`、`@Operation` 等注解用于补充人能看懂的说明。最小验证流程：
+
+1. 给 Controller 添加 `@Tag`，给方法添加 `@Operation`。
+2. 启动应用并打开 `http://127.0.0.1:8080/docs`。
+3. 确认分组、摘要、参数和响应状态码正确。
+4. 打开 `/openapi.json`，确认同一路由也存在。
+5. 用“Try it out”调用一次，检查真实响应而不只是页面文字。
+
+Swagger 是文档和调试工具，不会自动替代认证、参数校验和接口测试。生产环境是否公开 `/docs` 应按安全要求决定；内网管理系统也应防止 OpenAPI 暴露敏感内部接口。
 
 ## 一、模块组成
 

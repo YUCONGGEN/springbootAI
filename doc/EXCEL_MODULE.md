@@ -1,9 +1,30 @@
-# SpringBootAI Excel 模块使用报告
+# SpringBootAI Excel 模块使用指南
 
 > 注解驱动的 Excel 读写，对齐 alibaba EasyExcel，复用 SpringBootAI 框架既有注解范式。
-> 模块版本：`spring.excel` 1.0.0 ｜ 框架版本：SpringBootAI 1.8.2
+> 模块版本：`spring.excel` 1.0.0 ｜ 框架版本：SpringBootAI 1.8.3
 
 ---
+
+## 零、新手先读
+
+Excel 模块用于在 Python 对象和 `.xlsx` 文件之间转换。常见场景包括导出报表、批量导入用户、生成财务模板。它处理的是文件，不会自动把数据写入数据库；读到对象后仍应先校验，再由 Service 保存。
+
+使用前安装依赖：
+
+```powershell
+python -m pip install "springbootAI[excel]"
+```
+
+最短使用流程是：
+
+1. 用 `ExcelProperty` 声明“哪个属性对应哪一列表头”。
+2. 用 `@excel_sheet` 设置工作表名称。
+3. `write_excel()` 导出对象列表，或 `read_excel()` 读取成对象列表。
+4. 打开生成文件检查表头、日期、金额和长数字。
+
+Excel 与 CSV 的选择：Excel 支持工作表和样式，适合给人查看；CSV 更轻量，适合系统交换和大批量纯文本数据。读取用户上传的 Excel 时要限制文件大小、行数和扩展名，不要直接信任单元格内容。
+
+读完本文后应能完成两个验证：导出一个包含中文和日期的文件；再把它读回来，确认字段类型和原值一致。
 
 ## 一、模块概述
 

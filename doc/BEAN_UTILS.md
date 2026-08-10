@@ -2,9 +2,17 @@
 
 > 对齐 `org.springframework.beans.BeanUtils`（Spring）与 `org.apache.commons.beanutils.BeanUtils`（Apache Commons）。
 > 提供对象间属性复制、嵌套属性读写、属性描述符、字典填充/导出等能力。
-> 框架版本：SpringBootAI 1.8.2
+> 框架版本：SpringBootAI 1.8.3
 
 ---
+
+## 零、新手先读
+
+BeanUtils 用来复制“字段名相同”的对象属性，常见于 DTO 转 Entity、Entity 转响应对象，以及把配置字典填入对象。它能减少重复赋值代码，但不会替你做业务校验、权限过滤或复杂类型转换。
+
+最容易出错的是浅拷贝：默认复制列表、字典等对象的引用，修改目标对象里的列表可能同时影响源对象。需要完全独立的数据时使用 `copy_deep=True` 或 `clone(..., deep=True)`。
+
+密码哈希、内部权限、审计字段等敏感属性应放进 `ignore`，不能因为字段同名就无条件从请求 DTO 复制到数据库实体。
 
 ## 一、快速开始
 

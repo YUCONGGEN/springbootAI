@@ -2,9 +2,15 @@
 
 > 对齐 Spring AI 2.0：ChatClient / Advisor / Tools / RAG / Function Calling / ETL / 多厂商 LangChain 化 / 韧性 / 观测。
 > 本文档从 README.md 第 12 节分离而来，作为 AI 模块的独立完整说明。
-> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 1.8.2 / SpringBootAI AI 1.3.0
+> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 1.8.3 / SpringBootAI AI 1.3.0
 
 ---
+
+## 阅读前准备
+
+第一次使用先完成 [新手入门指南](BEGINNER_GUIDE.md) 的普通 HTTP 接口，再学习本模块。调用云端模型通常会产生费用并把请求内容发送给第三方 Provider；不要把生产密钥、个人信息、未脱敏客户数据直接放入提示词。建议先用测试密钥、限额账号或本地 Ollama 跑通最小示例。
+
+学习顺序建议：基础聊天 -> 流式输出 -> 会话记忆 -> Tools -> RAG -> Redis 持久化与监控。每一步都先验证错误处理、超时和费用，再进入下一步。
 
 SpringBootAI AI 模块对齐 **Spring AI 2.0**，提供 `ChatClient`/`ChatModel`/`EmbeddingModel`/`Advisor`/`Tools` 抽象，底层复用 LangChain 生态做模型适配（未安装时降级原生 HTTP），上层保留 Spring 风格的统一配置（`application.yml` 的 `spring.ai.*`）与依赖注入（BeanRegistry）。
 
