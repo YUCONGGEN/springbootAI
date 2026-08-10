@@ -2,7 +2,7 @@
 
 > 对齐 Spring Cloud Alibaba：服务注册发现 / 配置中心动态刷新 / Feign 远程调用 / Sentinel 限流熔断 / Gateway / 负载均衡 / 分布式事务。
 > 本文档从 README.md 第 5.10 节（Cloud 注解）与第 14.3 节（功能说明）分离而来。
-> 框架版本：SpringBootAI 1.8.0
+> 框架版本：SpringBootAI 1.8.2
 
 ---
 
@@ -178,7 +178,7 @@ class OrderService:
 
 - **Sentinel 限流熔断**：通过 `@SentinelResource` 注解使用，支持 QPS 限流、异常比例/异常数/慢调用熔断、热点参数限流。
 - **OpenTelemetry 追踪**：通过 `@Trace` 注解使用，自动生成并传播 W3C `traceparent` 标准 traceId/spanId，自动注入 HTTP 请求和 Feign 调用，追踪信息通过日志输出。
-- **Seata HTTP-AT 分布式事务**：通过 `@GlobalTransactional` 注解使用，通过 HTTP 端点协调跨服务事务，Feign 客户端自动传播 XID。
+- **Seata 分布式事务（三模式）**：通过 `@GlobalTransactional` 注解使用，支持 `local`/`http`/`distributed` 三种模式。`distributed` 对接真实 Seata Server；`http` 为持久化补偿协调器（**非 AT 强一致性**，详见下文"架构限制与生产边界"）；Feign 客户端自动传播 XID。
 - **API Gateway**：`@EnableGateway` + `GatewayRouter`，支持路由转发、路径重写、全局过滤器、负载均衡。
 - **ORM DDL 自动建表**：`@entity` + `database.ddl-auto`（JPA ddl-auto 风格）。
 
@@ -198,3 +198,36 @@ def place_order(user_id: int, product_id: int):
     order_service.create(user_id, product_id)
     inventory_service.deduct(product_id)
 ```
+
+---
+
+## 三、架构限制与生产边界
+
+### HTTP 补偿模式 ≠ Seata AT 强一致性
+
+> **已修复（文档披露）**：早期文档将 `http` 模式表述为"HTTP-AT 分布式事务"，该表述容易误导。现明确披露架构限制，避免被误读为具备企业级分布式一致性。
+
+**仍存在的架构限制**：
+
+- `http` 模式的事务协调器运行在**应用进程内**（元数据持久化到本地 SQLite），通过 HTTP 端点通知分支提交/回滚，依赖**幂等回调**完成最终一致。
+- 它**不具备** Seata AT 的全局锁、undo_log 回滚、分支资源代理等强一致性语义。
+- 因此**不能据此宣称**支付、订单、库存等场景具备**企业级分布式一致性**。
+
+**生产场景选型**：
+
+| 场景 | 推荐模式 | 说明 |
+|------|---------|------|
+| 开发调试 / 单服务事务追踪 | `local` | 仅追踪事务上下文，无跨服务协调 |
+| 故障演练 / 补偿流程验证 | `http` | 持久化补偿，支持重启恢复，**非强一致** |
+| **生产强一致（支付/订单/库存）** | `distributed` | 必须部署真实 Seata Server + 兼容 Python SDK |
+
+`distributed` 模式要求：
+
+1. 部署 Seata Server（https://seata.io）
+2. 安装与本适配层 API 兼容的企业 Seata Python SDK
+3. 配置 `registry.conf` / `file.conf`，创建 `seata_undo_log` 表
+4. 启动时设置 `SEATA_ENABLED=true`、`seata.mode=distributed`
+
+> ⚠️ `distributed` 模式未检测到兼容 SDK 时**失败关闭**（不静默降级到 `local`），避免核心业务在无强一致保障下继续运行。
+
+**代码实现位置**：[`spring/cloud/seata.py`](../spring/cloud/seata.py) — `SeataTransactionManager` 三模式实现；持久化存储 [`spring/cloud/transaction_store.py`](../spring/cloud/transaction_store.py)。

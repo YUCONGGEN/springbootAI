@@ -2,7 +2,7 @@
 
 **测试日期**: 2026-08-08（Excel 模块补充测试 2026-08-09；TOP5 注解模块测试 2026-08-09；P0/P1/P2 八大模块测试 2026-08-09；Swagger/OpenAPI 模块测试 2026-08-09）
 **测试环境**: macOS + Python 3.9.6 + Docker ｜ Excel/TOP5/八大模块/Swagger 补充测试：Windows + Python 3.11.9 + openpyxl 3.1.5
-**框架版本**: SpringBootAI 1.8.0 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
+**框架版本**: SpringBootAI 1.8.2 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
 **测试结果**: ✅ **1246 个用例全部通过**（29 个测试套件，0 失败）；example_all 集成测试 4/5 套件通过（HTTP API 套件需 MySQL/Docker 环境，Windows 无 Docker 时跳过，非框架回归问题）
 
 > 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 1.5.0 / PyMyBatis 1.4.0）。
@@ -12,6 +12,10 @@
 > **2026-08-09 P0/P1/P2 八大模块增量**：实现缺失注解模块分析中推荐的 P0 三项（Spring Data Repository 抽象 / Actuator 运维端点 / 多数据源读写分离）、P1 三项（事务事件监听 / 配置松散绑定与校验 / 测试切片）、P2 两项（i18n 国际化 / WebSocket 实时通信），共 342 用例。修复 `_test_helpers.py` 全局 mock 污染（仅对 stub 模块注入 mock 属性，不再覆盖真实已安装模块）与 `test_test_slicing` 的 Result 包装期望（见第六节）。
 >
 > **2026-08-09 Swagger/OpenAPI 模块增量**：实现注解驱动 API 文档（`@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`/`@Schema`/`@SecurityScheme`/`@SecurityRequirement` + Swagger 2 别名 `@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam`），对齐 SpringDoc OpenAPI 3，共 43 用例。`WebApplicationContext` 注册路由时同步注入 OpenAPI 元数据，全局 `securitySchemes`/`@Schema`/`@Parameter` 通过自定义 `app.openapi()` 后处理注入。**浏览器网页端到端实测**：启动真实 uvicorn 服务器访问 `/docs`，验证 13 项（页面加载/分组/注解渲染/Try it out 实调/Authorize 弹窗等）全通过，3 张截图存档。**实测发现并修复路由注册顺序问题**：`_register_controllers` 原用 `inspect.getmembers`（字母序）导致 `/{user_id}` 拦截 `/list`，改为按方法定义顺序遍历 `__mro__.__dict__`，对齐 Spring MVC 静态路径优先体验；145 个 web 相关用例回归通过。
+
+> **2026-08-10 v1.8.1 修复增量**：修复 `import spring` 在无写权限工作目录（如系统目录/只读位置）下因 `SpringLogger` 创建 `logs` 目录抛 `PermissionError` 而崩溃的问题。`_setup_loguru` / `_setup_std_logging` 创建日志目录失败时优雅降级为仅控制台日志（`os.makedirs(exist_ok=True)` + `try/except (PermissionError, OSError)`），loguru warning 用 f-string 格式化。全量 1295 用例回归通过。
+>
+> **2026-08-10 v1.8.2 BeanUtils 工具增量**：新增 `spring.utils.BeanUtils`（对齐 Spring `org.springframework.beans.BeanUtils` + Apache Commons BeanUtils），提供 `copy_properties` / `copy_property` / `clone` / `get_property` / `set_property` / `get_simple_property` / `get_property_descriptors` / `get_property_descriptor` / `populate` / `describe` 共 10 个方法，支持普通类 / dataclass / Pydantic v2 Model / ORM entity，默认浅拷贝、可选深拷贝、嵌套路径读写、只读 property 自动跳过。新增 34 用例（`tests/test_bean_utils.py`），全量 1329 用例通过。同步在 `doc/CLOUD_MODULE.md` 新增"架构限制与生产边界"章节，明确披露 HTTP 补偿模式 ≠ Seata AT 强一致性，不能据此宣称支付/订单/库存等场景具备企业级分布式一致性；生产强一致必须使用 `distributed` 模式对接真实 Seata Server。
 
 ---
 
@@ -117,6 +121,14 @@
 | # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
 |---|---------|--------|---------|------|
 | 29 | test_swagger_module.py | 43 | Swagger/OpenAPI 注解驱动 API 文档（注解元数据：@Tag/@Api/@Operation/@ApiOperation/@ApiResponse 可重复/@ApiResponses/@Parameter/@ApiParam/@Schema/@ApiModel/@SecurityScheme bearer+apiKey/@SecurityRequirement；collect_openapi_metadata：类@Tag+方法@Operation 组合/@ApiResponse 收集/@SecurityRequirement 收集/operation_id+deprecated/无注解空/方法 tag 叠加类 tag；collect_security_schemes：bearer/apiKey/无；SwaggerConfig：默认值/kebab-case/snake_case/disabled/contact+license/to_fastapi_kwargs 启用+禁用+contact+license kwargs；集成 TestClient：openapi title+version/docs 可访问/docs 禁用 404/@Tag 出现/@Operation summary+description/operation_id+deprecated/@ApiResponse 状态码/JWT securitySchemes/security requirement on route/apiKey securityScheme/@Schema 后处理/@Parameter 后处理 description+example/别名注解/Swagger UI HTML 含标题/多 Controller tags）+ **浏览器网页端到端实测**（启动真实 uvicorn 服务器访问 /docs：页面加载/@Tag 分组/@Operation summary+description/@ApiResponse/@Parameter 默认值/operation_id 锚点/Try it out 参数编辑/Execute 实际调用成功响应/Authorize 弹窗 BearerAuth-JWT/@SecurityRequirement 锁图标/Contact-License 渲染，13 项全通过，3 张截图存档） | ✅ 全部通过 |
+
+### SpringBootAI BeanUtils 工具测试套件（1 个文件，34 个用例）
+
+> 2026-08-10 新增（v1.8.2）。对齐 Spring `org.springframework.beans.BeanUtils` + Apache Commons BeanUtils，提供属性复制 / 嵌套读写 / 描述符 / populate / describe 能力。
+
+| # | 测试文件 | 用例数 | 覆盖范围 | 结果 |
+|---|---------|--------|---------|------|
+| 30 | test_bean_utils.py | 34 | BeanUtils 属性复制工具（copy_properties：基本复制/ignore 忽略/单下划线私有属性/方法与 dunder 排除/只读 property 跳过/浅拷贝/深拷贝/None 源目标/dataclass/Pydantic v2 Model；copy_property：单属性/缺失/只读目标；clone：浅克隆/深克隆/None；嵌套 get/set：对象嵌套/Mapping 嵌套/中间 None/简单 set；get_simple_property；get_property_descriptors/get_property_descriptor：类型推断；populate：批量填充/跳过不可写/None 与空；describe：导出字典含 property getter/None；顶层导出 spring.utils.BeanUtils） | ✅ 全部通过 |
 
 ---
 

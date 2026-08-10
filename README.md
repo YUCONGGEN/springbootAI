@@ -2,7 +2,7 @@
 
 SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提供装饰器式组件扫描、依赖注入、FastAPI 路由、配置加载、安全能力、内嵌的 PyMyBatis ORM，以及企业级 AI 模块（对齐 Spring AI 2.0：ChatClient/Advisor/Tools/RAG/Function Calling）。本指南为框架核心综合使用文档；**AI / ORM / Cloud / Excel 等模块的完整注解与功能说明已分离为独立文档**（见下方“模块文档”），本指南相应章节保留概览与跳转链接。
 
-- SpringBootAI 版本：`1.8.1`
+- SpringBootAI 版本：`1.8.2`
 - 内嵌 PyMyBatis 版本：`1.4.0`
 - Python：3.10+
 - 状态：Beta（企业试点）
@@ -23,6 +23,7 @@ SpringBootAI 是一个借鉴 Spring Boot 编程模型的 Python Web 框架，提
 | Swagger / OpenAPI（对齐 SpringDoc） | [SWAGGER_MODULE.md](doc/SWAGGER_MODULE.md) | 随核心包 | `@Tag` / `@Operation` / `@ApiResponse` / `@Parameter` / `@Schema` / `@SecurityScheme` 注解驱动 API 文档 + Swagger2 别名 |
 | P0/P1/P2 八大模块 | [EIGHT_MODULES.md](doc/EIGHT_MODULES.md) | 随核心包 | Spring Data Repository / Actuator / 多数据源读写分离 / 事务事件 / 配置松散绑定 / 测试切片 / i18n / WebSocket |
 | 安全 | [SECURITY.md](doc/SECURITY.md) | 随核心包 | JWT 生成校验 / 密码加密（SHA256/MD5/BCrypt）/ SQL 注入防护 / 访问控制 |
+| BeanUtils（属性复制工具） | [BEAN_UTILS.md](doc/BEAN_UTILS.md) | 随核心包 | `copy_properties` / `clone` / `get_property` / `set_property` / `populate` / `describe` 对齐 Spring + Apache Commons BeanUtils |
 | 测试报告 | [TEST_REPORT.md](doc/TEST_REPORT.md) | — | 全量测试用例与覆盖范围 |
 
 > 所有模块文档统一存放于 [`doc/`](doc/) 目录。本指南正文中出现的"已分离至独立文档"链接均指向 `doc/` 下的对应文件。
@@ -58,7 +59,7 @@ SpringBootAI 借鉴了 Spring Boot 的注解和分层习惯，但运行时是 Py
 
 | 组件 | 当前版本 |
 |------|----------|
-| `spring` 框架 API | 1.8.0 |
+| `spring` 框架 API | 1.8.2 |
 | `spring.orm.pymybatis` | 1.4.0 |
 | Python | 3.10+ |
 
@@ -74,7 +75,7 @@ SpringBootAI 借鉴了 Spring Boot 的注解和分层习惯，但运行时是 Py
 - 自动化 ORM 契约测试使用 SQLite；MySQL、PostgreSQL、Oracle 需单独验证。
 - 本地 `@Transactional` 支持全部七种 Spring 传播模式；`REQUIRES_NEW` 和 `NOT_SUPPORTED` 需要连接池有额外可用连接。
 - Profile 会筛选 `@Profile` Bean，但不会自动合并 `application-{profile}.yml`。
-- Nacos、RabbitMQ、Prometheus 依赖外部服务；Sentinel、Seata HTTP-AT、OpenTelemetry 追踪均已内嵌实现无需外部 Server。
+- Nacos、RabbitMQ、Prometheus 依赖外部服务；Sentinel 和 OpenTelemetry 追踪可内嵌运行。HTTP 事务模式是持久化补偿协调器，不提供 Seata AT 强一致性；生产强一致场景必须使用真实 Seata Server 或可靠消息方案。
 - 限流、分布式锁、幂等和缓存语义依赖 Redis 等后端，降级路径需要故障注入。
 
 ### 1.4 注解使用总览
@@ -109,7 +110,7 @@ SpringBootAI 注解会先把元数据放到 `__spring_annotations__`。之后是
 | Nacos 服务发现 | ✅ 可用 | 服务注册/发现/订阅，支持无认证开发模式 |
 | Sentinel 限流熔断 | ✅ 可用 | 内嵌引擎，QPS 限流、异常比例/异常数/慢调用熔断、热点参数限流，无需 Dashboard |
 | 分布式追踪 | ✅ 可用 | 原生 OpenTelemetry(W3C traceparent)，自动 HTTP/Feign 注入，无需 OAP Server |
-| Seata 分布式事务 | ✅ 可用 | 内嵌 HTTP-AT 模式，分支注册/提交/回滚，XID 自动传播，无需 Seata Server |
+| Seata 分布式事务 | ⚠️ 有边界 | `distributed` 对接真实 Seata SDK/Server；`http` 仅提供显式启用的持久化补偿，支持重启恢复和 XID 传播，不等同 AT |
 | API Gateway | ✅ 可用 | 轻量 ASGI/WSGI 网关，路由转发、路径重写、过滤器链、负载均衡 |
 | Prometheus 监控 | ✅ 可用 | Counter/Gauge/Histogram 指标暴露 |
 | Feign 声明式 HTTP | ✅ 可用 | 声明式接口、Fallback 降级、自动传播 XID 和 trace 头 |
@@ -1407,7 +1408,7 @@ class ScheduledTasks:
 | `@SentinelResource` | 限流、业务异常 fallback | 受管 Bean 方法会包装；已内嵌限流熔断引擎，无需 Sentinel Dashboard |
 | `@EnableGateway` | 启用 API Gateway | 元数据标记；配合 `GatewayRouter` 使用，内嵌轻量 ASGI/WSGI 网关 |
 | `@LoadBalanced` | 给 `@Bean` 工厂返回对象添加负载均衡标记 | `@Bean` 方法上会执行，但实际请求仍需配合框架负载均衡客户端 |
-| `@GlobalTransactional` | 通过 Seata 管理全局事务 | 受管 Bean 方法会调用 Seata manager；已内嵌 HTTP-AT 模式，XID 自动通过 Feign 传播；不支持嵌套 |
+| `@GlobalTransactional` | 通过 Seata 管理全局事务 | 受管 Bean 方法调用 Seata manager；HTTP 模式为持久化补偿且要求幂等回调，强一致生产场景使用 `distributed`；不支持嵌套 |
 | `@Valid` | 非空/嵌套对象基础检查 | 受管 Bean 方法会执行简化校验，不等同 Jakarta Bean Validation |
 | `@Validated` | 分组校验 | 会执行简化检查，但 `groups` 当前未驱动真正的分组规则 |
 | `@RabbitListener` | 注册 RabbitMQ 消费者 | 可直接装饰受管 Bean 方法；容器声明队列/交换机、注册回调，并在刷新后启动后台消费；支持同步和异步回调 |
@@ -1934,7 +1935,7 @@ class CleanupJob:
 
 `@SentinelResource`、`@GlobalTransactional` 和方法级 `@LoadBalanced` 有 AOP 消费路径；`@EnableDiscoveryClient`、`@FeignClient` 等当前主要是元数据，Nacos 实际初始化由 `discovery.enabled` 和 `ApplicationContext` 启动流程控制。Nacos 客户端需要 `nacos-sdk-python`、`NACOS_SERVER`、`NACOS_USERNAME`、`NACOS_PASSWORD`；Nacos 2.2+ Docker 服务端还需要 Base64 token 和 identity 环境变量。
 
-配置 `rabbitmq.enabled: true` 并提供 host、port、username、password、virtual_host。开发环境也应在真实 Nacos、RabbitMQ、Redis 等环境执行集成、断线和重复投递测试。Sentinel、Seata HTTP-AT、OpenTelemetry 追踪、API Gateway 均已内嵌实现，无需外部 Server。
+配置 `rabbitmq.enabled: true` 并提供 host、port、username、password、virtual_host。开发环境也应在真实 Nacos、RabbitMQ、Redis 等环境执行集成、断线和重复投递测试。HTTP 事务模式会将协调元数据写入 `seata.store_path`，并在 worker 启动后周期恢复；它是补偿事务，不是 Seata AT，也不能单独满足支付、订单、库存的一致性要求。
 
 ---
 
@@ -2144,7 +2145,7 @@ class UserMapper:
 | `@LoadBalanced` | 同名注解 | 使用 Python 负载均衡实现；不要复用 `RestTemplate` 用法 |
 | Sentinel `@SentinelResource` | 同名注解 | 已内嵌限流熔断引擎，无需 Dashboard；如需更强大治理能力可对接外部 Sentinel Dashboard |
 | Spring Cloud Gateway | `@EnableGateway` + `GatewayRouter` | 内嵌轻量 ASGI/WSGI 网关；复杂网关需求可使用 Kong/APISIX 等专业网关 |
-| Seata `@GlobalTransactional` | 同名注解 | 已内嵌 HTTP-AT 模式，无需 Seata Server，XID 自动通过 Feign 传播；如需更强一致性保障可对接外部 Seata Server |
+| Seata `@GlobalTransactional` | 同名注解 | `http` 模式是持久化补偿协调器，依赖幂等分支回调；企业强一致场景必须配置真实 Seata Server 与兼容 SDK |
 
 **Cloud 高级功能迁移对照**：
 
@@ -2152,7 +2153,7 @@ class UserMapper:
 |---|---|---|
 | Sentinel Dashboard + `@SentinelResource` | `@SentinelResource` | 内嵌引擎，无需 Dashboard；支持 QPS 限流、异常比例/异常数/慢调用熔断、热点参数限流 |
 | SkyWalking Agent + OAP Server | `@Trace` + 内嵌 Tracer | 原生 OpenTelemetry(W3C traceparent)，无需 OAP Server；自动注入 HTTP/Feign 追踪头 |
-| Seata Server + `@GlobalTransactional` | `@GlobalTransactional` | 内嵌 HTTP-AT 模式，无需 Seata Server；支持分支注册/提交/回滚，XID 自动传播 |
+| Seata Server + `@GlobalTransactional` | `@GlobalTransactional` | `distributed` 模式对接 Seata Server；`http` 仅用于补偿流程和故障演练，不提供 AT 语义 |
 | Spring Cloud Gateway | `GatewayRouter` | 轻量 ASGI/WSGI 网关，支持路由转发、路径重写、过滤器链、负载均衡 |
 | JPA `hibernate.ddl-auto` | `@entity` + `ddl-auto` 配置 | 支持 create/update/validate/create-drop；自动扫描实体包，自动建表/添加列/创建索引 |
 
@@ -2238,7 +2239,7 @@ Java 的 profile 文件自动合并不是当前功能。部署流程应生成最
 4. 用目标 MySQL/PostgreSQL/Oracle 版本执行相同测试，特别验证自增主键、事务隔离、超时和连接中断。
 5. 启动 ASGI 应用，检查 `/docs`、`/actuator/health/liveness` 和 `/actuator/health/readiness`。
 6. 接入 Nacos、RabbitMQ、Redis 等外部中间件，并演练断线、重复投递和回滚。
-7. 验证内嵌 Cloud 功能：`@SentinelResource` 限流熔断、`@Trace` 追踪、`@GlobalTransactional` 分布式事务、`GatewayRouter` 网关、`@entity` + `ddl-auto` 自动建表。这些功能无需部署外部 Server，但应在真实流量和故障注入下验证。
+7. 验证 Cloud 功能：`@SentinelResource` 限流熔断、`@Trace` 追踪、`@GlobalTransactional` 补偿流程、`GatewayRouter` 网关、`@entity` + `ddl-auto` 自动建表。HTTP 补偿模式必须验证重复回调、进程重启和部分失败；强一致事务需部署真实 Seata Server 并执行集成测试。
 
 ---
 
@@ -2362,9 +2363,13 @@ logging:
 | `DISCOVERY_ENABLED` | 是否启用 Nacos 服务发现 | false |
 | `NACOS_SERVER` | Nacos 地址 | localhost:8848 |
 | `NACOS_USERNAME` / `NACOS_PASSWORD` | Nacos 客户端账号/密码 | 空 |
+| `SEATA_HTTP_STORE_PATH` | HTTP 补偿协调 SQLite 文件路径（同主机多 worker 共享） | `./data/seata-http.sqlite3` |
+| `SEATA_HTTP_RECOVER_ON_STARTUP` | 初始化时扫描并恢复未完成补偿 | true |
+| `SEATA_HTTP_RECOVERY_GRACE_MS` | 接管其他 worker 的 COMMITTING/ROLLING_BACK 前等待时间 | 30000 |
+| `SEATA_HTTP_RECOVERY_INTERVAL_S` | worker 内周期恢复间隔，0 表示关闭 | 30 |
 | `SPRING_DISABLE_DOCKER_IP_DETECT` | 设为 1 禁用 Docker 容器 IP 自动检测 | 0 |
 
-> Sentinel、OpenTelemetry 追踪、Seata HTTP-AT、API Gateway 已内嵌实现，没有对应环境变量。
+> HTTP 补偿模式使用 `SEATA_HTTP_*` 配置，仍不提供 Seata AT；生产强一致事务必须配置 `SEATA_MODE=distributed`、真实 Server 和兼容 SDK。
 
 ### 14.5 启动应用
 
@@ -2442,7 +2447,7 @@ curl http://localhost:8080/actuator/health
 }
 ```
 
-> Sentinel、OpenTelemetry 追踪、Seata HTTP-AT、API Gateway 已内嵌实现，不属于外部依赖组件，因此不显示在聚合健康检查中；可通过应用日志或 `@SentinelResource`、`@Trace`、`@GlobalTransactional` 注解的实际调用验证。
+> Sentinel、OpenTelemetry 追踪和 API Gateway 可内嵌运行；HTTP 补偿协调器的未完成事务会纳入恢复日志。它不属于强一致外部事务协调器，不能替代 Seata Server。
 
 ### 14.7 部署故障排查
 
@@ -2667,7 +2672,7 @@ export LOG_LEVEL=INFO
 export LOG_DIR=logs
 ```
 
-> Sentinel 限流熔断、OpenTelemetry 分布式追踪、Seata HTTP-AT 分布式事务、API Gateway 均为内嵌实现，无对应环境变量。AI 模块环境变量见第 12.2 节。
+> Sentinel 限流熔断、OpenTelemetry 分布式追踪和 API Gateway 可内嵌实现；HTTP 补偿事务通过 `SEATA_HTTP_*` 配置。AI 模块环境变量见第 12.2 节。
 
 ## 附录 B：Docker Compose 示例
 
