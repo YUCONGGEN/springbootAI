@@ -11,12 +11,10 @@
 import logging
 from typing import Any, Callable, List, Optional
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Component
 class ToolFactory:
     """工具工厂 Bean - 创建 langchain BaseTool 与桥接 springbootAI @Tool。"""
 

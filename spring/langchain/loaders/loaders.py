@@ -16,12 +16,10 @@
 import logging
 from typing import Any, List, Optional
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Component
 class DocumentLoaderRegistry:
     """文档加载器注册表 Bean - 统一创建与调用各类 DocumentLoader。"""
 

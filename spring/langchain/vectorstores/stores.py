@@ -16,7 +16,6 @@ inmemory 始终可用（复用 spring.ai.vectorstore.SimpleInMemoryVectorStore�
 import logging
 from typing import Any, List, Optional
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
@@ -39,7 +38,6 @@ def _ensure_spring_embedding(embeddings: Any) -> Any:
     return LangChainEmbeddingToSpring(embeddings)
 
 
-@Component
 class VectorStoreFactory:
     """向量存储工厂 Bean - 按类型创建 langchain 向量库实例。"""
 

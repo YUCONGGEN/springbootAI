@@ -8,12 +8,10 @@ FewShotPromptTemplate，作为 @Component Bean 注入业务服务。
 import logging
 from typing import Any, Dict, List, Optional
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Component
 class PromptTemplateFactory:
     """
     Prompt 模板工厂 Bean。

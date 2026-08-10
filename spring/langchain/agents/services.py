@@ -14,7 +14,6 @@ import logging
 import warnings
 from typing import Any, List, Optional, Sequence
 
-from spring.annotations.core import Autowired, Service
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*deprecated.*")
@@ -40,7 +39,6 @@ _AGENT_TYPE_MAP = {
 _SPECIAL_AGENT_TYPES = {"structured-chat", "openai-tools"}
 
 
-@Service
 class AgentService:
     """
     Agent 服务 Bean - 统一创建与执行 langchain classic Agent。
@@ -48,7 +46,6 @@ class AgentService:
     构造时注入 lcLangChainModel（langchain BaseChatModel 适配）。
     """
 
-    @Autowired
     def __init__(self, lcLangChainModel: Any = None):
         self._lc_model = lcLangChainModel
 

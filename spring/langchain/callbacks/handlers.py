@@ -9,12 +9,10 @@
 import logging
 from typing import Any, List, Optional
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Component
 class CallbackRegistry:
     """回调处理器注册表 Bean - 统一创建与管理回调处理器。"""
 

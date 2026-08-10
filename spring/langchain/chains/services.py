@@ -16,7 +16,6 @@ import logging
 import warnings
 from typing import Any, List, Optional
 
-from spring.annotations.core import Autowired, Service
 
 # 屏蔽 langchain classic 的弃用告警（迁移目的即兼容旧 API，告警无意义）
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -30,7 +29,6 @@ except ImportError:
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Service
 class ChainService:
     """
     Chain 服务 Bean - 统一创建与执行 langchain classic Chain。
@@ -39,7 +37,6 @@ class ChainService:
     业务侧调用各 create_xxx 方法获取 Chain 实例，再调 invoke 执行。
     """
 
-    @Autowired
     def __init__(self, lcLangChainModel: Any = None):
         # lcLangChainModel 由 configure_langchain 注册（langchain BaseChatModel 适配）
         self._lc_model = lcLangChainModel

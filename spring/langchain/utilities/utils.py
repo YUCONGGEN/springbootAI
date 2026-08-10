@@ -17,12 +17,10 @@ Utility 注册表 - 封装 langchain classic 的实用工具类，作为 @Compon
 import logging
 from typing import Any, List
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Component
 class UtilityRegistry:
     """Utility 注册表 Bean - 创建与管理各类实用工具。"""
 

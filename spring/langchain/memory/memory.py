@@ -10,12 +10,10 @@
 import logging
 from typing import Any, Optional
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Component
 class MemoryFactory:
     """
     会话记忆工厂 Bean。

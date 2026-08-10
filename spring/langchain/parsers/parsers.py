@@ -11,12 +11,10 @@
 import logging
 from typing import Any, Optional, Type
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Component
 class OutputParserFactory:
     """输出解析器工厂 Bean - 统一创建各类 OutputParser。"""
 

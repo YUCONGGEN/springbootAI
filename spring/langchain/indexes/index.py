@@ -7,12 +7,10 @@ VectorStoreIndexCreator 一行代码完成「文档加载 -> 切片 -> 嵌入 ->
 import logging
 from typing import Any, List, Optional
 
-from spring.annotations.core import Autowired, Service
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Service
 class IndexService:
     """
     索引服务 Bean - 封装 VectorStoreIndexCreator 与 RAG 全流程便捷方法。
@@ -20,7 +18,6 @@ class IndexService:
     构造时注入 lcEmbeddings（langchain Embeddings 适配）与 lcLangChainModel。
     """
 
-    @Autowired
     def __init__(self, lcEmbeddings: Any = None,
                  lcLangChainModel: Any = None):
         self._embeddings = lcEmbeddings

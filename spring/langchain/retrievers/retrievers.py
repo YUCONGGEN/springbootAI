@@ -12,12 +12,10 @@
 import logging
 from typing import Any, List, Optional
 
-from spring.annotations.core import Component
 
 logger = logging.getLogger("Spring.LangChain")
 
 
-@Component
 class RetrieverFactory:
     """检索器工厂 Bean - 统一创建各类 Retriever。"""
 
