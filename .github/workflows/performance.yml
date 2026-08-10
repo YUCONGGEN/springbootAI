@@ -56,7 +56,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Start benchmark application
         run: docker compose -p springbootai-performance -f docker-compose.performance.yml up -d --build --wait app
