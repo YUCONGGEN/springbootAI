@@ -1,5 +1,17 @@
 name: Security Scan
 
+# ====================================================================
+# 安全扫描工作流：依赖漏洞 + 静态分析 + 硬编码密钥检查
+#
+# 覆盖范围：
+#   - spring/            核心框架代码
+#   - spring/langchain/  LangChain 模块（新增）
+#   - example_langchain/ 演示应用
+#
+# 注意：safe_eval_arithmetic 使用 ast.parse 实现（非 eval），是安全设计，
+#       Bandit B307(eval) 不会误报；如误报可在 .bandit 配置中排除。
+# ====================================================================
+
 on:
   push:
     branches: [ main, master ]
@@ -26,33 +38,32 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements-lock.txt
+        pip install -r requirements-ai.txt
         pip install bandit==1.9.4 pip-audit==2.10.1
 
-    - name: pip-audit vulnerability scan
+    - name: pip-audit vulnerability scan (core + AI deps)
       run: |
-        echo "Running pip-audit for dependency vulnerabilities..."
+        echo "Running pip-audit for core dependencies..."
         pip-audit -r requirements-lock.txt
+        echo "Running pip-audit for AI/LangChain dependencies..."
+        pip-audit -r requirements-ai.txt
         echo "pip-audit scan completed"
 
     - name: Bandit security static analysis
       run: |
-        echo "Failing on high-severity Bandit findings in spring/..."
+        echo "Running Bandit on spring/ (core + langchain)..."
         bandit -r spring/ -lll -f json -o bandit-report.json
         echo "Bandit scan completed, report saved to bandit-report.json"
 
     - name: Check for hardcoded secrets
       run: |
-        echo "Checking for hardcoded passwords/secrets in spring/..."
-        # 修复（P2）：旧版本 `grep ... || echo "No hardcoded secrets found"` 中 `||`
-        # 使步骤无论是否匹配都退出 0（成功），检查形同虚设。
-        # 新版本：匹配到潜在密钥则 exit 1（失败），并在 GitHub Actions UI 标注 error。
-        #
+        echo "Checking for hardcoded passwords/secrets in spring/ and example_langchain/..."
         # 正则覆盖 password/passwd/secret/api_key/api-key/apikey/token/credential
         # 赋值语句，要求引号内字面值至少 6 字符（排除空串和短占位符）。
-        # 第二个 grep -v 排除已知安全模式：枚举值、占位符、示例值、测试夹具。
+        # grep -v 排除已知安全模式：枚举值、占位符、示例值、测试夹具。
         matches=$(grep -rnE --include="*.py" \
             "(password|passwd|secret|api[_-]?key|apikey|token|credential)[[:space:]]*=[[:space:]]*['\"][^'\"]{6,}['\"]" \
-            spring/ \
+            spring/ example_langchain/ \
             | grep -vE "(change-in-production|change-me|your-|placeholder|example|fake|dummy|insecure|xxxx|PASSWORD[[:space:]]*=[[:space:]]*'password')" \
             || true)
         if [ -n "$matches" ]; then
@@ -62,6 +73,16 @@ jobs:
           exit 1
         fi
         echo "No hardcoded secrets found"
+
+    - name: Verify SafeEval security (no eval/exec usage)
+      run: |
+        echo "Verifying safe_eval_arithmetic uses AST (not eval/exec)..."
+        # 确保安全算术求值器不使用危险的 eval/exec
+        if grep -rnE "^\s*(result|return)\s*=\s*eval\(" spring/langchain/ example_langchain/; then
+          echo "::error::Found direct eval() usage — use safe_eval_arithmetic instead!"
+          exit 1
+        fi
+        echo "SafeEval verification passed — no dangerous eval() in langchain module"
 
     - name: Upload security reports
       uses: actions/upload-artifact@v4

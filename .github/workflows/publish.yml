@@ -12,6 +12,8 @@ name: Publish
 #     仓库 owner = YUCONGGEN, 仓库 name = springbootAI
 #     workflow filename = publish.yml, environment 留空
 #   参见 https://docs.pypi.org/trusted-publishers/
+#
+# 版本：1.8.9（pyproject.toml 单一来源）
 # ====================================================================
 
 on:
@@ -44,11 +46,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install build twine
 
+      - name: Verify version in pyproject.toml
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "Package version: $VERSION"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Version not found in pyproject.toml"
+            exit 1
+          fi
+
       - name: Build sdist and wheel
         run: python -m build
 
       - name: Verify distribution metadata
         run: python -m twine check dist/*
+
+      - name: Verify langchain module is packaged
+        run: |
+          echo "Checking if spring.langchain is included in the wheel..."
+          python -m zipfile -l dist/*.whl | grep "spring/langchain" || {
+            echo "::error::spring.langchain module not found in wheel!"
+            exit 1
+          }
+          echo "✅ spring.langchain module is included in the wheel"
 
       - name: Publish to PyPI
         # 通过 OIDC 向 PyPI 认证，无需 API token；上传 dist/* 到 springbootAI

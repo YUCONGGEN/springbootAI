@@ -1,15 +1,33 @@
 name: CI
 
+# ====================================================================
+# CI 工作流：核心模块 + AI 模块 + LangChain 模块 全量测试
+#
+# 测试矩阵：
+#   - Python 3.10 / 3.12 双版本
+#   - 核心测试（无 AI 依赖）：spring 核心 + ORM + Web + 注解
+#   - AI 测试：FakeChatModel 降级，无需 API Key
+#   - LangChain 测试：585 个用例，FakeChatModel 降级，无需 API Key
+#   - Demo 冒烟测试：15 章节完整能力演示
+#
+# 环境变量：
+#   AI_ALLOW_FAKE=true — 无 API Key 时降级 FakeChatModel，保证 CI 无网络也能跑
+# ====================================================================
+
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
 
+env:
+  AI_ALLOW_FAKE: "true"
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.12"]
 
@@ -22,11 +40,17 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install dependencies
+    - name: Install core dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements-lock.txt
         pip install pip-audit==2.10.1
+
+    - name: Install AI & LangChain dependencies
+      run: |
+        pip install -r requirements-ai.txt
+        pip install faiss-cpu pypdf beautifulsoup4
+        pip install pydantic
 
     - name: Static code check with py_compile
       run: |
@@ -34,13 +58,40 @@ jobs:
         python -m py_compile $(find spring/ -name "*.py" -type f)
         echo "py_compile check passed"
 
-    - name: Run unit tests and start coverage data
-      run: pytest tests/ -v --tb=short --cov=spring --cov-report= --cov-fail-under=0
+    - name: Run core unit tests (no AI dependency)
+      run: |
+        pytest tests/ \
+          --ignore=tests/test_ai_module.py \
+          --ignore=tests/test_langchain_module.py \
+          --ignore=tests/test_langchain_ext.py \
+          -v --tb=short --cov=spring --cov-report= --cov-fail-under=0
+
+    - name: Run AI module tests (87 tests, FakeChatModel)
+      run: |
+        echo "Running AI module tests (87 tests)..."
+        pytest tests/test_ai_module.py -v --tb=short \
+          --cov=spring.ai --cov-append --cov-report=term
+
+    - name: Run LangChain module tests (585 tests, FakeChatModel)
+      run: |
+        echo "Running LangChain base tests (75 tests)..."
+        pytest tests/test_langchain_module.py -v --tb=short
+        echo ""
+        echo "Running LangChain extended tests (510 tests)..."
+        pytest tests/test_langchain_ext.py -v --tb=short
+
+    - name: Run LangChain demo smoke test (15 chapters)
+      run: |
+        echo "Running LangChain full demo (15 chapters, no API Key needed)..."
+        python example_langchain/demo/langchain_full_demo.py
 
     - name: Run real runtime-path tests with cumulative coverage gate
-      run: pytest tests_runtime/ -v --tb=short --cov=spring --cov-append --cov-report=xml --cov-report=term --cov-fail-under=51
+      run: |
+        pytest tests_runtime/ -v --tb=short \
+          --cov=spring --cov-append --cov-report=xml --cov-report=term \
+          --cov-fail-under=51
 
-    - name: Module import verification
+    - name: Module import verification (including spring.langchain)
       run: |
         python -c "
         import spring
@@ -65,14 +116,25 @@ jobs:
         import spring.tracing
         import spring.utils
         import spring.web
-        print('All module imports successful!')
+        import spring.ai
+        import spring.langchain
+        print('All module imports successful (including spring.ai + spring.langchain)!')
         print(f'spring version: {spring.__version__}')
         "
+
+    - name: Upload coverage report
+      if: matrix.python-version == '3.12'
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-${{ matrix.python-version }}
+        path: coverage.xml
+        if-no-files-found: ignore
 
     - name: pip-audit dependency vulnerability scan
       run: |
         echo "Running pip-audit for dependency vulnerabilities..."
         pip-audit -r requirements-lock.txt
+        pip-audit -r requirements-ai.txt
         echo "pip-audit scan completed"
 
     - name: Generate SBOM
