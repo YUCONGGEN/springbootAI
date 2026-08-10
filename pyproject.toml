@@ -100,11 +100,13 @@ excel = ["openpyxl==3.1.5"]
 # 依赖清单同步自 requirements-ai.txt（所有版本号 == 已测试验证）
 # ========================================
 ai = [
-    "langchain-openai==0.3.27",
-    "langchain-core==0.3.51",
-    "langchain-text-splitters==0.3.8",
-    "langchain-community==0.3.24",
-    "numpy==2.0.2",
+    "langchain-openai==1.4.1",
+    "langchain-core==1.5.1",
+    "langchain-classic==1.0.8",
+    "langchain-text-splitters==1.1.2",
+    "langchain-community==0.4.2",
+    "numpy==1.26.4",
+    "pydantic==2.13.4",
 ]
 
 # ========================================
@@ -114,11 +116,13 @@ ai = [
 # 详见 doc/LANGCHAIN_MODULE.md
 # ========================================
 langchain = [
-    "langchain-openai==0.3.27",
-    "langchain-core==0.3.51",
-    "langchain-text-splitters==0.3.8",
-    "langchain-community==0.3.24",
-    "numpy==2.0.2",
+    "langchain-openai==1.4.1",
+    "langchain-core==1.5.1",
+    "langchain-classic==1.0.8",
+    "langchain-text-splitters==1.1.2",
+    "langchain-community==0.4.2",
+    "numpy==1.26.4",
+    "pydantic==2.13.4",
     # 默认装上的向量库/文档/工具依赖（轻量）
     "faiss-cpu>=1.7.4",
     "pypdf>=4.0.0",
@@ -162,11 +166,13 @@ full = [
     "requests==2.33.0",
     "httpx==0.28.1",
     "openpyxl==3.1.5",
-    "langchain-openai==0.3.27",
-    "langchain-core==0.3.51",
-    "langchain-text-splitters==0.3.8",
-    "langchain-community==0.3.24",
-    "numpy==2.0.2",
+    "langchain-openai==1.4.1",
+    "langchain-core==1.5.1",
+    "langchain-classic==1.0.8",
+    "langchain-text-splitters==1.1.2",
+    "langchain-community==0.4.2",
+    "numpy==1.26.4",
+    "pydantic==2.13.4",
     # LangChain 模块默认依赖（partner 包按需 pip install）
     "faiss-cpu>=1.7.4",
     "pypdf>=4.0.0",

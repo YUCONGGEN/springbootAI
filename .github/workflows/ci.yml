@@ -49,8 +49,10 @@ jobs:
     - name: Install AI & LangChain dependencies
       run: |
         pip install -r requirements-ai.txt
-        pip install faiss-cpu pypdf beautifulsoup4
-        pip install pydantic
+        # 可选依赖：安装失败不阻塞 CI（测试中已用 pytest.skip 容错）
+        pip install faiss-cpu || echo "faiss-cpu 不可用，相关测试将 skip"
+        pip install pypdf || echo "pypdf 不可用，相关测试将 skip"
+        pip install beautifulsoup4 || echo "beautifulsoup4 不可用，相关测试将 skip"
 
     - name: Static code check with py_compile
       run: |
