@@ -32,7 +32,7 @@ class AppConfig:
         return {
             "name": self.app_name,
             "version": "1.0.0",
-            "description": "example_all — SpringBoot全注解用例"
+            "description": "example_all — SpringBootAI全注解用例"
         }
 
     @Bean(name="customGreeting")

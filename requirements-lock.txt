@@ -146,7 +146,7 @@ multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-nacos-sdk-python==2.0.11
+nacos-sdk-python==3.2.0
     # via -r requirements.txt
 openpyxl==3.1.5
     # via -r requirements.txt
@@ -197,9 +197,9 @@ python-dotenv==1.2.2
     # via -r requirements.txt
 pyyaml==6.0.3
     # via -r requirements.txt
-redis==7.0.1
+redis==8.1.0
     # via -r requirements.txt
-requests==2.33.0
+requests==2.34.2
     # via
     #   -r requirements.txt
     #   alibabacloud-tea

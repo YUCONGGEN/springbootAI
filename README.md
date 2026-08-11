@@ -50,7 +50,7 @@ curl http://127.0.0.1:8080/api/hello/Alice
 | ✅ 新手入门 | [BEGINNER_GUIDE.md](doc/BEGINNER_GUIDE.md) | 随核心包 | 从零安装、创建项目、运行接口、打开 Swagger |
 | ✅ 常用注解模块 | [ANNOTATION_MODULES.md](doc/ANNOTATION_MODULES.md) | 随核心包 | Bean Validation / 条件装配 / 缓存增强 / CSV / `@Version` / `@Transient` |
 | 📦 AI（对接大模型） | [AI_MODULE.md](doc/AI_MODULE.md) | `pip install springbootAI[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / 多厂商适配 |
-| 📦 LangChain | [LANGCHAIN_MODULE.md](doc/LANGCHAIN_MODULE.md) | `pip install springbootAI[ai]` | Chains / Agents / Memory / Retrievers / VectorStores / 30+ 提供商 |
+| 📦 LangChain | [LANGCHAIN_MODULE.md](doc/LANGCHAIN_MODULE.md) | `pip install springbootAI[langchain]` | Chains / Agents / Memory / Retrievers / VectorStores / 30+ 提供商 |
 | ✅ 内嵌 PyMyBatis ORM | [ORM_MODULE.md](doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 |
 | ✅ Cloud 微服务 | [CLOUD_MODULE.md](doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 分布式事务 |
 | 📦 Excel 读写 | [EXCEL_MODULE.md](doc/EXCEL_MODULE.md) | `pip install springbootAI[excel]` | `@ExcelProperty` / `@ExcelIgnore` 注解驱动读写 |
@@ -1183,7 +1183,7 @@ class CleanupJob:
 
 ### 12.2 LangChain 模块
 
-> 完整文档：[LANGCHAIN_MODULE.md](doc/LANGCHAIN_MODULE.md)。安装：`pip install springbootAI[ai]`。
+> 完整文档：[LANGCHAIN_MODULE.md](doc/LANGCHAIN_MODULE.md)。安装：`pip install springbootAI[langchain]`。
 >
 > 封装 langchain classic 全套：Chains / Agents(6 种) / Memory / Retrievers / VectorStores / Parsers / Loaders + 30+ 提供商。双向适配器复用 `spring.ai` 的模型 Bean。
 

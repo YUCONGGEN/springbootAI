@@ -1,6 +1,6 @@
 # SpringBootAI CSV 模块 —— 小白也能看懂的使用指南
 
-> 模块版本：SpringBootAI CSV 1.0.0 ｜ 框架版本：SpringBootAI 1.7.0
+> 模块版本：SpringBootAI CSV 1.0.0 ｜ 框架版本：SpringBootAI 2.0.0
 > CSV 模块基于 Python 标准库 `csv`，**零额外依赖**，`pip install springbootAI` 即可用。
 
 ---

@@ -66,8 +66,8 @@
 ### 第 1 步：确认环境
 
 ```bash
-# 确认在项目根目录
-cd e:\spring\springbootAI-master\springbootAI-master
+# 进入项目根目录
+cd springbootAI
 
 # 确认依赖已安装
 pip install -r requirements-ai.txt

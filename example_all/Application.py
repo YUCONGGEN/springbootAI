@@ -1,6 +1,6 @@
 """
 example_all 应用入口
-测试 SpringBoot 框架的全部注解和功能组合
+测试 SpringBootAI 框架的全部注解和功能组合
 """
 import sys
 import os

@@ -49,7 +49,7 @@ dependencies = [
     "bcrypt==5.0.0",
     "pyjwt==2.13.0",
     "pydantic==2.13.4",
-    "requests==2.33.0",
+    "requests==2.34.2",
     "httpx==0.28.1",
 ]
 
@@ -58,13 +58,13 @@ dependencies = [
 # 数据库驱动 - 类似 Spring Boot Starter JDBC/Data JPA
 # ========================================
 mysql = ["PyMySQL==1.2.0"]
-postgresql = ["psycopg2-binary==2.9.11"]
+postgresql = ["psycopg2-binary==2.9.12"]
 sqlalchemy = ["sqlalchemy==2.0.40"]
 
 # ========================================
 # Redis - 类似 Spring Boot Starter Data Redis
 # ========================================
-redis = ["redis==7.0.1"]
+redis = ["redis==8.1.0"]
 
 # ========================================
 # 消息队列 - 类似 Spring Boot Starter AMQP
@@ -74,7 +74,7 @@ rabbitmq = ["pika==1.4.4"]
 # ========================================
 # 服务发现 - 类似 Spring Cloud Alibaba Nacos
 # ========================================
-nacos = ["nacos-sdk-python==2.0.11"]
+nacos = ["nacos-sdk-python==3.2.0"]
 
 # ========================================
 # 监控和日志 - 类似 Spring Boot Actuator + Micrometer
@@ -105,7 +105,7 @@ ai = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==1.26.4",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
 ]
 
@@ -121,7 +121,7 @@ langchain = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==1.26.4",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
     # 默认装上的向量库/文档/工具依赖（安全：全部锁定已知安全版本）
     "faiss-cpu>=1.7.4,<2",
@@ -147,7 +147,7 @@ langchain = [
 dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
-    "redis==7.0.1",
+    "redis==8.1.0",
     "sqlglot==27.28.1",
 ]
 
@@ -157,18 +157,18 @@ dev = [
 full = [
     # 数据库驱动
     "PyMySQL==1.2.0",
-    "psycopg2-binary==2.9.11",
+    "psycopg2-binary==2.9.12",
     "sqlalchemy==2.0.40",
     # 缓存 / 消息 / 服务发现
-    "redis==7.0.1",
+    "redis==8.1.0",
     "pika==1.4.4",
-    "nacos-sdk-python==2.0.11",
+    "nacos-sdk-python==3.2.0",
     # 监控 / 日志 / 安全
     "prometheus-client==0.26.0",
     "loguru==0.7.3",
     "sqlglot==27.28.1",
     # HTTP 客户端
-    "requests==2.33.0",
+    "requests==2.34.2",
     "httpx==0.28.1",
     # Excel
     "openpyxl==3.1.5",
@@ -178,7 +178,7 @@ full = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==1.26.4",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
     # LangChain 模块增强（对齐 springbootAI[langchain]）
     "faiss-cpu>=1.7.4,<2",

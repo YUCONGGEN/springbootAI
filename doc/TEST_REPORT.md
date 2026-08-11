@@ -30,7 +30,7 @@ python -X utf8 -m pytest tests_integration -q
 
 看到 `1368 passed` 表示本报告对应的核心测试通过；`skipped` 表示测试明确判断当前环境缺少依赖，不能当成“功能已验证”。要定位失败原因，用 `-x -vv` 让 pytest 在第一个失败处停止并显示详细日志。压测不属于本报告的 1368 个单元/运行时用例，压测命令和 p95/p99 的解释见 [`tests_performance/README.md`](../tests_performance/README.md)。
 
-> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 1.5.0 / PyMyBatis 1.4.0）。
+> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 2.0.0 / PyMyBatis 1.4.0）。
 >
 > **2026-08-09 TOP5 注解模块增量**：补齐 Bean Validation / JPA @Version·@Transient / 条件装配 / 缓存增强 / CSV 注解 5 个模块的测试套件（共 166 用例），并修复 4 处生产代码缺陷（见第六节）。
 >
@@ -73,7 +73,7 @@ python -X utf8 -m pytest tests_integration -q
 | 组件 | 版本 | 状态 |
 |------|------|------|
 | Python | 3.9.6 | ✅ |
-| SpringBootAI | 1.5.0 | ✅ |
+| SpringBootAI | 2.0.0 | ✅ |
 | PyMyBatis（内嵌ORM） | 1.4.0 | ✅ |
 | MySQL（Docker） | 8.0.46 | ✅ 运行中（端口 3306，springpy 库已就绪） |
 | Redis（Docker） | 7-alpine | ✅ 运行中（healthy，PONG） |
@@ -773,7 +773,7 @@ python test_all_features.py
 
 ## 一、结论
 
-当前代码已完成 v1.8.5 版本，核心功能、微服务治理和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿模式仍不是 Seata AT 强一致事务；支付、订单、库存等核心交易必须完成真实 Seata/可靠消息方案和下方外部验证后再采用。
+当前代码已完成 v2.0.0 版本，核心功能、微服务治理和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿模式仍不是 Seata AT 强一致事务；支付、订单、库存等核心交易必须完成真实 Seata/可靠消息方案和下方外部验证后再采用。
 
 ## 二、本轮已完成
 
