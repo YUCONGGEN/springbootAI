@@ -74,7 +74,7 @@ rabbitmq = ["pika==1.4.4"]
 # ========================================
 # 服务发现 - 类似 Spring Cloud Alibaba Nacos
 # ========================================
-nacos = ["nacos-sdk-python==2.0.11"]
+nacos = ["nacos-sdk-python==3.2.0"]
 
 # ========================================
 # 监控和日志 - 类似 Spring Boot Actuator + Micrometer
@@ -162,7 +162,7 @@ full = [
     # 缓存 / 消息 / 服务发现
     "redis==7.0.1",
     "pika==1.4.4",
-    "nacos-sdk-python==2.0.11",
+    "nacos-sdk-python==3.2.0",
     # 监控 / 日志 / 安全
     "prometheus-client==0.26.0",
     "loguru==0.7.3",
