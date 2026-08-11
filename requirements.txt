@@ -39,7 +39,7 @@ prometheus-client==0.26.0
 loguru==0.7.3
 
 # HTTP 客户端（Feign）
-requests==2.33.0
+requests==2.34.2
 httpx==0.28.1
 
 # RabbitMQ 消息队列

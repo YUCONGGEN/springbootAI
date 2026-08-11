@@ -199,7 +199,7 @@ pyyaml==6.0.3
     # via -r requirements.txt
 redis==7.0.1
     # via -r requirements.txt
-requests==2.33.0
+requests==2.34.2
     # via
     #   -r requirements.txt
     #   alibabacloud-tea
