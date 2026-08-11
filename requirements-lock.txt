@@ -168,7 +168,7 @@ protobuf==7.35.1
     # via nacos-sdk-python
 psutil==7.2.2
     # via nacos-sdk-python
-psycopg2-binary==2.9.11
+psycopg2-binary==2.9.12
     # via -r requirements.txt
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
     # via cffi
