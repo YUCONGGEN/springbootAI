@@ -41,8 +41,8 @@ _BLOCKED_ROOTS: List[Path] = [
     Path("/dev"),
     Path("/root"),
     Path("/var/run"),
-    Path("/tmp") if _os.name != "nt" else Path("C:\\Windows"),
-    Path("C:\\Windows") if _os.name == "nt" else Path("/run"),
+    Path("/run"),
+    Path("C:\\Windows"),
 ]
 
 
