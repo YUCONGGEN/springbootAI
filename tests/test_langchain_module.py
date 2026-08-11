@@ -22,16 +22,14 @@ if PROJECT_ROOT not in sys.path:
 import tests._test_helpers  # noqa: F401  安装缺失依赖 mock
 
 from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
-from spring.ai.core import ChatModel, EmbeddingModel, Message, MessageType
+from spring.ai.core import ChatModel, EmbeddingModel, Message
 from spring.context.registry import BeanRegistry
 from spring.langchain.adapters import (
-    LangChainEmbeddingToSpring, LangChainModelToSpring,
-    SpringChatModelToLangChain, SpringEmbeddingToLangChain,
-    to_langchain_embeddings, to_langchain_model,
+    SpringChatModelToLangChain, to_langchain_embeddings, to_langchain_model,
     to_spring_embeddings, to_spring_model,
 )
 from spring.langchain.autoconfig import (
-    LangChainProperties, bind_langchain_config, configure_langchain,
+    bind_langchain_config, configure_langchain,
 )
 from spring.langchain.partners import (
     PARTNER_REGISTRY, PartnerProviderFactory,

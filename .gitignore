@@ -27,3 +27,6 @@ keys
 
 # OS
 Thumbs.db
+
+# Reference repos (not part of the framework)
+langchain-master/

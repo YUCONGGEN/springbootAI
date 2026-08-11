@@ -15,7 +15,7 @@ import json
 import hashlib
 import logging
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from enum import Enum
 
 logger = logging.getLogger(__name__)

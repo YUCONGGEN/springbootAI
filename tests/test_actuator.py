@@ -14,13 +14,11 @@
 """
 import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from spring.web import actuator as actuator_mod
 from spring.web.actuator import (
     actuator_router,
     configure_actuator,

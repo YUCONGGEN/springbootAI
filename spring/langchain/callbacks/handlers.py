@@ -7,7 +7,7 @@
 - file: FileCallbackHandler（写文件）
 """
 import logging
-from typing import Any, List, Optional
+from typing import Any, List
 
 
 logger = logging.getLogger("Spring.LangChain")

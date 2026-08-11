@@ -2,7 +2,7 @@
 Spring与MyBatis集成模块
 提供@MapperScan、@Mapper等注解，实现Mapper自动注册到Spring容器
 """
-from typing import Optional, List, Dict, Any, Type
+from typing import Optional, List, Dict, Type
 import os
 import sys
 import inspect

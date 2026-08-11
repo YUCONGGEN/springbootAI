@@ -4,7 +4,7 @@
 """
 import random
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from spring.cloud import discovery
 
 logger = logging.getLogger("Spring.Cloud.LoadBalancer")

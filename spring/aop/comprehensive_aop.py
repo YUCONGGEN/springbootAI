@@ -2,7 +2,7 @@
 Spring AOP 切面实现（企业级版本）
 使用 Redis 持久化存储，支持真正的分布式锁、限流、熔断等功能
 """
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 import asyncio
 import time
 import functools

@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Dict, Optional
+from typing import Dict
 
 logger = logging.getLogger("Spring.Tracing.SkyWalking")
 

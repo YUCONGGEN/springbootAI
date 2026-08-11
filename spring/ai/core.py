@@ -6,9 +6,12 @@ SpringBootAI AI 核心抽象 - 对齐 Spring AI 的 ChatClient / ChatModel / Emb
 - ChatClient 提供链式 API（prompt().user().call().content()），与 Spring AI 风格一致
 - Advisor 封装 RAG / Memory 等横切模式，在模型调用前后介入
 """
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("Spring.AI")
 
 
 # ==================== 消息与响应 ====================
@@ -125,10 +128,18 @@ class ChatModel(ABC):
                     result = tool_registry.execute(name, args)
                     ai_metrics.record_tool_call(name, "success")
                 except Exception as exc:
-                    result = f"工具执行失败: {exc}"
+                    # 安全：异常消息脱敏后返回，防止泄露连接字符串、路径、凭据等敏感信息
+                    # 仅透传异常类型和首段描述，完整 traceback 记录在服务端日志
+                    err_type = type(exc).__name__
+                    raw_msg = str(exc)
+                    # 截断异常消息（最大 200 字符），防止工具异常返回超大字符串
+                    safe_msg = raw_msg[:200] if len(raw_msg) > 200 else raw_msg
+                    logger.warning("工具执行失败: %s args=%s error=%s", name,
+                                   _json.dumps(args, ensure_ascii=False)[:500], safe_msg)
+                    result = f"[工具执行错误] {err_type}"
                     ai_metrics.record_tool_call(name, "failure")
                 working.append(Message(
-                    content=str(result), type=MessageType.TOOL, name=name,
+                    content=str(result)[:10000], type=MessageType.TOOL, name=name,
                     metadata={"tool_call_id": tc.get("id", "")},
                 ))
 

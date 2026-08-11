@@ -2,9 +2,7 @@
 服务注册发现模块
 集成 Nacos 作为注册中心
 """
-import json
 import logging
-import time
 from typing import Dict, List, Optional, Any
 from urllib.request import urlopen
 

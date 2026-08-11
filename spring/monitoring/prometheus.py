@@ -9,12 +9,10 @@ from prometheus_client import (
     Histogram,
     Summary,
     generate_latest,
-    CONTENT_TYPE_LATEST,
 )
 from prometheus_client.exposition import start_http_server
 import logging
 import os
-import time
 
 logger = logging.getLogger("Spring.Monitoring.Prometheus")
 

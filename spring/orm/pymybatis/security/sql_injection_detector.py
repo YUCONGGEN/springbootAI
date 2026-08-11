@@ -11,7 +11,7 @@ PyMyBatis SQL注入检测模块
 
 import re
 import logging
-from typing import Optional, Any, Dict, Set, List
+from typing import Optional, Any, Dict, Set
 from enum import Enum
 
 logger = logging.getLogger(__name__)

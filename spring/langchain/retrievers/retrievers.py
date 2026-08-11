@@ -10,7 +10,7 @@
 - ensemble: EnsembleRetriever（多检索器融合）
 """
 import logging
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 
 logger = logging.getLogger("Spring.LangChain")

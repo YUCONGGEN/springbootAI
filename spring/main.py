@@ -1,6 +1,5 @@
 from typing import Type, Optional
 import socket
-import signal
 import sys
 from spring.context.application_context import ApplicationContext
 from spring.web.web_context import WebApplicationContext

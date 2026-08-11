@@ -12,7 +12,6 @@
 
 缓存存储复用 ``BeanFactory._cache``（与 @Cacheable 同一进程内存储，对齐 Spring Cache 抽象）。
 """
-import os
 import sys
 from pathlib import Path
 

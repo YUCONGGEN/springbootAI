@@ -16,7 +16,6 @@
 """
 import logging
 import threading
-import time
 import traceback
 from typing import Any, Dict, List, Optional
 
@@ -73,11 +72,9 @@ def _check_actuator_auth():
     if not _actuator_secured:
         return  # 鉴权关闭，放行
 
-    from fastapi import Request, HTTPException
-    from spring.security.jwt_utils import jwt_utils
+    from fastapi import HTTPException
 
     # FastAPI 依赖注入需要 Request 对象；此函数被 endpoints 直接调用时使用全局 request
-    from fastapi import Request as _Req
     # 通过 inspect 获取 request 参数（兼容 FastAPI 依赖系统）
     raise HTTPException(status_code=401, detail="Actuator authentication required")
 

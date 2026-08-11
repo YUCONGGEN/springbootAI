@@ -17,7 +17,7 @@ PyMyBatis监控指标模块
 import time
 import threading
 import logging
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)

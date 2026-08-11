@@ -3,7 +3,6 @@
 对齐 tests/test_orm_pymybatis_full.py 的 pytest 风格。使用 DdlAutoManager 解析实体生成 DDL
 （不依赖真实数据库，dialect=sqlite），乐观锁执行器用内存 sqlite 真实执行。
 """
-import os
 import sys
 import sqlite3
 from pathlib import Path
@@ -15,8 +14,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from spring.orm import (
-    entity, Id, Version, Transient, Column, Index,
-    version_column, transient_field,
+    entity, Id, Version, Transient, Column, version_column, transient_field,
     DdlAutoManager, DdlAutoMode,
     OptimisticLockExecutor, OptimisticLockError,
 )

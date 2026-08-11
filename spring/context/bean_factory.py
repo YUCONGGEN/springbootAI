@@ -9,7 +9,6 @@ import asyncio
 import functools
 import threading
 import hashlib
-import pickle
 import concurrent.futures
 import types
 

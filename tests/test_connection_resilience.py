@@ -6,9 +6,8 @@
 import sys
 import time
 import threading
-import queue
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import patch
 from typing import Any, Dict
 
 import pytest
@@ -168,7 +167,6 @@ class TestConnectionPoolResilience:
 
     def test_leak_detection(self):
         """测试泄漏检测：长时间未归还的连接触发警告日志"""
-        import logging
 
         pool = ResilientTestPool({
             'min_size': 0,

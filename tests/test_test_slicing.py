@@ -12,8 +12,7 @@ import pytest
 
 from spring.annotations.core import (
     SpringBootApplication, Component, Service,
-    RestController, RequestMapping, GetMapping, PostMapping, RequestParam, PathVariable,
-    ConfigurationProperties, EventListener, ApplicationEvent,
+    RestController, RequestMapping, GetMapping, PostMapping, EventListener, ApplicationEvent,
 )
 from spring.orm.ddl_auto import entity, Id, Column
 from spring.test import SpringBootTest, WebMvcTest, DataJpaTest

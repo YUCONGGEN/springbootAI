@@ -5,7 +5,6 @@ LocaleContextHolder / MessageSourceAccessor / properties 解析 / 中间件 / �
 """
 import os
 import sys
-import tempfile
 import textwrap
 from pathlib import Path
 
@@ -16,11 +15,10 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from spring.i18n import (
-    Locale, LOCALE_EN, LOCALE_CHINA, LOCALE_US, LOCALE_UK, parse_locale,
-    MessageSource, AbstractMessageSource, NoSuchMessageException,
-    MessageSourceResolvable, DefaultMessageSourceResolvable,
+    Locale, LOCALE_EN, LOCALE_CHINA, LOCALE_US, LOCALE_UK, NoSuchMessageException,
+    DefaultMessageSourceResolvable,
     StaticMessageSource, ResourceBundleMessageSource, DelegatingMessageSource,
-    LocaleResolver, LocaleContext, SimpleLocaleContext, SimpleTimeZoneAwareLocaleContext,
+    SimpleLocaleContext, SimpleTimeZoneAwareLocaleContext,
     AcceptHeaderLocaleResolver, FixedLocaleResolver,
     SessionLocaleResolver, CookieLocaleResolver,
     LocaleContextHolder, MessageSourceAccessor,

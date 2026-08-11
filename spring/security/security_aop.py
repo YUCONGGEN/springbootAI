@@ -2,7 +2,7 @@
 Spring Security AOP 切面实现
 提供认证授权功能
 """
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable
 import functools
 import inspect
 from spring.security.security_context import SecurityContext, SecurityContextHolder

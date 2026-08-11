@@ -12,7 +12,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from xml.etree import ElementTree as ET
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass

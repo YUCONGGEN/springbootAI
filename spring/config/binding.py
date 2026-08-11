@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, Optional, Type, get_type_hints
+from typing import Any, Dict, Optional, get_type_hints
 
 from spring.annotations.core import SpringAnnotation, Validated
 

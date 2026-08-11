@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import io
 import re
-from typing import Dict, Mapping, TextIO, Union
+from typing import Dict, Mapping, TextIO
 
 
 # ==================== 转义序列处理 ====================

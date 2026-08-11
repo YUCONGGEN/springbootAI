@@ -2,6 +2,7 @@
 
 使用 FakeChatModel/FakeEmbeddingModel 提供确定性输出，不依赖网络或真实 LLM。
 """
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -17,17 +18,14 @@ import tests._test_helpers  # noqa: F401  安装模块mock
 from spring.ai import (
     Advisor, AdvisorRequest, ChatClient, ChatClientBuilder, ChatModel,
     ChatResponse, EmbeddingModel, Generation, Message, MessageType,
-    PromptSpec, AiClient, Tool, AiAdvisor, AiMemory,
+    AiClient, Tool, AiAdvisor, AiMemory,
     MessageChatMemoryAdvisor, QuestionAnswerAdvisor, SimpleLoggerAdvisor,
-    InMemoryChatMemory, RedisChatMemory, ChatMemory,
-    SimpleInMemoryVectorStore, RedisVectorStore, VectorStore, SearchRequest, cosine_similarity,
+    InMemoryChatMemory, RedisChatMemory, SimpleInMemoryVectorStore, RedisVectorStore, SearchRequest, cosine_similarity,
     VectorDocument,
     LangChainVectorStore,
     TokenTextSplitter, CharacterTextSplitter, TextReader, TextDocument,
-    ToolRegistry, ToolDefinition,
-    FakeChatModel, FakeEmbeddingModel, OpenAIChatModel, OpenAIEmbeddingModel,
-    OllamaChatModel, OllamaEmbeddingModel,
-    AIProperties, bind_ai_config, configure_ai,
+    ToolRegistry, FakeChatModel, FakeEmbeddingModel, OpenAIChatModel, OpenAIEmbeddingModel,
+    OllamaChatModel, AIProperties, bind_ai_config, configure_ai,
 )
 from spring.annotations.core import get_spring_annotations
 from spring.context.registry import BeanRegistry
@@ -759,7 +757,6 @@ class TestEmbeddingAutoconfigAndRedisVectorStore:
 
     def test_redis_vector_store_persistence_with_fake_redis(self):
         """RedisVectorStore 用 fake redis 持久化+检索"""
-        import json as _json
 
         class FakeRedis:
             def __init__(self):
@@ -868,7 +865,7 @@ class TestRedisReuse:
         fake = FakeRedisWithExpire()
         mem = RedisChatMemory(redis_client=fake, max_messages=10, ttl=3600)
         mem.add("c1", Message.user("hi"))
-        key = "springpy:ai:memory:c1"
+        key = "springpy:ai:memory:global:c1"  # namespace=global 前缀
         # list 键本身被设了 TTL（不是 :ttl 标记键）
         assert key in fake._expires
         assert fake._expires[key] == 3600
@@ -1156,7 +1153,7 @@ class TestP1Fixes:
 
     def test_ai_allow_fake_false_raises_on_missing_key(self, monkeypatch):
         """AI_ALLOW_FAKE=false + api_key 缺失 → ValueError"""
-        from spring.ai.autoconfig import _build_chat_model, bind_ai_config
+        from spring.ai.autoconfig import bind_ai_config
         monkeypatch.setenv("AI_ALLOW_FAKE", "false")
         # 重新导入触发模块级 env 读取
         import importlib
@@ -1387,6 +1384,10 @@ class TestOptimizationFixes:
 class TestMultiProviderLangChain:
     """多厂商 Provider（DeepSeek/Moonshot/ZhipuAI）LangChain 优先 + HTTP 降级"""
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("langchain_deepseek") is not None,
+        reason="langchain_deepseek 已安装，走 LangChain 路径，HTTP 降级测试不适用",
+    )
     def test_compat_model_degrades_to_http_without_langchain(self):
         """未安装专用 langchain 包时 _llm 为 None，自动走 HTTP 降级"""
         from spring.ai.providers import OpenAICompatChatModel

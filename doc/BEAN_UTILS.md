@@ -2,17 +2,43 @@
 
 > 对齐 `org.springframework.beans.BeanUtils`（Spring）与 `org.apache.commons.beanutils.BeanUtils`（Apache Commons）。
 > 提供对象间属性复制、嵌套属性读写、属性描述符、字典填充/导出等能力。
-> 框架版本：SpringBootAI 1.8.8
+> 框架版本：SpringBootAI 2.0.0
 
 ---
 
-## 零、新手先读
+## 大白话开篇：BeanUtils 是什么？
 
-BeanUtils 用来复制“字段名相同”的对象属性，常见于 DTO 转 Entity、Entity 转响应对象，以及把配置字典填入对象。它能减少重复赋值代码，但不会替你做业务校验、权限过滤或复杂类型转换。
+**BeanUtils 就是帮你把对象 A 的属性值复制到对象 B**。
 
-最容易出错的是浅拷贝：默认复制列表、字典等对象的引用，修改目标对象里的列表可能同时影响源对象。需要完全独立的数据时使用 `copy_deep=True` 或 `clone(..., deep=True)`。
+比如你有一个"用户输入"对象（UserDTO）和一个"数据库实体"对象（UserEntity），它们的字段名都一样（name、age、email），你想把 UserDTO 的值搬到 UserEntity 里去。不用 BeanUtils 你得写：
 
-密码哈希、内部权限、审计字段等敏感属性应放进 `ignore`，不能因为字段同名就无条件从请求 DTO 复制到数据库实体。
+```python
+entity.name = dto.name
+entity.age = dto.age
+entity.email = dto.email
+entity.password_hash = entity.password_hash  # 这个字段不覆盖
+```
+
+用 BeanUtils 你只需要一行：
+
+```python
+BeanUtils.copy_properties(dto, entity, ignore=["password_hash"])
+# 结果: entity 的 name/age/email 被更新，password_hash 保持不变
+```
+
+### 决策指引：我该用 BeanUtils 吗？
+
+| 场景 | 该用吗 | 原因 |
+|------|--------|------|
+| DTO → Entity 转换（字段名相同） | ✅ 用 | 减少重复赋值代码 |
+| Entity → 响应对象 | ✅ 用 | 快速构造返回数据 |
+| 把配置字典填入对象 | ✅ 用 `populate()` | 一行代码搞定 |
+| 把对象导出为字典 | ✅ 用 `describe()` | 方便序列化 |
+| 需要类型转换（如字符串 "123" → 整数 123） | ❌ 手动处理 | BeanUtils 不做类型转换，原样赋值 |
+| 列表/字典对象需要完全复制（不影响原对象） | ⚠️ 用 `copy_deep=True` | 默认浅拷贝共享引用 |
+| 字段名不同的两个对象 | ❌ 不行 | BeanUtils 按**字段名**匹配，名字不同不复制 |
+
+---
 
 ## 一、快速开始
 
@@ -35,11 +61,32 @@ src = UserSrc()
 tgt = UserTgt()
 BeanUtils.copy_properties(src, tgt)
 assert tgt.name == "alice" and tgt.age == 30
+# 结果: tgt.name = "alice", tgt.age = 30, tgt.address = {"city": "北京", "zip": "100000"}
 ```
 
 ---
 
-## 二、API 参考
+## 二、浅拷贝 vs 深拷贝（重要！）
+
+> **生活比喻**：浅拷贝就像复印了一份文档目录（目录是新的，但指的还是同一个文件柜）；深拷贝就像把文件柜里的每一个文件都复印了一份，两份完全独立。
+
+```python
+# 浅拷贝（默认）：address 共享同一个 dict 对象
+BeanUtils.copy_properties(src, tgt)
+tgt.address["city"] = "上海"
+print(src.address["city"])
+# 输出: 上海  ← ⚠️ 修改 tgt 竟然影响了 src！因为两个对象共用同一个 dict
+
+# 深拷贝：address 是独立的新 dict
+BeanUtils.copy_properties(src, tgt, copy_deep=True)
+tgt.address["city"] = "上海"
+print(src.address["city"])
+# 输出: 北京  ← ✅ 修改 tgt 不影响 src
+```
+
+---
+
+## 三、API 参考
 
 ### 1. `copy_properties(source, target, ignore=None, copy_deep=False)`
 
@@ -59,7 +106,10 @@ assert tgt.name == "alice" and tgt.age == 30
 
 ```python
 BeanUtils.copy_properties(src, tgt, ignore=["age", "address"])
-BeanUtils.copy_properties(src, tgt, copy_deep=True)  # 嵌套对象独立
+# 结果: 只复制非 age、非 address 的属性
+
+BeanUtils.copy_properties(src, tgt, copy_deep=True)
+# 结果: 嵌套对象完全独立，修改 tgt 不影响 src
 ```
 
 ### 2. `copy_property(source, target, property_name) -> bool`
@@ -68,6 +118,8 @@ BeanUtils.copy_properties(src, tgt, copy_deep=True)  # 嵌套对象独立
 
 ```python
 ok = BeanUtils.copy_property(src, tgt, "name")
+# 结果: tgt.name = src.name，ok = True（成功）
+# 如果 property_name 不存在，ok = False
 ```
 
 ### 3. `clone(source, deep=False) -> Any`
@@ -75,8 +127,9 @@ ok = BeanUtils.copy_property(src, tgt, "name")
 对齐 Apache Commons `BeanUtils.cloneBean`。通过 `type(source).__new__` 创建同类型新对象并复制属性。
 
 ```python
-new_user = BeanUtils.clone(src)            # 浅克隆
-new_user = BeanUtils.clone(src, deep=True) # 深克隆，嵌套对象独立
+new_user = BeanUtils.clone(src)            # 浅克隆（嵌套对象共享引用）
+new_user = BeanUtils.clone(src, deep=True) # 深克隆（嵌套对象完全独立）
+# 结果: new_user 是 src 的同类型新对象，属性值相同
 ```
 
 ### 4. `get_property(obj, name, default=None) -> Any`
@@ -84,9 +137,15 @@ new_user = BeanUtils.clone(src, deep=True) # 深克隆，嵌套对象独立
 对齐 Apache Commons `BeanUtils.getProperty`。支持点号嵌套路径，支持 Mapping（dict）。
 
 ```python
-BeanUtils.get_property(user, "address.city")          # 嵌套属性
-BeanUtils.get_property(user, "address.city", "N/A")   # 路径中断返回默认值
-BeanUtils.get_property({"a": {"b": 1}}, "a.b")        # dict 嵌套 → 1
+BeanUtils.get_property(user, "address.city")
+# 输出: "北京"（读取 user.address.city）
+# 过程: 先读 user.address，再读 address.city
+
+BeanUtils.get_property(user, "address.city", "N/A")
+# 输出: "N/A"（路径中断时返回默认值，不会抛异常）
+
+BeanUtils.get_property({"a": {"b": 1}}, "a.b")
+# 输出: 1（dict 也支持点号嵌套读取）
 ```
 
 ### 5. `set_property(obj, name, value) -> bool`
@@ -95,12 +154,23 @@ BeanUtils.get_property({"a": {"b": 1}}, "a.b")        # dict 嵌套 → 1
 
 ```python
 BeanUtils.set_property(user, "address.city", "上海")
+# 结果: user.address.city = "上海"，返回 True
+
 BeanUtils.set_property({"a": {"b": 1}}, "a.b", 2)
+# 结果: {"a": {"b": 2}}，返回 True
 ```
 
 ### 6. `get_simple_property(obj, name, default=None) -> Any`
 
 对齐 Apache Commons `getSimpleProperty`。不支持嵌套，直接 `getattr`。
+
+```python
+BeanUtils.get_simple_property(user, "name")
+# 输出: "alice"（等同于 user.name）
+
+BeanUtils.get_simple_property(user, "nonexistent", "默认值")
+# 输出: "默认值"
+```
 
 ### 7. `get_property_descriptors(obj) -> Dict[str, Optional[type]]`
 
@@ -108,12 +178,17 @@ BeanUtils.set_property({"a": {"b": 1}}, "a.b", 2)
 
 ```python
 desc = BeanUtils.get_property_descriptors(user)
-# {"name": str, "age": int, "address": dict, ...}
+# 输出: {"name": str, "age": int, "address": dict, ...}
 ```
 
 ### 8. `get_property_descriptor(obj, name) -> Optional[type]`
 
 对齐 Spring `BeanUtils.getPropertyDescriptor`。返回单个属性的类型。
+
+```python
+t = BeanUtils.get_property_descriptor(user, "age")
+# 输出: int（如果属性不存在返回 None）
+```
 
 ### 9. `populate(obj, properties) -> None`
 
@@ -121,6 +196,7 @@ desc = BeanUtils.get_property_descriptors(user)
 
 ```python
 BeanUtils.populate(tgt, {"name": "bob", "age": 25})
+# 结果: tgt.name = "bob", tgt.age = 25
 ```
 
 ### 10. `describe(obj) -> Dict[str, Any]`
@@ -129,21 +205,8 @@ BeanUtils.populate(tgt, {"name": "bob", "age": 25})
 
 ```python
 d = BeanUtils.describe(user)
-# {"name": "alice", "age": 30, "address": {...}, ...}
+# 输出: {"name": "alice", "age": 30, "address": {...}, ...}
 ```
-
----
-
-## 三、与 Java Spring BeanUtils 的差异
-
-| 维度 | Java Spring BeanUtils | SpringBootAI BeanUtils |
-|------|----------------------|----------------------|
-| 类型转换 | 通过 PropertyEditor/ConversionService 自动转换 | Python 动态类型，原样赋值，不做转换 |
-| 底层机制 | Java 反射（java.beans.Introspector） | `__dict__` / `getattr` / `setattr` + 类层 property |
-| 支持对象 | JavaBean | 普通类 / dataclass / Pydantic v2 Model / ORM entity |
-| 拷贝语义 | 浅拷贝 | 默认浅拷贝，`copy_deep=True` 支持深拷贝 |
-| 监听机制 | PropertyChangeListener / VetoableChangeListener | 不支持 |
-| 私有属性 | 受访问权限控制 | 单下划线默认复制，双下划线排除 |
 
 ---
 
@@ -173,7 +236,7 @@ entity = UserEntity()
 entity.password_hash = "xxx"
 
 BeanUtils.copy_properties(dto, entity)
-# entity.name="alice", entity.age=30, entity.email="a@b.com", entity.password_hash="xxx" 保留
+# 结果: entity.name="alice", entity.age=30, entity.email="a@b.com", entity.password_hash 保持 "xxx"
 ```
 
 ### 示例 2：嵌套属性读写
@@ -189,8 +252,11 @@ class User:
 
 user = User()
 assert BeanUtils.get_property(user, "address.city") == "北京"
+# 输出: True（读取成功）
+
 BeanUtils.set_property(user, "address.city", "上海")
 assert user.address.city == "上海"
+# 输出: True（写入成功）
 ```
 
 ### 示例 3：字典填充与导出
@@ -204,9 +270,11 @@ class Config:
 cfg = Config()
 BeanUtils.populate(cfg, {"host": "0.0.0.0", "port": 8080})
 assert cfg.host == "0.0.0.0" and cfg.port == 8080
+# 输出: True（一行代码批量设置属性）
 
 d = BeanUtils.describe(cfg)
 assert d == {"host": "0.0.0.0", "port": 8080}
+# 输出: True（导出为字典）
 ```
 
 ### 示例 4：Pydantic Model 复制
@@ -227,11 +295,38 @@ src = UserIn(name="bob", age=25)
 tgt = UserOut()
 BeanUtils.copy_properties(src, tgt)
 assert tgt.name == "bob" and tgt.age == 25
+# 输出: True（支持 Pydantic v2 Model）
 ```
 
 ---
 
-## 五、测试覆盖
+## 五、与 Java Spring BeanUtils 的差异
+
+| 维度 | Java Spring BeanUtils | SpringBootAI BeanUtils |
+|------|----------------------|----------------------|
+| 类型转换 | 通过 PropertyEditor/ConversionService 自动转换 | Python 动态类型，原样赋值，不做转换 |
+| 底层机制 | Java 反射（java.beans.Introspector） | `__dict__` / `getattr` / `setattr` + 类层 property |
+| 支持对象 | JavaBean | 普通类 / dataclass / Pydantic v2 Model / ORM entity |
+| 拷贝语义 | 浅拷贝 | 默认浅拷贝，`copy_deep=True` 支持深拷贝 |
+| 监听机制 | PropertyChangeListener / VetoableChangeListener | 不支持 |
+| 私有属性 | 受访问权限控制 | 单下划线默认复制，双下划线排除 |
+
+---
+
+## 六、新手常见误区
+
+| 误区 | 真相 |
+|------|------|
+| "复制后修改目标对象不影响源对象" | **默认是浅拷贝**！如果属性值是列表/字典/对象，两个对象共享同一个引用。要完全独立用 `copy_deep=True` |
+| "BeanUtils 会自动转换类型" | Python 版不做类型转换。Java 版会通过 `ConversionService` 自动转，Python 版是原样赋值 |
+| "密码等敏感字段复制了也没关系" | 从请求 DTO 复制到数据库实体时，请把 `password_hash`、`salt` 等敏感字段放入 `ignore`，防止被覆盖 |
+| "所有同名字段都会被复制" | 双下划线字段 `__xxx` 和 callable（方法）自动排除；目标只读 property 自动跳过 |
+| "字段名不一样也能复制" | BeanUtils 按**字段名精确匹配**，名字不同就不复制。如果要映射不同名字段，需要人工处理 |
+| "clone 创建的是完全独立的对象" | 默认 `clone()` 是浅克隆。要深克隆用 `clone(src, deep=True)` |
+
+---
+
+## 七、测试覆盖
 
 测试文件：[`tests/test_bean_utils.py`](../tests/test_bean_utils.py) — **34 用例**，覆盖：
 
@@ -248,7 +343,7 @@ assert tgt.name == "bob" and tgt.age == 25
 
 ---
 
-## 六、代码位置
+## 八、代码位置
 
 - 实现：[`spring/utils/bean_utils.py`](../spring/utils/bean_utils.py)
 - 导出：[`spring/utils/__init__.py`](../spring/utils/__init__.py) → `from spring.utils import BeanUtils`

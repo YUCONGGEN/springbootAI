@@ -3,7 +3,7 @@
 """
 import json
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 
 from spring.ai.core import Message
 
@@ -49,18 +49,27 @@ class InMemoryChatMemory(ChatMemory):
 
 
 class RedisChatMemory(ChatMemory):
-    """Redis 会话记忆 - 生产用，复用 SpringBootAI RedisClient"""
+    """Redis 会话记忆 - 生产用，复用 SpringBootAI RedisClient。
+
+    安全设计：
+    - 记忆键以 ``namespace`` 分隔，防止不同用户/租户串读历史对话。
+    - ``namespace`` 默认从 ``request.context['user_id']`` 与 ``tenant_id``
+      派生，业务方应在 Advisor 层注入已验证的身份信息。
+    - 生产环境 ``conversation_id`` 不应使用 "default"（已在 Advisor 层降级）。
+    """
 
     KEY_PREFIX = "springpy:ai:memory:"
 
     def __init__(self, redis_client=None, max_messages: int = 20,
-                 ttl: int = 86400):
+                 ttl: int = 86400, namespace: str = ""):
         self._client = redis_client
         self._max = max_messages
         self._ttl = ttl
+        self._namespace = namespace
 
     def _key(self, conversation_id: str) -> str:
-        return f"{self.KEY_PREFIX}{conversation_id}"
+        ns = self._namespace or "global"
+        return f"{self.KEY_PREFIX}{ns}:{conversation_id}"
 
     def add(self, conversation_id: str, message: Message) -> None:
         if self._client is None:

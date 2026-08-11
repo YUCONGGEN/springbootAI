@@ -20,11 +20,10 @@ from spring.websocket import (
     WebSocketSession, WebSocketSessionRegistry,
     WebSocketHandler, TextWebSocketHandler, BinaryWebSocketHandler,
     ServerEndpoint, AnnotatedEndpointHandler, discover_server_endpoints,
-    MessageMapping, SendTo, SendToUser, SubscribeMapping, MessageEndpoint,
-    MessageMappingModel, collect_message_mappings,
+    MessageMapping, SendTo, SubscribeMapping, MessageEndpoint,
+    collect_message_mappings,
     InMemoryBroker, SimpMessageSendingOperations,
-    MessageBrokerConfigurer, broker_registry,
-    WebSocketRouter, MessageEndpointDispatcher, install_websocket_routes,
+    MessageBrokerConfigurer, WebSocketRouter, MessageEndpointDispatcher, install_websocket_routes,
     WebSocketException, WebSocketHandlerException, MessageBrokerException,
 )
 

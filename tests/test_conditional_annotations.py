@@ -5,11 +5,9 @@
 ``ApplicationContext``（访问 ``config_loader`` / ``bean_factory``），故用轻量 mock 上下文
 覆盖各分支，并用真实 ``ApplicationContext`` 验证 ``_matches_conditions`` 集成。
 """
-import os
 import sys
 from pathlib import Path
 
-import pytest
 
 PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
@@ -351,14 +349,12 @@ class TestAllConditionsMatch:
 
 class TestApplicationContextIntegration:
     def _make_context(self, config_data):
-        from spring.config.config_loader import ConfigLoader, set_global_config_loader
         from spring.context.application_context import ApplicationContext
 
         class FakeMain:
             __module__ = __name__
 
         ctx = ApplicationContext.__new__(ApplicationContext)
-        from spring.context.bean_factory import BeanFactory
         ctx.config_loader = _FakeConfigLoader(config_data)
         ctx.bean_factory = _FakeBeanFactory({})
         ctx.main_class = FakeMain

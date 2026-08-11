@@ -17,20 +17,16 @@ import tests._test_helpers  # noqa: F401  安装模块mock
 
 from spring.annotations.core import (
     RestController, Controller, RequestMapping, GetMapping, PostMapping,
-    Service, Component, Repository, Configuration, Bean, Scope,
-    Autowired, Slf4j, LogExecutionTime, PostConstruct, PreDestroy,
+    Service, Repository, Configuration, Bean, Autowired, Slf4j, LogExecutionTime, PostConstruct, PreDestroy,
     Primary, Profile, Lazy, Value, ConfigurationProperties,
-    CrossOrigin, ControllerAdvice, ExceptionHandler, ResponseStatus,
+    CrossOrigin, ControllerAdvice, ResponseStatus,
     Transactional, Cacheable, Retryable, Async, AsyncResult, Scheduled,
-    RateLimit, CircuitBreaker, Idempotent, AuditLog, FeatureToggle,
-    Lock, Metrics, Synchronized, Validate, Trace,
-    PreAuthorize, Secured, Authenticate, Valid, Validated,
-    get_spring_annotations,
+    RateLimit, CircuitBreaker, Idempotent, AuditLog, Lock, Metrics, Validate, Trace,
+    PreAuthorize, Secured, Authenticate, get_spring_annotations,
 )
 from spring.retry.retry_annotations import Backoff
 from spring.annotations.cloud import (
-    EnableDiscoveryClient, NacosValue, RefreshScope, EnableFeignClients,
-    FeignClient, SentinelResource, EnableGateway, LoadBalanced,
+    EnableDiscoveryClient, NacosValue, RefreshScope, FeignClient, SentinelResource, EnableGateway, LoadBalanced,
     GlobalTransactional,
 )
 

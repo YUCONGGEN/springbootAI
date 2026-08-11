@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, List, Optional, Sequence, Union
+from typing import Any, List, Optional, Sequence, Union
 
 from .locale import Locale
 

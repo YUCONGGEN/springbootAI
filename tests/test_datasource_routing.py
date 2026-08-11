@@ -19,7 +19,6 @@ from spring.datasource import (
     routing_scope,
     DynamicRoutingDataSource,
     DS, Master, Slave,
-    ds_route_decorator,
     ds_decorator_factory,
     apply_ds_annotations,
     is_slave_placeholder,

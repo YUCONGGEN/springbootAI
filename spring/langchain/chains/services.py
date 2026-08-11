@@ -1,30 +1,26 @@
 """
 Chain 服务 - 封装 langchain classic 的各类 Chain，作为 @Service Bean。
 
-封装的 Chain 类型：
+封装的 Chain 类型（对齐 langchain-master libs/langchain/langchain_classic/chains/）：
 - llm: LLMChain（基础：prompt + llm）
 - conversation: ConversationChain（带会话记忆的对话）
 - sequential: SequentialChain（多链顺序串联）
 - retrieval-qa: RetrievalQA（基于检索的问答）
+- conversational-retrieval: ConversationalRetrievalChain（带记忆的检索问答）
 - map-reduce: MapReduceChain（长文本摘要）
 - llm-math: LLMMathChain（数学计算）
 - stuff-documents: StuffDocumentsChain（文档拼接）
+- api: APIChain（API 调用链）
+- constitutional: ConstitutionalChain（宪法式 AI 安全审查）
+- multi-prompt: MultiPromptChain（多提示路由）
+- flare: FlareChain（前瞻式主动检索增强生成）
 
-所有方法接收 langchain BaseChatModel（由 adapters 桥接自 springbootAI ChatModel）。
+All methods accept langchain BaseChatModel (bridged from springbootAI ChatModel via adapters).
+
+Deprecation warnings from langchain_classic are centrally suppressed by spring.langchain.__init__.
 """
 import logging
-import warnings
 from typing import Any, List, Optional
-
-
-# 屏蔽 langchain classic 的弃用告警（迁移目的即兼容旧 API，告警无意义）
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*deprecated.*")
-try:
-    from langchain_core._api import LangChainDeprecationWarning
-    warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
-except ImportError:
-    pass
 
 logger = logging.getLogger("Spring.LangChain")
 
@@ -124,13 +120,186 @@ class ChainService:
         from langchain_classic.chains.summarize import load_summarize_chain
         return load_summarize_chain(llm or self._lc_model, chain_type=chain_type)
 
+    # ==================== 增强型 Chain（对齐 langchain-master） ====================
+
+    def create_conversational_retrieval_chain(
+        self,
+        retriever: Any,
+        memory: Optional[Any] = None,
+        llm: Optional[Any] = None,
+        chain_type: str = "stuff",
+        verbose: bool = False,
+    ) -> Any:
+        """创建带记忆的检索问答链 ConversationalRetrievalChain。
+
+        与普通 RetrievalQA 的区别：它会维护对话历史，将 follow-up 问题
+        与上下文结合后重新检索，实现多轮 RAG 对话。
+
+        Args:
+            retriever: langchain Retriever
+            memory: 会话记忆（默认自动创建 buffer）
+            llm: 模型
+            chain_type: stuff | map_reduce | refine
+        """
+        from langchain_classic.chains import ConversationalRetrievalChain
+        if memory is None:
+            from spring.langchain.memory.memory import MemoryFactory
+            memory = MemoryFactory.create("buffer")
+        return ConversationalRetrievalChain.from_llm(
+            llm=llm or self._lc_model,
+            retriever=retriever,
+            memory=memory,
+            chain_type=chain_type,
+            verbose=verbose,
+        )
+
+    def create_api_chain(
+        self,
+        api_docs: str,
+        llm: Optional[Any] = None,
+        verbose: bool = False,
+        **kwargs,
+    ) -> Any:
+        """创建 APIChain - 让 LLM 调用 REST API。
+
+        Args:
+            api_docs: API 文档描述字符串
+            llm: 模型
+            kwargs: 传递给 APIChain.from_llm_and_api_docs 的额外参数
+        """
+        from langchain_classic.chains import APIChain
+        return APIChain.from_llm_and_api_docs(
+            llm=llm or self._lc_model,
+            api_docs=api_docs,
+            verbose=verbose,
+            **kwargs,
+        )
+
+    def create_constitutional_chain(
+        self,
+        llm: Optional[Any] = None,
+        *,
+        principles: Optional[List[Any]] = None,
+        chain: Optional[Any] = None,
+        **kwargs,
+    ) -> Any:
+        """创建 ConstitutionalChain - 宪法式 AI 安全审查。
+
+        基于 langchain-master chains/constitutional_ai 实现，对 LLM 输出
+        进行多轮安全审查和修订。
+
+        Args:
+            llm: 用于审查的模型
+            principles: 审查原则列表（ConstitutionalPrinciple 实例），
+                        默认使用批评 + 伦理 + 非法内容拒绝原则
+            chain: 被审查的目标链（默认使用自身 LLMChain）
+        """
+        from langchain_classic.chains.constitutional_ai.base import (
+            ConstitutionalChain,
+            ConstitutionalPrinciple,
+        )
+        if principles is None:
+            principles = [
+                ConstitutionalPrinciple(
+                    name="Critique",
+                    critique_request="请用批判性思维审查以下输出。",
+                    revision_request="基于审查意见修正输出。",
+                ),
+                ConstitutionalPrinciple(
+                    name="Ethics",
+                    critique_request="识别输出中任何不道德、有害或非法的内容。",
+                    revision_request="移除并重写任何不道德内容。",
+                ),
+            ]
+        target = chain
+        if target is None:
+            target = self.create_llm_chain(
+                template="{input}", input_variables=["input"])
+        return ConstitutionalChain.from_principles(
+            llm=llm or self._lc_model,
+            chain=target,
+            principles=principles,
+            **kwargs,
+        )
+
+    def create_multi_prompt_chain(
+        self,
+        prompt_infos: List[dict],
+        llm: Optional[Any] = None,
+        **kwargs,
+    ) -> Any:
+        """创建 MultiPromptChain - 根据输入自动路由到最合适的提示。
+
+        Args:
+            prompt_infos: 提示信息列表，每项含 name/description/prompt_template
+            llm: 模型
+        """
+        from langchain_classic.chains.router import MultiPromptChain
+        from langchain_classic.chains.router.llm_router import LLMRouterChain
+        from langchain_classic.chains.router.multi_prompt_prompt import (
+            MULTI_PROMPT_ROUTER_TEMPLATE,
+        )
+        from langchain_core.prompts import PromptTemplate
+
+        model = llm or self._lc_model
+        destinations = [p["name"] for p in prompt_infos]
+        router_template = MULTI_PROMPT_ROUTER_TEMPLATE.format(
+            destinations=destinations)
+        router_prompt = PromptTemplate(
+            template=router_template,
+            input_variables=["input"],
+            output_parser=None,
+        )
+        router_chain = LLMRouterChain.from_llm(model, router_prompt)
+        destination_chains = {}
+        for info in prompt_infos:
+            name = info["name"]
+            prompt = PromptTemplate(
+                template=info["prompt_template"],
+                input_variables=["input"],
+            )
+            from langchain_classic.chains import LLMChain
+            destination_chains[name] = LLMChain(llm=model, prompt=prompt)
+        default_chain = self.create_llm_chain(template="{input}",
+                                               input_variables=["input"])
+        return MultiPromptChain(
+            router_chain=router_chain,
+            destination_chains=destination_chains,
+            default_chain=default_chain,
+            **kwargs,
+        )
+
+    def create_flare_chain(
+        self,
+        llm: Optional[Any] = None,
+        *,
+        max_generation_len: int = 64,
+        min_prob: float = 0.2,
+    ) -> Any:
+        """创建 FlareChain - 前瞻式主动检索增强生成。
+
+        对齐 langchain-master chains/flare，在生成过程中动态检测可信度低的
+        位置并主动触发检索，比传统 RAG 更适合长文本生成。
+
+        Args:
+            llm: 模型
+            max_generation_len: 每次生成的最大 token 数
+            min_prob: 触发前瞻检索的最低概率阈值
+        """
+        from langchain_classic.chains.flare.base import FlareChain
+        return FlareChain.from_llm(
+            llm=llm or self._lc_model,
+            max_generation_len=max_generation_len,
+            min_prob=min_prob,
+        )
+
     # ==================== 工具型 Chain ====================
 
     def create_llm_math_chain(self, llm: Optional[Any] = None,
                               verbose: bool = False) -> Any:
         """创建 LLMMathChain - 让 LLM 做数学计算。"""
         from langchain_classic.chains import LLMMathChain
-        return LLMMathChain(llm=llm or self._lc_model, verbose=verbose)
+        return LLMMathChain.from_llm(llm=llm or self._lc_model, verbose=verbose)
 
     # ==================== 便捷执行 ====================
 

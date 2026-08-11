@@ -2,7 +2,7 @@
 Spring Cloud AOP 切面实现（企业级版本）
 使用真实的分布式组件：Seata事务、Nacos服务发现、Sentinel限流熔断等
 """
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, Optional
 import asyncio
 import time
 import functools

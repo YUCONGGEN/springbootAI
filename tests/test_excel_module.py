@@ -3,7 +3,6 @@
 使用真实 openpyxl 读写临时 xlsx 文件做 round-trip 验证，不依赖网络。
 对齐 tests/test_ai_module.py 的 pytest 风格（class TestXxx + test_* 方法）。
 """
-import os
 import sys
 from datetime import datetime
 from decimal import Decimal
@@ -17,13 +16,13 @@ if PROJECT_ROOT not in sys.path:
 
 from spring.excel import (
     EasyExcel, ExcelProperty, ExcelIgnore, excel_sheet, ExcelSheet,
-    ExcelReader, ExcelWriter, read_excel, write_excel,
+    read_excel, write_excel,
     Converter, StringConverter, IntegerConverter, FloatConverter,
     BooleanConverter, DateStringConverter, BigDecimalConverter, resolve_converter,
-    ExcelError, ExcelPropertyError, ExcelReadError, ExcelWriteError, ExcelDependencyError,
+    ExcelPropertyError, ExcelReadError, ExcelWriteError, ExcelDependencyError,
 )
 from spring.excel.annotations import (
-    parse_excel_columns, _get_class_sheet_meta, ExcelColumnModel, _field_to_header,
+    parse_excel_columns, _get_class_sheet_meta, _field_to_header,
 )
 
 

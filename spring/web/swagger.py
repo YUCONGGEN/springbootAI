@@ -23,7 +23,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Type, Union
 
 from spring.annotations.core import SpringAnnotation, get_spring_annotations

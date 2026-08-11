@@ -7,11 +7,10 @@ AI 调用韧性 - 复用框架 spring.retry 的 @Retryable 机制 + 复用 sprin
    Redis 不可用时降级本地内存。跨实例共享熔断状态，多副本一致性。
 """
 import functools
-import json
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple, Type
+from typing import Callable, Dict, Optional, Tuple, Type
 
 logger = logging.getLogger("Spring.AI.Resilience")
 

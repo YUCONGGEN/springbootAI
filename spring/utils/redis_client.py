@@ -5,7 +5,7 @@ Redis客户端工具类
 import json
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 try:
     from redis.exceptions import RedisError

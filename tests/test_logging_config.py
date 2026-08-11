@@ -192,7 +192,6 @@ class TestLogDirStrictValidation:
     def test_enable_file_false_does_not_create_directory(self, tmp_path):
         """_setup_loguru(enable_file=False) 不应创建日志目录。"""
         SpringLogger._instance = None
-        import spring.logging.loguru_logger as ll
         logger = SpringLogger()
         logger.log_dir = str(tmp_path / 'should_not_exist')
         logger._setup_loguru(strict=False, enable_file=False)

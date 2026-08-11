@@ -26,7 +26,6 @@
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Iterable, List, Optional
 
 from .locale import Locale

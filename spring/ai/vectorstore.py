@@ -108,6 +108,10 @@ class SimpleInMemoryVectorStore(VectorStore):
         for doc in self._docs:
             if not doc.embedding:
                 continue
+            # RAG 租户隔离：filter_expression 仅返回匹配文档
+            if request.filter_expression:
+                if not RedisVectorStore._match_filter(doc, request.filter_expression):
+                    continue
             score = cosine_similarity(emb, doc.embedding)
             if score >= request.similarity_threshold:
                 scored.append((score, doc))
@@ -344,11 +348,32 @@ class RedisVectorStore(VectorStore):
         for doc in self._all_docs():
             if not doc.embedding:
                 continue
+            # RAG 租户隔离：filter_expression 为 "key:value" 格式，仅返回匹配文档
+            if request.filter_expression:
+                if not self._match_filter(doc, request.filter_expression):
+                    continue
             score = cosine_similarity(emb, doc.embedding)
             if score >= request.similarity_threshold:
                 scored.append((score, doc))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [d for _, d in scored[:request.top_k]]
+
+    @staticmethod
+    def _match_filter(doc: Document, filter_expr: str) -> bool:
+        """检查文档 metadata 是否匹配 filter_expression。
+
+        支持两种格式：
+        - ``"key:value"`` — metadata 中的 key 值等于 value
+        - ``"key:"`` — metadata 中 key 存在且非空即可
+        """
+        if ":" not in filter_expr:
+            return str(filter_expr).lower() in str(doc.metadata).lower()
+        key, _, value = filter_expr.partition(":")
+        key = key.strip()
+        actual = doc.metadata.get(key)
+        if not value:  # 仅检查键是否存在
+            return actual is not None and actual != ""
+        return str(actual) == value.strip()
 
     def count(self) -> int:
         return len(self._all_docs(max_scan=0))  # 0 = 无限制，count 需准确

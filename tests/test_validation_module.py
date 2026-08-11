@@ -4,7 +4,6 @@
 覆盖：14 个约束的单值校验、BeanValidator 反射收集/多字段校验/分组、函数装饰器形式、
 @BeanValidate 方法级 AOP（显式参数名 + 自动探测）、ValidationError 汇总。
 """
-import os
 import sys
 from pathlib import Path
 
@@ -16,13 +15,11 @@ if PROJECT_ROOT not in sys.path:
 
 from spring.validation import (
     BeanValidator, BeanValidate,
-    Constraint, NotNull, NotBlank, NotEmpty, Size, Min, Max,
+    NotNull, NotBlank, NotEmpty, Size, Min, Max,
     Positive, PositiveOrZero, Negative, NegativeOrZero,
     Pattern, Email, AssertTrue, AssertFalse,
     ConstraintViolation, ValidationError,
 )
-from spring.validation.validator import _collect_constraints
-from spring.validation.aop import bean_validate_decorator
 
 
 # ==================== 测试用实体 ====================

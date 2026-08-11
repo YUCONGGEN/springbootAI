@@ -15,12 +15,11 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from .locale import Locale
 from .message_source import (
     AbstractMessageSource,
-    MessageArgs,
     MessageSource,
     NoSuchMessageException,
     _format_message,
 )
-from .properties import load_properties, parse_properties
+from .properties import load_properties
 
 
 # ==================== StaticMessageSource ====================

@@ -8,7 +8,6 @@ import logging
 import contextlib
 import os
 import re
-import dataclasses
 import importlib
 import copy
 from collections.abc import Mapping
@@ -24,7 +23,7 @@ from ..mapper import MapperProxy, MapperRegistry
 from ..transaction import TransactionManager, TransactionIsolationLevel
 from ..security import SQLInjectionDetector, SensitiveDataMasker, PasswordEncoder
 from ..security.access_control import RoleBasedAccessControl
-from ..type_handler import DEFAULT_REGISTRY, TypeHandlerRegistry
+from ..type_handler import TypeHandlerRegistry
 from ..interceptor import InterceptorChain
 
 logger = logging.getLogger(__name__)

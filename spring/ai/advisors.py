@@ -1,10 +1,10 @@
 """
 Advisor 实现 - QuestionAnswerAdvisor（RAG）与 MessageChatMemoryAdvisor（会话记忆）。
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from spring.ai.core import (
-    Advisor, AdvisorRequest, ChatResponse, Generation, Message, MessageType,
+    Advisor, AdvisorRequest, ChatResponse, Message, MessageType,
 )
 from spring.ai.memory import ChatMemory
 from spring.ai.vectorstore import SearchRequest, VectorStore
@@ -14,24 +14,51 @@ class MessageChatMemoryAdvisor(Advisor):
     """
     会话记忆 Advisor - 在请求前注入历史消息，在响应后保存本次对话。
 
-    通过 request.context['conversation_id'] 指定会话 ID。
+    安全设计（OWASP Unbounded Consumption / 会话固定）：
+    - ``conversation_id`` 不再静默降级为 "default"——业务方**必须**在
+      ``request.context`` 中传入，否则记忆功能不生效并在开发日志告警。
+    - 支持 ``user_id`` / ``tenant_id`` 上下文，传递给 RedisChatMemory
+      作为 namespace 前缀以隔离不同用户/租户。
+    - 生产环境建议在认证中间件中注入已验证的身份信息到 request.context。
     """
     order = 10
+
+    @staticmethod
+    def _build_namespace(context: dict) -> str:
+        tenant = str(context.get("tenant_id", "")).strip()
+        user = str(context.get("user_id", "")).strip()
+        parts = [p for p in (tenant, user) if p]
+        return ":".join(parts) if parts else ""
 
     def __init__(self, memory: ChatMemory, max_messages: int = 20):
         self.memory = memory
         self.max_messages = max_messages
 
     def advise_request(self, request: AdvisorRequest) -> AdvisorRequest:
-        conv_id = request.context.get("conversation_id", "default")
-        history = self.memory.get(conv_id, last_n=self.max_messages)
+        conv_id = request.context.get("conversation_id")
+        if not conv_id:
+            # 安全：不再静默降级为 "default"，防止不同用户串读历史
+            logger = __import__("logging").getLogger("Spring.AI")
+            logger.debug(
+                "MessageChatMemoryAdvisor: conversation_id 缺失，"
+                "跳过历史注入。请在上游设置 request.context['conversation_id']。")
+            return request
+
+        # 如果 memory 支持 namespace 则注入用户/租户上下文
+        ns = self._build_namespace(request.context)
+        if ns and hasattr(self.memory, "_namespace"):
+            self.memory._namespace = ns
+
+        history = self.memory.get(str(conv_id), last_n=self.max_messages)
         # 历史 + 本次输入合并
         request.messages = history + request.messages
         return request
 
     def advise_response(self, response: ChatResponse,
                         request: AdvisorRequest) -> ChatResponse:
-        conv_id = request.context.get("conversation_id", "default")
+        conv_id = request.context.get("conversation_id")
+        if not conv_id:
+            return response
         # 保存用户输入（最后一条 user 消息）
         for msg in reversed(request.messages):
             if msg.type == MessageType.USER:

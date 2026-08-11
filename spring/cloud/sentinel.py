@@ -13,10 +13,9 @@ Sentinel 内嵌限流降级引擎 (Embedded Sentinel Engine)
 import time
 import threading
 import logging
-import math
-from collections import defaultdict, deque
+from collections import deque
 from enum import Enum
-from typing import Dict, List, Optional, Callable, Any, Tuple
+from typing import Dict, List, Optional, Callable
 
 logger = logging.getLogger("Spring.Cloud.Sentinel")
 

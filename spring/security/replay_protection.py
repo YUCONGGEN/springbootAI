@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import logging
 import threading
-from typing import Optional, Dict, Set, Tuple
+from typing import Optional, Dict, Tuple
 from collections import OrderedDict
 
 logger = logging.getLogger("Spring.Security.Replay")

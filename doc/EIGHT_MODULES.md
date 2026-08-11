@@ -1,63 +1,46 @@
-# SpringBootAI P0/P1/P2 八大模块使用文档
+# SpringBootAI 八大模块 —— 小白也能看懂的实用功能指南
 
-> 版本：SpringBootAI Data / Actuator / Dynamic Datasource / TX Events / Config Binding / Test Slicing / i18n / WebSocket 1.0.0 ｜ 框架版本：SpringBootAI 1.8.8
-> 对齐 Spring Boot / Spring Data / Spring WebSocket 的核心抽象，**无新增第三方依赖**（复用 FastAPI/Starlette/Pydantic/PyYAML 核心栈），`pip install springbootAI` 即可用。
-> 设计原则：**复用项目既有范式，不重复造轮子**——注解元数据（`SpringAnnotation`）、AOP 分发（`comprehensive_aop`）、ORM 反射（`Column`/`@entity`）、`ApplicationContext` 装配全部复用。
-
----
-
-## 新手阅读方式
-
-“八大模块”不是一个必须全部开启的功能包，而是八组彼此独立的能力。请按问题选择，不要为了“功能齐全”一次全部接入。
-
-| 你遇到的问题 | 应阅读的章节 |
-|---|---|
-| 列表接口需要分页、排序和动态筛选 | Spring Data Repository |
-| 运维需要查看健康、Bean、配置和指标 | Actuator |
-| 查询走从库、写入走主库 | 多数据源读写分离 |
-| 事务提交后才能发通知 | 事务事件监听 |
-| YAML 要自动绑定为类型对象 | 配置松散绑定与校验 |
-| 测试只想加载 Web 或数据层 | 测试切片 |
-| 接口需要中英文切换 | i18n |
-| 浏览器需要实时双向通信 | WebSocket |
-
-每一节都包含快速示例。实际接入时应只复制当前模块的代码，并执行对应测试；尤其是多数据源、事务事件和 WebSocket，需要验证并发、断线和进程重启，而不是只看单次调用成功。
-
-## 模块总览
-
-| 优先级 | 模块 | 包路径 | 对齐 Spring | 用例数 | 核心注解/类 |
-|--------|------|--------|------------|--------|------------|
-| P0-1 | Spring Data Repository 抽象 | `spring.data` | Spring Data `PagingAndSortingRepository` / `JpaSpecificationExecutor` | 55 | `Pageable`/`Sort`/`Page`/`Specification`/`PagingAndSortingRepository` |
-| P0-2 | Actuator 运维端点 | `spring.web.actuator` | Spring Boot Actuator | 29 | `/actuator/health`·`/env`·`/loggers`·`/metrics`·`/info`·`/thresholds` |
-| P0-3 | 多数据源读写分离 | `spring.datasource` | `dynamic-datasource-spring-boot-starter` | 34 | `@DS`/`@Master`/`@Slave`/`DynamicRoutingDataSource` |
-| P1-4 | 事务事件监听 | `spring.tx` | Spring `@TransactionalEventListener` | 32 | `@TransactionalEventListener`/`TransactionSynchronizationManager` |
-| P1-5 | 配置松散绑定与校验 | `spring.config.binding` | Spring Boot `@ConfigurationProperties` relaxed binding | 22 | `@NestedConfigurationProperties`/`@Validated`/`ConfigurationBinder` |
-| P1-6 | 测试切片 | `spring.test` | `@SpringBootTest`/`@WebMvcTest`/`@DataJpaTest` | 19 | `SpringBootTest`/`WebMvcTest`/`DataJpaTest` |
-| P2-7 | i18n 国际化 | `spring.i18n` | Spring `MessageSource`/`LocaleResolver` | 88 | `MessageSource`/`LocaleResolver`/`LocaleContextHolder` |
-| P2-8 | WebSocket 实时通信 | `spring.websocket` | Spring WebSocket `@MessageMapping`/`SimpMessagingTemplate` | 63 | `@ServerEndpoint`/`@MessageMapping`/`@SendTo`/`InMemoryBroker` |
-
-**合计 342 用例**，每个模块独立测试套件（≥10 用例），全量回归通过。
+> 框架版本：SpringBootAI 2.0.0
+> 八大模块彼此独立，按需选用，不要为了"功能齐全"一次全部接入。
 
 ---
 
-## 一、P0-1 Spring Data Repository 抽象（`spring.data`）
+## 快速选择指南 —— 你想解决什么问题？
 
-对齐 Spring Data 的 `PagingAndSortingRepository` 与 `JpaSpecificationExecutor`，提供分页、排序、动态条件查询。**复用 ORM `Column`/`@entity` 元数据解析与连接池**，不重复实现实体反射。
+```
+你遇到的问题                                 → 看哪个模块？          → 一句话
+──────────────────────────────────────────────────────────────────────────────
+列表接口需要分页、排序、条件筛选              → 一、Repository        → 不用手写SQL的分页查询
+运维想看系统状态、配置、内存、线程           → 二、Actuator          → 系统健康检查面板
+数据库压力大，想把查询和写入分开             → 三、多数据源           → 读写分离
+下单后要发短信通知，但必须等存完才发         → 四、事务事件           → 操作完成后自动发通知
+YAML 配置太长，想自动变成 Python 对象        → 五、配置绑定           → 把YAML配置自动变成Python对象
+写测试不想启动整个应用，太慢了               → 六、测试切片           → 只测试你关心的部分
+网站要做中英文切换                           → 七、i18n              → 中英文自动切换
+浏览器需要实时推送消息（聊天、通知）         → 八、WebSocket         → 像微信一样实时通信
+```
 
-### 1.1 模块组成
+> **怎么选？** 遇到什么问题就看对应的那一节。不用从头读到尾。
 
-| 文件 | 职责 |
-|------|------|
-| `spring/data/page.py` | `Pageable`/`Sort`/`Page`/`Order`/`Direction` 值对象（不可变） |
-| `spring/data/specification.py` | `Specification` 接口 + `And`/`Or`/`Not` 复合 + `Specifications` 工具 + `Predicate`/`ColResolver` |
-| `spring/data/repository.py` | `PagingAndSortingRepository` 核心实现 + `DataRepository` 别名 |
+---
 
-### 1.2 快速上手
+## 一、Spring Data Repository —— 不用手写SQL的分页查询
+
+### 你遇到了什么问题？
+
+前端请求"第 1 页，每页 20 条，按创建时间倒序"。你要手写 `SELECT COUNT(*)`、`LIMIT`、`OFFSET`、`ORDER BY`……每个列表接口都写一遍，烦得要死还容易出错。
+
+### ① 是什么
+
+**把数据库查询变成翻书操作。** 你只需要告诉框架：第几页、每页几条、按什么排序，框架自动生成 SQL 并把结果装进对象里。就像你去图书馆借书，跟管理员说"我要第 3 排第 5 本"，不用自己翻。
+
+### ② 怎么用
 
 ```python
 from spring.orm.ddl_auto import entity, Id, Column
 from spring.data import PagingAndSortingRepository, Pageable, Sort, Specification
 
+# 定义实体（数据库表对应的类）
 @entity("users")
 class User:
     id = Id()
@@ -66,209 +49,277 @@ class User:
     def __init__(self, id=None, name=None, age=None):
         self.id = id; self.name = name; self.age = age
 
-# pool 为既有 ORM 连接池（DBUtils 风格 .connection()）
+# pool 是你的数据库连接池（和 ORM 共用）
 repo = PagingAndSortingRepository(pool, User, dialect="mysql")
 
-# CRUD
-repo.save(User(name="Tom", age=20))
-repo.save_all([User(name="A"), User(name="B")])
-tom = repo.find_by_id(1)
-all_users = repo.find_all()
-repo.exists_by_id(1)   # True
-repo.count()           # 3
-repo.delete_by_id(1)
-repo.delete_all()
+# --- 基础 CRUD ---
+repo.save(User(name="小明", age=20))
+repo.save_all([User(name="小红"), User(name="小刚")])
 
-# 分页（第 0 页，每页 10 条）
+user = repo.find_by_id(1)
+print(user)  # 输出: User(id=1, name="小明", age=20)
+
+all_users = repo.find_all()          # 查全部
+repo.exists_by_id(1)                 # 输出: True
+repo.count()                         # 输出: 3
+repo.delete_by_id(1)                 # 删一条
+repo.delete_all()                    # 删全部
+
+# --- 分页：第 0 页，每页 10 条 ---
 page = repo.find_all(Pageable.of(page=0, size=10))
-print(page.content, page.total_elements, page.total_pages, page.has_next())
+print(page.content)           # 当前页数据列表
+print(page.total_elements)    # 总条数，如 30
+print(page.total_pages)       # 总页数，如 3
+print(page.has_next())        # 还有下一页吗？True
 
-# 排序
+# --- 排序：按年龄降序 ---
 sorted_users = repo.find_all(sort=Sort.by("user_name").descending())
+# 结果：按 user_name 字段 Z→A 排列
 
-# 动态条件查询（Specification）
+# --- 条件筛选：只查成年人 ---
 class AdultSpec(Specification):
     def to_predicate(self, root, col_resolver):
-        return ("age >= ?", [18], "AND")
+        return ("age >= ?", [18], "AND")  # 参数绑定防 SQL 注入
+
 adults = repo.find_all(specification=AdultSpec())
+# 结果：只返回 age >= 18 的用户
 
-# 分页 + 排序 + 条件组合
-page = repo.find_all(Pageable.of(0, 10, Sort.by("age")), specification=AdultSpec())
+# --- 分页 + 排序 + 筛选 三合一 ---
+page = repo.find_all(
+    Pageable.of(0, 10, Sort.by("age")),
+    specification=AdultSpec()
+)
+# 结果：第 0 页、每页 10 条、按年龄排序、而且只要成年人
 
-# 复合 Specification
+# --- 复合条件：成年 AND 名字包含"明" ---
 from spring.data import Specifications
-spec = Specifications.where(AdultSpec()).and_(AdultSpec())
+spec = Specifications.where(AdultSpec()).and_(NameSpec())
 ```
 
-### 1.3 与 Java Spring 的差异
+### ③ 运行结果
 
-- Spring Data 用 `Pageable`/`Sort` 接口 + 实现类；本实现为不可变值对象类（`__setattr__` 禁改）。
-- `Specification.to_predicate` 返回 `(clause, params, operator)` 三元组，复用 ORM SQL 拼接；Spring 用 JPA `CriteriaBuilder` + `Predicate`。
-- 不支持方法名派生查询（`findByNameAndAge`），需手写 `Specification`。
+你只需调用一个 `repo.find_all(Pageable.of(page=0, size=10))`，框架自动执行：
+- 一条 `SELECT COUNT(*)` 查总条数
+- 一条 `SELECT ... LIMIT 10 OFFSET 0` 查当前页数据
+- 返回封装好的 `Page` 对象，包含数据、总页数、总条数、是否有下一页
+
+### 模块 mini-FAQ
+
+**Q：页码从 0 还是从 1 开始？**
+从 0 开始。`Pageable.of(page=0, size=10)` 是第一页。`page=1` 是第二页。
+
+**Q：大数据量分页慢怎么办？**
+确保 `Sort.by()` 的字段在数据库中有索引。另外总条数查询（`SELECT COUNT(*)`）在大表上可能较慢。
+
+**Q：能像 Java Spring 那样写 `findByNameAndAge` 吗？**
+不支持方法名派生查询。需要用 `Specification` 手写条件。
 
 ---
 
-## 二、P0-2 Actuator 运维端点（`spring.web.actuator`）
+## 二、Actuator —— 系统健康检查面板
 
-扩展既有 `/health` 为完整运维端点族，对齐 Spring Boot Actuator。**敏感信息脱敏**（password/secret/key/token 掩码）。
+### 你遇到了什么问题？
 
-### 2.1 端点一览
+应用上线后出问题了——内存够不够？数据库连不连得上？哪些配置生效了？你没法钻到服务器里看，线上又不能随便打断点调试。
 
-| 端点 | 方法 | 功能 |
-|------|------|------|
-| `/actuator` | GET | 端点索引（链接列表） |
-| `/actuator/health` | GET | 健康状态 + 组件明细（UP/DOWN） |
-| `/actuator/info` | GET | 应用信息（名称/版本/描述） |
-| `/actuator/env` | GET | 配置项（脱敏） |
-| `/actuator/loggers` | GET | 列出所有 logger 级别 |
-| `/actuator/loggers/{name}` | GET/POST | 查看/动态修改 logger 级别 |
-| `/actuator/metrics` | GET | 指标列表 |
-| `/actuator/metrics/{name}` | GET | 单指标值 |
-| `/actuator/thresholds` | GET | 阈值检查 |
-| `/actuator/beans` | GET | 已注册 Bean 列表 |
-| `/actuator/configprops` | GET | `@ConfigurationProperties` 绑定结果 |
-| `/actuator/mappings` | GET | HTTP 路由映射 |
-| `/actuator/threaddump` | GET | 线程栈快照 |
+### ① 是什么
 
-### 2.2 启用方式
+**给应用装一个"体检仪"**——一个内置的管理页面，随时查看应用健康状态、配置、内存、线程等。就像体检时用各种仪器检查身体各项指标，看到系统是否正常运行。
+
+### ② 怎么用
 
 ```python
 from spring.web.actuator import configure_actuator
-# 在 WebApplicationContext.init() 后调用，注册路由到 FastAPI app
-configure_actuator(app, application_context, enabled_endpoints=["health", "info", "env", "loggers", "metrics"])
+
+# 在应用初始化后注册端点
+configure_actuator(
+    app,
+    application_context,
+    enabled_endpoints=["health", "info", "env", "loggers", "metrics"]
+)
+# 结果：访问 http://127.0.0.1:8080/actuator/health 即可查看健康状态
 ```
 
-端点可通过 `enabled_endpoints` 白名单控制；未列入的端点不注册路由。
+### 端点一览
 
-### 2.3 脱敏规则
+| 端点地址 | 干什么用 | 什么时候用 |
+|---|---|---|
+| `/actuator` | 所有可用端点列表 | 看有哪些端点 |
+| `/actuator/health` | 健康状态（UP/DOWN） | K8s/Docker 健康检查首选 |
+| `/actuator/info` | 应用名称、版本 | 确认当前部署版本 |
+| `/actuator/env` | 全部配置项（密码自动打码） | 排查配置是否生效 |
+| `/actuator/loggers` | 列出所有日志级别 | 查看当前日志级别 |
+| `/actuator/loggers/{name}` | 查看/修改某个 logger 级别 | 临时开 DEBUG 排查问题 |
+| `/actuator/metrics` | 指标列表 | 监控系统拉取指标 |
+| `/actuator/metrics/{name}` | 单个指标数值 | 查某个具体指标 |
+| `/actuator/beans` | 已注册的所有 Bean | 排查 Bean 是否都注册了 |
+| `/actuator/mappings` | 所有 HTTP 路由 | 确认接口路由是否注册成功 |
+| `/actuator/threaddump` | 线程快照 | 排查死锁、卡死问题 |
+| `/actuator/configprops` | 配置绑定结果 | 确认配置绑定是否正确 |
+| `/actuator/thresholds` | 自定义阈值检查 | 自定义健康规则 |
 
-`/actuator/env` 对 key 含 `password`/`secret`/`key`/`token`（不区分大小写）的值用 `******` 掩码，对齐 Spring Boot `Sanitizer`。
+### ③ 运行结果
+
+访问 `http://127.0.0.1:8080/actuator/health`：
+
+```json
+{
+  "status": "UP",
+  "components": {
+    "db": {"status": "UP", "detail": "Connected"},
+    "diskSpace": {"status": "UP", "detail": "free: 50GB"}
+  }
+}
+```
+
+### 模块 mini-FAQ
+
+**Q：生产环境能把 /actuator 暴露到公网吗？**
+绝对不能！通过 Nginx 或网关做 IP 白名单或加认证。
+
+**Q：/actuator/env 会泄露密码吗？**
+不会。框架自动对 key 含 `password`/`secret`/`key`/`token` 的值用 `******` 掩码。
+
+**Q：threaddump 要一直开着吗？**
+不要。只在排查死锁问题时临时开启，平时关掉（它会暴露代码路径）。
 
 ---
 
-## 三、P0-3 多数据源读写分离（`spring.datasource`）
+## 三、多数据源 —— 读写分离
 
-对齐 `dynamic-datasource-spring-boot-starter`，通过 `@DS`/`@Master`/`@Slave` 注解在方法/类级切换数据源。**`ContextVar` 实现**线程/协程安全。
+### 你遇到了什么问题？
 
-### 3.1 模块组成
+数据库压力太大，查询和写入挤在一台机器上。你想把查询路由到从库，写入路由到主库——但不想在代码里手动切换连接。
 
-| 文件 | 职责 |
-|------|------|
-| `spring/datasource/context.py` | `DynamicDataSourceContextHolder`（ContextVar）+ `routing_scope` 上下文管理器 |
-| `spring/datasource/router.py` | `DynamicRoutingDataSource`（master/slave 池管理 + 路由） |
-| `spring/datasource/annotations.py` | `@DS`/`@Master`/`@Slave` 注解 + `ds_route_decorator` AOP |
+### ① 是什么
 
-### 3.2 快速上手
+**读写分离——查询走从库，写入走主库。** 就像超市收银台（写入）和购物通道（读取）分开，互不干扰。主库负责写入保证数据一致，从库负责读取分担压力。
+
+### ② 怎么用
 
 ```python
 from spring.datasource import DynamicRoutingDataSource, DS, Master, Slave, routing_scope
 
 # 1. 构造多数据源路由器
 router = DynamicRoutingDataSource(
-    master=master_pool,           # 主库连接池
-    slaves={"slave1": slave_pool_1, "slave2": slave_pool_2},  # 从库池
+    master=master_pool,                                 # 主库连接池（写入）
+    slaves={"slave1": slave_pool_1, "slave2": slave_pool_2},  # 从库池（读取）
 )
 
-# 2. 编程式路由
+# 2. 编程式切换：with 块内走从库，块外走主库
 with routing_scope("slave1"):
-    conn = router.get_connection()  # 从 slave1 取连接
-conn = router.get_connection()       # 默认走 master
+    conn = router.get_connection()  # 这个连接来自 slave1
+# 出了 with 块，又回到主库
 
-# 3. 注解式路由（AOP）
+# 3. 注解式切换（更常用）
 @Service
 class UserService:
-    @Master                         # 强制走主库
-    def write_user(self, user): ...
+    @Master                               # 强制走主库
+    def create_user(self, user):
+        # 写入操作，走主库
+        pass
 
-    @Slave                          # 走从库（默认第一个）
-    def list_users(self): ...
+    @Slave                                # 走从库（默认第一个）
+    def list_users(self):
+        # 查询操作，走从库
+        pass
 
-    @DS("slave2")                   # 指定具体从库
-    def search(self): ...
+    @DS("slave2")                         # 指定走 slave2
+    def search_users(self, keyword):
+        # 查特定从库
+        pass
 ```
 
-### 3.3 线程安全与事务
+### ③ 运行结果
 
-- `DynamicDataSourceContextHolder` 用 `ContextVar`，线程/协程隔离，嵌套 `routing_scope` 用 token 恢复。
-- 事务内路由固定：进入 `@Transactional` 后切换数据源不影响当前事务连接（对齐 Spring `@Transactional` 与数据源路由的交互）。
+加了 `@Master` 的方法，所有数据库操作走主库。加了 `@Slave` 的方法，所有数据库操作走从库。你不用在代码里写任何连接切换逻辑。
+
+### 模块 mini-FAQ
+
+**Q：刚写入主库的数据，马上去从库查，能查到吗？**
+不一定。主从同步有延迟（通常几十毫秒到几秒）。写入后立即需要读最新数据的场景，应该在读取方法上标注 `@Master`。
+
+**Q：事务中能切换数据源吗？**
+不能。一个事务只绑定一个数据库连接，事务中途切换数据源不会生效。
+
+**Q：从库挂了怎么办？**
+框架默认路由到第一个从库，不可用会报错。需要配置连接超时和重试，或者做从库故障转移。
 
 ---
 
-## 四、P1-4 事务事件监听（`spring.tx`）
+## 四、事务事件 —— 操作完成后自动发通知
 
-对齐 Spring `@TransactionalEventListener`，将事件处理延迟到事务特定阶段触发。
+### 你遇到了什么问题？
 
-### 4.1 事务阶段
+用户下单后要发短信通知。但如果短信发出去了、订单保存却失败了，用户收到短信但根本没有订单——这就尴尬了。你需要的顺序是：**先确保订单保存成功，再发短信**。
 
-| 阶段 | 常量 | 触发时机 |
-|------|------|---------|
-| 提交前 | `TransactionPhase.BEFORE_COMMIT` | 事务提交前（同步） |
-| 提交后 | `TransactionPhase.AFTER_COMMIT` | 事务成功提交后 |
-| 回滚后 | `TransactionPhase.AFTER_ROLLBACK` | 事务回滚后 |
-| 完成后 | `TransactionPhase.AFTER_COMPLETION` | 事务完成（提交或回滚）后 |
+### ① 是什么
 
-### 4.2 快速上手
+**"先存好，再说"**——等数据库事务提交成功后再执行某个操作（发短信、发邮件、刷新缓存）。事务回滚了，这些操作就不执行。
+
+### ② 怎么用
 
 ```python
-from spring.tx import TransactionalEventListener, TransactionPhase, TransactionSynchronizationManager
+from spring.tx import TransactionalEventListener, TransactionPhase
 
+# 定义事件
 class OrderCreatedEvent:
-    def __init__(self, order_id): self.order_id = order_id
+    def __init__(self, order_id):
+        self.order_id = order_id
 
+# 事件监听器
 @Service
 class OrderEventListener:
     @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT)
     def on_order_created(self, event: OrderCreatedEvent):
-        # 仅在事务成功提交后执行（如发通知、刷缓存）
-        print(f"Order {event.order_id} committed, sending notification...")
+        # 这个只在事务成功提交后才执行！
+        print(f"订单 {event.order_id} 已保存，正在发送通知...")
+        # 输出: 订单 123 已保存，正在发送通知...
 
-# 发布事件（需在 @Transactional 事务内）
+# 在 @Transactional 方法中发布事件
 ctx.publish_event(OrderCreatedEvent(123))
-# 事务提交后，on_order_created 才被触发
 ```
 
-### 4.3 无事务时的行为
+### 事务阶段说明
 
-无活动事务时，`AFTER_COMMIT` 阶段的监听器**立即触发**（对齐 Spring `fallbackExecution=true` 语义），`BEFORE_COMMIT` 不触发。
+| 阶段 | 什么时候触发 | 干什么用 |
+|---|---|---|
+| `BEFORE_COMMIT` | 事务提交前（同步执行） | 提交前的最后校验 |
+| `AFTER_COMMIT` | 事务成功提交后 | **最常用**：发通知、刷新缓存 |
+| `AFTER_ROLLBACK` | 事务回滚后 | 记录回滚日志、清理补偿数据 |
+| `AFTER_COMPLETION` | 事务完成（无论成败） | 释放资源、清理临时数据 |
+
+### ③ 运行结果
+
+- 订单保存成功 → 事务提交 → `AFTER_COMMIT` 触发 → 发短信 ✅
+- 订单保存失败 → 事务回滚 → `AFTER_COMMIT` 不触发 → 不发短信 ✅
+
+### 模块 mini-FAQ
+
+**Q：在事务外发布事件会怎样？**
+监听器会立即执行（因为根本没有事务），和普通函数调用一样。
+
+**Q：监听器抛异常会回滚事务吗？**
+不会。`AFTER_COMMIT` 时事务已经提交了，监听器异常只会打日志。如果监听逻辑也必须成功，用消息队列做重试。
+
+**Q：监听器里能再开新事务吗？**
+不建议。避免嵌套事务和不必要的复杂度。
 
 ---
 
-## 五、P1-5 配置松散绑定与校验（`spring.config.binding`）
+## 五、配置绑定 —— 把 YAML 配置自动变成 Python 对象
 
-对齐 Spring Boot `@ConfigurationProperties` 的 relaxed binding（松散绑定）+ 嵌套配置 + Bean Validation 校验。
+### 你遇到了什么问题？
 
-### 5.1 松散绑定规则
+配置文件越来越长，你手写 `config["my-app"]["app-name"]` 取配置，字段名打错了要到运行时才报错，IDE 也没有提示。
 
-配置 key 的四种命名风格自动互转匹配：
+### ① 是什么
 
-| 配置文件（kebab-case） | 绑定目标字段 |
-|----------------------|------------|
-| `app-name` | `app_name`（snake_case） |
-| `app-name` | `appName`（camelCase） |
-| `app-name` | `AppName`（PascalCase） |
-| `APP_NAME` | `app_name`（SCREAMING_SNAKE） |
+**把 YAML 配置文件自动变成 Python 对象。** 你不用手动 `yaml.load()` 然后逐字段读取，框架自动把 `application.yml` 里的内容填进你定义的类，还帮你检查格式对不对。
 
-### 5.2 快速上手
+### ② 怎么用
 
-```python
-from spring.annotations.core import ConfigurationProperties, Component, Validated
-from spring.config.binding import NestedConfigurationProperties
-
-@NestedConfigurationProperties
-class DatabaseProps:
-    url: str = ""
-    pool_size: int = 5
-
-@ConfigurationProperties("my-app")
-@Component
-@Validated                      # 启用 Bean Validation 校验
-class MyAppProps:
-    app_name: str = ""          # 绑定 my-app.app-name
-    max_connections: int = 10   # 绑定 my-app.max-connections
-    database: DatabaseProps = None  # 嵌套绑定 my-app.database.*
-```
-
-对应 `application.yml`：
+`application.yml`：
 
 ```yaml
 my-app:
@@ -279,142 +330,215 @@ my-app:
     pool-size: 10
 ```
 
-### 5.3 校验集成
-
-`@Validated` + 字段约束注解（`@NotNull`/`@NotBlank`/`@Min`/`@Max` 等）在绑定时校验，失败抛 `ValidationError`：
+Python 代码：
 
 ```python
-@ConfigurationProperties("bad-app")
-@Validated
-class BadProps:
-    name: str = ""
-    port: int = 0
-    # 约束：name 不能为空，port >= 1
+from spring.annotations.core import ConfigurationProperties, Component, Validated
+from spring.config.binding import NestedConfigurationProperties
+
+# 嵌套配置类
+@NestedConfigurationProperties
+class DatabaseProps:
+    url: str = ""
+    pool_size: int = 5     # 对应 YAML 的 pool-size（框架自动转换命名风格）
+
+# 主配置类
+@ConfigurationProperties("my-app")  # 绑定 my-app 前缀下的所有配置
+@Component
+@Validated                           # 启用字段校验
+class MyAppProps:
+    app_name: str = ""               # 绑定 my-app.app-name
+    max_connections: int = 10        # 绑定 my-app.max-connections
+    database: DatabaseProps = None   # 绑定 my-app.database.*
+    # 结果：启动后这些字段自动填好，你不用写一行 yaml.load()
 ```
 
-```python
-from spring.validation.constraints import NotBlank, Min
+### 松散绑定规则（命名风格自动转换）
 
-class BadProps:
-    name: str = NotBlank()
-    port: int = Min(1)
-```
+| YAML 里写的 | Python 字段名 | 能匹配吗？ |
+|---|---|---|
+| `app-name` | `app_name` | ✅ |
+| `app-name` | `appName` | ✅ |
+| `APP_NAME` | `app_name` | ✅ |
+| `AppName` | `app_name` | ✅ |
+
+### ③ 运行结果
+
+启动后，`MyAppProps().app_name` 已经是 `"demo-app"`，`MyAppProps().database.url` 已经是 `"sqlite:///mem.db"`。IDE 有自动补全，拼错字段名启动时报错。
+
+### 模块 mini-FAQ
+
+**Q：嵌套配置为什么不生效？**
+嵌套的类必须加 `@NestedConfigurationProperties`，否则子对象的字段不会绑定。
+
+**Q：配置能动态刷新吗？**
+不能。`@ConfigurationProperties` 只在启动时加载一次。需要动态刷新的配置用 `@NacosValue`（参见 [Cloud 模块文档](CLOUD_MODULE.md)）。
+
+**Q：YAML 里写 `max-connections: "32"` 能自动转成 int 吗？**
+不能！字符串不会自动转数字，YAML 里写 `max-connections: 32`（不加引号）才是数字。
 
 ---
 
-## 六、P1-6 测试切片（`spring.test`）
+## 六、测试切片 —— 只测试你关心的部分
 
-对齐 `@SpringBootTest`/`@WebMvcTest`/`@DataJpaTest`，提供聚焦的测试上下文。**复用 `ApplicationContext`/`WebApplicationContext`/`DdlAutoManager`/`PagingAndSortingRepository`**。
+### 你遇到了什么问题？
 
-### 6.1 三种切片
+每次跑测试都要启动整个应用——Web 层、数据库、缓存全部启动，慢得要死。你只想测 Controller 的请求响应，为什么要等数据库初始化？
 
-| 切片 | 类 | 用途 |
-|------|---|------|
-| 全量上下文 | `SpringBootTest` | 装配所有 Bean，集成测试 |
-| Web 切片 | `WebMvcTest` | 仅 Controller + Mock 依赖 + FastAPI TestClient |
-| 数据切片 | `DataJpaTest` | 内存 SQLite + 建表 + Repository 工厂 |
+### ① 是什么
 
-### 6.2 快速上手
+**测试时不启动整个应用，只测你关心的那部分。** 就像检查汽车时，不需要发动整辆车，可以单独测发动机、刹车、车灯。测试切片让你只启动 Web 层或数据层，跑得更快，问题定位更准。
+
+### ② 怎么用
 
 ```python
 from spring.test import SpringBootTest, WebMvcTest, DataJpaTest
 
-# 1. 全量上下文
+# 1. 全量上下文（集成测试）
 with SpringBootTest(MyApp, config={"app": {"name": "demo"}}) as ctx:
-    svc = ctx.get_bean("user_service")
-    ctx.publish_event(MyEvent())
+    svc = ctx.get_bean("user_service")    # 拿到任何 Bean
+    ctx.publish_event(MyEvent())          # 发布事件
+# 结果：启动完整应用，什么都能测
 
-# 2. Web 切片（Controller 单测）
+# 2. Web 切片（只启动 Controller，不启动数据库）
 with WebMvcTest(controllers=[UserController]) as mvc:
     resp = mvc.get_client().get("/api/users/42")
-    assert resp.json()["data"]["id"] == 42
-    ctrl = mvc.get_controller(UserController)
-    ctrl.user_service.find.return_value = ...  # 配置 Mock
+    print(resp.json())  # 验证 Controller 返回的数据
+    # Controller 依赖的 Service 自动变成 Mock，不连真实数据库
 
-# 3. 数据切片（Repository 单测，内存 SQLite）
+# 3. 数据切片（只启动数据库层，不启动 Controller）
 with DataJpaTest(entities=[User]) as jpa:
     repo = jpa.repository_for(User)
-    repo.save(User(name="Tom", age=20))
+    repo.save(User(name="小明", age=20))
     assert repo.count() == 1
+    # 数据存在内存 SQLite 中，测试结束自动销毁，不污染真实数据库
 ```
 
-### 6.3 与 Java 的差异
+### 三种切片对比
 
-- Spring Boot 切片用 `ApplicationContextInitializer` 裁剪自动配置；本实现通过手动注册指定 Bean + Mock 依赖实现等价裁剪，更轻量。
-- `WebMvcTest` 自动 Mock 构造函数依赖（`MagicMock`），可设 `mock_dependencies=False` 关闭。
-- `WebMvcTest` 响应经 `WebApplicationContext` 的 `Result` 包装（`{code, message, data}`），业务数据在 `data` 字段。
+| 切片 | 启动什么 | 不启动什么 | 适合测什么 |
+|---|---|---|---|
+| `SpringBootTest` | 全部 | 无 | 端到端集成测试 |
+| `WebMvcTest` | Controller + Mock 依赖 | Service / Repository | Controller 请求响应 |
+| `DataJpaTest` | 内存数据库 + Repository | Controller / Service | 数据库操作 |
+
+### ③ 运行结果
+
+- `WebMvcTest`：启动时间 < 1 秒（不用连数据库）
+- `DataJpaTest`：启动时间 < 1 秒（不用起 Web 服务）
+- 测试结束数据自动清理，不影响开发环境
+
+### 模块 mini-FAQ
+
+**Q：WebMvcTest 返回的数据结构是什么？**
+返回的数据在 `resp.json()["data"]` 里，不是直接在根层级。这是框架统一的 Result 包装。
+
+**Q：DataJpaTest 用的什么数据库？**
+内存 SQLite，和生产环境的 MySQL/PostgreSQL 行为可能有差异（日期函数、字符集等）。
+
+**Q：我能在 WebMvcTest 里用真实的 Service 吗？**
+可以。设 `mock_dependencies=False`，然后手动注册你想用的真实 Service。
 
 ---
 
-## 七、P2-7 i18n 国际化（`spring.i18n`）
+## 七、i18n 国际化 —— 中英文自动切换
 
-对齐 Spring `MessageSource`/`LocaleResolver`/`LocaleContextHolder`，提供多语言消息管理。**无可选依赖**（properties/YAML 用标准库 + PyYAML）。
+### 你遇到了什么问题？
 
-### 7.1 模块组成
+产品要出海了，网站需要根据用户语言自动显示中文或英文。你不想在代码里写满 `if lang == "zh": return "你好" else: return "Hello"`。
 
-| 文件 | 职责 |
-|------|------|
-| `locale.py` | `Locale`（parse/to_string/to_language_tag/matches）+ 预定义常量 |
-| `message_source.py` | `MessageSource` 接口 + `AbstractMessageSource` + locale 回退 |
-| `sources.py` | `StaticMessageSource`/`ResourceBundleMessageSource`/`DelegatingMessageSource` |
-| `locale_resolver.py` | `AcceptHeaderLocaleResolver`/`FixedLocaleResolver`/`SessionLocaleResolver`/`CookieLocaleResolver` |
-| `holder.py` | `LocaleContextHolder`（ContextVar 线程安全） |
-| `accessor.py` | `MessageSourceAccessor`（便捷 getMessage） |
-| `properties.py` | `load_properties`/`parse_properties`（续行/转义/Unicode） |
-| `middleware.py` | `LocaleResolverMiddleware` + `get_request_locale` |
-| `auto_config.py` | `MessageSourceAutoConfiguration` + `configure_message_source` |
+### ① 是什么
 
-### 7.2 快速上手
+**让应用能说多种语言。** 根据用户浏览器的语言偏好，自动返回对应语言的文案。就像微信根据你手机设置的语言，自动显示中文或英文界面——中英文自动切换。
+
+### ② 怎么用
+
+第一步：创建语言文件
+
+`./i18n/messages.properties`（默认，兜底用）：
+
+```properties
+greeting=Hello, {0}!
+error.not_found=Resource not found
+```
+
+`./i18n/messages_zh_CN.properties`（中文）：
+
+```properties
+greeting=你好，{0}！
+error.not_found=资源未找到
+```
+
+`./i18n/messages_en_US.properties`（英文）：
+
+```properties
+greeting=Hello, {0}!
+error.not_found=Resource not found
+```
+
+第二步：在代码中使用：
 
 ```python
 from spring.i18n import (
     ResourceBundleMessageSource, Locale, LOCALE_CHINA, LOCALE_US,
-    AcceptHeaderLocaleResolver, LocaleResolverMiddleware, LocaleContextHolder,
+    AcceptHeaderLocaleResolver, LocaleResolverMiddleware,
 )
 
-# 1. 资源目录：messages.properties / messages_zh_CN.properties / messages_en_US.properties
+# 1. 加载语言文件
 src = ResourceBundleMessageSource(basenames=["messages"], base_dir="./i18n")
 
-# 2. 按 locale 取消息（支持 locale 回退：en_US → en → 默认）
-msg = src.getMessage("greeting", ["Tom"], Locale("zh", "CN"))   # 你好，Tom！
-msg = src.getMessage("greeting", ["Tom"], Locale("en", "US"))   # Hello, Tom!
+# 2. 按语言取消息（{0} 是占位符）
+msg = src.getMessage("greeting", ["小明"], Locale("zh", "CN"))
+print(msg)  # 输出: 你好，小明！
 
-# 3. 中间件：从 Accept-Language 头解析 locale 写入 LocaleContextHolder
+msg = src.getMessage("greeting", ["Tom"], Locale("en", "US"))
+print(msg)  # 输出: Hello, Tom!
+
+# 3. 安装中间件：自动从浏览器 Accept-Language 头解析语言
 app.add_middleware(
     LocaleResolverMiddleware,
     locale_resolver=AcceptHeaderLocaleResolver(
         supported_locales=[Locale("zh", "CN"), Locale("en", "US")],
-        default_locale=Locale("en"),
+        default_locale=Locale("en"),  # 找不到匹配时用英文兜底
     ),
 )
+# 结果：浏览器发送 Accept-Language: zh-CN → 自动用中文
+#       浏览器发送 Accept-Language: en-US → 自动用英文
 ```
 
-### 7.3 locale 回退链
+### ③ 运行结果
 
-请求 `zh_TW` 但只有 `messages_zh_CN.properties` 与 `messages.properties`：
-`zh_TW`（精确未命中）→ `zh`（语言未命中）→ 默认 `messages.properties`。
+用户浏览器语言是中文时，接口返回"你好，小明！"；英文时返回"Hello, Tom!"。你不需要在代码里写任何 if/else 判断。
 
-### 7.4 properties 解析
+### 模块 mini-FAQ
 
-支持 Java properties 格式：`=`/`:`/空白分隔符、`#`/`!` 注释、`\` 续行、`\n`/`\t` 转义、`\uXXXX` Unicode、UTF-8 中文。
+**Q：文件命名有格式要求吗？**
+必须用 `basename_语言_国家.properties` 格式，如 `messages_zh_CN.properties`。不要写成 `messages_zh-CN` 或 `messages_chinese`。
+
+**Q：占位符是 {0} 还是 {name}？**
+用 `{0}``{1}` 数字索引（Java properties 风格），不是 Python 的 `{name}`。
+
+**Q：编码用 UTF-8 吗？**
+是的。中文内容直接写进去就行，不用 `\uXXXX` 转义。
+
+**Q：`messages.properties` 是干什么的？**
+是兜底文件。请求的语言找不到对应文件时，回退到这个默认文件。至少要有一个。
 
 ---
 
-## 八、P2-8 WebSocket 实时通信（`spring.websocket`）
+## 八、WebSocket —— 像微信一样实时通信
 
-对齐 Spring WebSocket 的 `@MessageMapping`/`@SendTo`/`SimpMessagingTemplate`，提供注解驱动的 WebSocket 端点 + 内存消息代理。**复用 FastAPI/Starlette WebSocket**。
+### 你遇到了什么问题？
 
-### 8.1 模块组成
+你需要做实时通知、聊天、数据看板——但普通的 HTTP 请求是"问一句答一句"，用户不问服务器就不答。要么用户不停地轮询（浪费资源），要么有消息了用户却不知道。
 
-| 文件 | 职责 |
-|------|------|
-| `session.py` | `WebSocketSession`（send_text/send_bytes/close）+ `WebSocketSessionRegistry` |
-| `handler.py` | `WebSocketHandler` 基类 + `@ServerEndpoint` + `AnnotatedEndpointHandler` |
-| `annotations.py` | `@MessageMapping`/`@SendTo`/`@SendToUser`/`@SubscribeMapping` + `MessageMappingModel` |
-| `broker.py` | `InMemoryBroker`（pub/sub）+ `SimpMessageSendingOperations` |
-| `router.py` | `WebSocketRouter`（install 到 FastAPI）+ `MessageEndpointDispatcher` |
+### ① 是什么
 
-### 8.2 快速上手 —— @ServerEndpoint（JSR-356 风格）
+**就像打电话（或微信聊天）一样，双方随时可以给对方发消息，不用等对方问。** 普通 HTTP 是"你问我才答"，WebSocket 是"我想说就说"——浏览器和服务器建立一条持久连接，双向实时通信，像微信一样实时。
+
+### ② 怎么用
+
+方式一：简单回声（JSR-356 风格）
 
 ```python
 from spring.websocket import ServerEndpoint
@@ -422,16 +546,19 @@ from spring.websocket import ServerEndpoint
 @ServerEndpoint("/ws/echo")
 class EchoEndpoint:
     async def on_open(self, session):
-        await session.send_text("welcome")
+        await session.send_text("欢迎连接！")  # 连接建立时发欢迎消息
 
     async def on_message(self, session, message):
-        await session.send_text("echo: " + message)
+        await session.send_text("回声: " + message)  # 收到什么就回什么
 
     async def on_close(self, session, reason):
-        pass
+        print(f"连接断开: {reason}")
+
+# 客户端连接 ws://127.0.0.1:8080/ws/echo
+# 发送 "你好" → 收到 "回声: 你好"
 ```
 
-### 8.3 快速上手 —— @MessageMapping（Spring STOMP 风格）
+方式二：聊天室（Spring STOMP 风格）
 
 ```python
 from spring.websocket import ServerEndpoint, MessageMapping, SendTo, SendToUser
@@ -439,76 +566,106 @@ from spring.websocket import ServerEndpoint, MessageMapping, SendTo, SendToUser
 @ServerEndpoint("/ws/chat")
 class ChatEndpoint:
     @MessageMapping("/chat.send")
-    @SendTo("/topic/messages")          # 广播到所有订阅者
+    @SendTo("/topic/messages")         # 广播给所有订阅者
     def send_message(self, message):
         return {"text": message}
+        # 结果：所有订阅 /topic/messages 的人都收到
 
     @MessageMapping("/chat.private")
-    @SendToUser                          # 仅回发给发送者
+    @SendToUser                         # 只回发给发送者本人
     def private_message(self, message, session):
-        return {"text": "private: " + message}
+        return {"text": "私密: " + message}
+        # 结果：只有发送者自己收到，其他人收不到
 ```
 
-### 8.4 安装到 FastAPI
+安装到 FastAPI：
 
 ```python
 from spring.websocket import WebSocketRouter, discover_server_endpoints
 
 router = WebSocketRouter()
-for endpoint_cls in discover_server_endpoints():   # 自动发现 @ServerEndpoint
+for endpoint_cls in discover_server_endpoints():   # 自动发现所有 @ServerEndpoint
     router.add_endpoint(endpoint_cls.__spring_endpoint_path__, endpoint_cls)
-router.install(app)   # 注册 WebSocket 路由到 FastAPI/Starlette
+router.install(app)   # 注册到 FastAPI
 ```
 
-### 8.5 InMemoryBroker（pub/sub）
+### ③ 运行结果
 
-```python
-from spring.websocket import InMemoryBroker, broker_registry
+- 客户端 A 发消息 → 所有订阅者（包括 A 自己）都收到 → 聊天室效果
+- 客户端 A 发私密消息 → 只有 A 收到 → 私信效果
 
-broker = broker_registry.broker
-broker.subscribe(session_id, "/topic/messages")   # 订阅
-broker.publish("/topic/messages", {"text": "hi"})  # 推送到所有订阅者
-broker.send_to_user(session_id, {"text": "private"})  # 单播
-broker.broadcast({"text": "broadcast"})            # 全员广播
-```
+### 模块 mini-FAQ
+
+**Q：WebSocket 和普通 HTTP 有什么区别？**
+HTTP 是"你问我才答"，每次请求建立新连接。WebSocket 是"建立一条热线一直通着"，双方随时说话。
+
+**Q：InMemoryBroker 重启后消息还在吗？**
+不在了。内存级 broker 重启后所有订阅丢失。需要持久化消息用 Redis 或消息队列。
+
+**Q：on_open/on_message/on_close 必须是 async def 吗？**
+是的，因为 WebSocket 是异步 I/O。用 `async def` 和 `await`。
+
+**Q：Nginx 需要特殊配置吗？**
+需要。Nginx 必须正确配置 `Upgrade` 和 `Connection` 头来支持 WebSocket 协议升级。
+
+**Q：怎么测试 WebSocket？**
+不能用 `requests` 库（它是 HTTP 客户端），需要用 `websockets` 库或 FastAPI 的 `TestClient`。
 
 ---
 
-## 九、与 Java Spring 的对齐与差异总结
+## 九、新手常见错误 ❌/✅
 
-### 9.1 对齐点
-
-- **注解元数据范式**：全部复用 `SpringAnnotation` 描述符（`_annotation_type` + `__spring_annotations__`），与既有 `@Service`/`@Component`/`@Cacheable` 一致。
-- **AOP 分发**：`@DS`/`@TransactionalEventListener` 复用 `comprehensive_aop.ANNOTATION_DECORATORS` + `apply_annotations` 路径。
-- **IoC 装配**：`@ConfigurationProperties`/`@NestedConfigurationProperties` 复用 `ApplicationContext._register_configuration_beans`。
-- **ContextVar**：`DynamicDataSourceContextHolder`/`LocaleContextHolder`/`TransactionSynchronizationManager` 均用 `ContextVar` 实现线程/协程安全（对齐 Spring `ThreadLocal` 但原生支持 async）。
-
-### 9.2 差异与限制
-
-| 模块 | Java Spring | SpringBootAI 差异 |
-|------|------------|--------------|
-| Spring Data | 方法名派生查询（`findByName`） | 不支持，需手写 `Specification` |
-| Actuator | `ManagementServerConfig` 独立端口 | 复用主应用端口，路由前缀 `/actuator` |
-| 多数据源 | `AbstractRoutingDataSource` + `determineCurrentLookupKey` | `DynamicRoutingDataSource` + `ContextVar`，语义等价 |
-| 事务事件 | `TransactionSynchronization` 接口回调 | `TransactionSynchronizationManager` 注册回调，无事务时立即触发 |
-| 配置绑定 | SpEL + `@ConfigurationPropertiesBinding` | 不支持 SpEL，字符串等值匹配；松散绑定对齐 |
-| 测试切片 | `ApplicationContextInitializer` 裁剪自动配置 | 手动注册指定 Bean + Mock 依赖 |
-| i18n | `ResourceBundle` + `MessageSource` SPI | `ResourceBundleMessageSource` 读 properties/YAML 文件 |
-| WebSocket | STOMP 协议 + `SimpMessagingTemplate` | 内存 broker（非 STOMP），`@MessageMapping` 路由语义对齐 |
+| # | ❌ 错误做法 | ✅ 正确做法 |
+|---|---|---|
+| 1 | 分页用 `Pageable.of(page=1, size=10)` 以为是第一页 | 页码从 0 开始：`Pageable.of(page=0, size=10)` 才是第一页 |
+| 2 | 排序字段没建索引，大数据量分页巨慢 | 在数据库中给 `Sort.by()` 的字段建索引 |
+| 3 | `/actuator` 暴露到公网，所有人都能看到 | 用 Nginx IP 白名单或网关认证，`enabled_endpoints` 只开需要的 |
+| 4 | 主库写入后立刻从库读取，发现数据"丢了" | 主从有延迟，强一致读要用 `@Master` |
+| 5 | 事务外发布事件，监听器立即执行 | 必须在 `@Transactional` 方法内 `publish_event` |
+| 6 | 嵌套配置类忘了加 `@NestedConfigurationProperties` | 嵌套类必须加这个注解，否则子字段不绑定 |
+| 7 | WebMvcTest 断言 `resp.json()["id"]` 取不到值 | 数据在 `resp.json()["data"]["id"]`，框架有统一的 Result 包装 |
+| 8 | 用 `requests` 库测试 WebSocket | 用 `websockets` 库，WebSocket 不是 HTTP |
 
 ---
 
-## 十、测试覆盖
+## 十、模块总览表
 
-八大模块共 **342 用例**，每个模块独立测试套件（≥10 用例），全量回归通过。详见 [TEST_REPORT.md](TEST_REPORT.md) 第 2.6 节。
+| 模块 | 用途 | 核心类/注解 | 安装方式 |
+|---|---|---|---|
+| Spring Data Repository | 分页、排序、条件查询 | `PagingAndSortingRepository` / `Pageable` / `Specification` | 自带，无需额外安装 |
+| Actuator | 健康检查、配置查看、指标监控 | `/actuator/health` 等端点 | 自带，无需额外安装 |
+| 多数据源 | 读写分离 | `@Master` / `@Slave` / `@DS` | 自带，无需额外安装 |
+| 事务事件 | 事务提交后触发操作 | `@TransactionalEventListener` | 自带，无需额外安装 |
+| 配置绑定 | YAML→Python 对象 | `@ConfigurationProperties` | 自带，无需额外安装 |
+| 测试切片 | 只启动部分组件做测试 | `WebMvcTest` / `DataJpaTest` | 自带，无需额外安装 |
+| i18n | 多语言自动切换 | `MessageSource` / `LocaleResolver` | 自带，无需额外安装 |
+| WebSocket | 实时双向通信 | `@ServerEndpoint` / `@MessageMapping` | 自带，无需额外安装 |
 
-| 测试文件 | 用例数 | 模块 |
-|---------|--------|------|
-| test_data_repository.py | 55 | P0-1 |
-| test_actuator.py | 29 | P0-2 |
-| test_datasource_routing.py | 34 | P0-3 |
-| test_transactional_events.py | 32 | P1-4 |
-| test_config_binding.py | 22 | P1-5 |
-| test_test_slicing.py | 19 | P1-6 |
-| test_i18n_module.py | 88 | P2-7 |
-| test_websocket_module.py | 63 | P2-8 |
+> 八大模块共 342 个测试用例，全量回归通过。详见 [TEST_REPORT.md](TEST_REPORT.md)。
+
+---
+
+## 十一、FAQ
+
+### Q1：这八个模块之间有什么关系？
+
+没有关系。它们是八个独立的功能，遇到什么问题就用对应的模块。不要为了"功能齐全"一次全部接入。
+
+### Q2：安装需要额外依赖吗？
+
+不需要。八大模块全部复用 FastAPI/Starlette/Pydantic/PyYAML 核心栈，`pip install springbootAI` 即可用。
+
+### Q3：和 Java Spring 有差异吗？
+
+有的，详见下方对比表。核心思路对齐 Spring，但实现细节因语言特性而不同。
+
+| 模块 | Python 版与 Java 版的主要差异 |
+|---|---|
+| Repository | 不支持方法名派生查询（`findByName`），需手写 `Specification` |
+| Actuator | 复用主应用端口（路径前缀 `/actuator`），无独立端口 |
+| 多数据源 | `ContextVar` 代替 `ThreadLocal`，语义等价 |
+| 事务事件 | 无事务时 `AFTER_COMMIT` 立即触发 |
+| 配置绑定 | 不支持 SpEL 表达式 |
+| 测试切片 | 手动注册 Bean + Mock，而非裁剪自动配置 |
+| i18n | 读 properties/YAML 文件，而非 Java ResourceBundle |
+| WebSocket | 内存 broker（非 STOMP 协议） |

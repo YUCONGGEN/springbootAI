@@ -116,8 +116,6 @@ def _filter_kwargs(cls, cfg: Dict[str, Any]) -> Dict[str, Any]:
     allowed = set()
     if hasattr(cls, "model_fields"):
         allowed.update(cls.model_fields.keys())
-    if hasattr(cls, "__fields__"):
-        allowed.update(cls.__fields__.keys())
     # 兜底：用 __init__ 签名
     if not allowed:
         import inspect

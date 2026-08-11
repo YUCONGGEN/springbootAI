@@ -21,7 +21,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple, Type, Union
+from typing import Any, List, Optional, Union
 
 from spring.annotations.core import SpringAnnotation
 

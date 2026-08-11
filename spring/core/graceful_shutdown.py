@@ -14,7 +14,7 @@ import time
 import logging
 import threading
 import asyncio
-from typing import Optional, Callable, List, Dict, Any
+from typing import Optional, Callable, List, Dict
 from enum import Enum
 
 logger = logging.getLogger("Spring.Core.Shutdown")

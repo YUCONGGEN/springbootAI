@@ -5,7 +5,7 @@ from .config import *
 from .utils import *
 from .main import create_app, run, SpringApplication, run_cli
 
-__version__ = "1.8.8"
+__version__ = "2.0.0"
 __author__ = "yuconggen"
 __license__ = "MIT"
 

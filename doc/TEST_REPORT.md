@@ -2,7 +2,7 @@
 
 **测试日期**: 2026-08-10（历史基线 2026-08-08；Excel/TOP5/P0/P1/P2/Swagger 增量测试 2026-08-09）
 **测试环境**: macOS + Python 3.9.6 + Docker ｜ Excel/TOP5/八大模块/Swagger 补充测试：Windows + Python 3.11.9 + openpyxl 3.1.5
-**框架版本**: SpringBootAI 1.8.7 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
+**框架版本**: SpringBootAI 2.0.0 / PyMyBatis 1.4.0 / SpringBootAI AI 1.3.0 / SpringBootAI Excel 1.0.0 / SpringBootAI Validation 1.0.0 / SpringBootAI CSV 1.0.0 / SpringBootAI Data 1.0.0 / SpringBootAI i18n 1.0.0 / SpringBootAI WebSocket 1.0.0 / SpringBootAI Swagger 1.0.0
 **测试结果**: ✅ **1433 个核心用例全部通过**（34 个测试套件，0 失败）；本机当前 `example_all` 集成测试为 4/5 套件通过，失败的是需要真实中间件的 HTTP API 套件，因为本次运行时 Docker 没有运行。历史 Docker 环境报告见第二部分的 5/5 记录；两者不是同一次运行。
 
 ## 给新手：这份报告如何阅读和复现

@@ -16,9 +16,10 @@ LangChain REST 控制器 - 暴露 /api/lc/* 接口演示迁移后的全部能力
 - POST /api/lc/embed         文本嵌入
 """
 from spring.annotations.core import (
-    Autowired, GetMapping, PostMapping, RequestBody, RequestMapping,
+    Autowired, GetMapping, PostMapping, RequestMapping,
     RestController, Slf4j,
 )
+from spring.annotations.security import Authenticate
 from spring.web.result import Result
 from example_langchain.service.LangChainChatService import LangChainChatService
 from example_langchain.service.LangChainAgentService import LangChainAgentService
@@ -28,9 +29,14 @@ from example_langchain.service.LangChainChainService import LangChainChainServic
 
 @RestController
 @RequestMapping("/api/lc")
+@Authenticate(roles=["USER", "ADMIN"])
 @Slf4j
 class LangChainController:
-    """LangChain 模块能力暴露控制器。"""
+    """LangChain 模块能力暴露控制器。
+
+    安全：所有端点默认要求认证（@Authenticate），防止未授权调用导致
+    模型费用滥用、嵌入接口刷量、RAG 投毒和服务拒绝。
+    """
 
     @Autowired
     def __init__(self, chat_service: LangChainChatService,

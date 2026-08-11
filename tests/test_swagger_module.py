@@ -11,19 +11,15 @@
 
 复用既有 ``ApplicationContext``/``WebApplicationContext``，不依赖第三方 Swagger 库。
 """
-import pytest
 
 from spring.annotations.core import (
-    SpringBootApplication, RestController, RequestMapping, GetMapping, PostMapping,
-    PathVariable, RequestParam,
+    SpringBootApplication, RestController, RequestMapping, GetMapping,
 )
 from spring.web.swagger import (
     Tag, Api, Operation, ApiOperation, ApiResponse, ApiResponses,
-    Parameter, ApiParam, Schema, ApiModel,
-    SecurityScheme, SecurityRequirement,
+    Parameter, Schema, SecurityScheme, SecurityRequirement,
     SwaggerConfig, collect_openapi_metadata, collect_security_schemes,
 )
-from spring.web.result import Result
 
 
 # ==================== 辅助：构建 WebApplicationContext + TestClient ====================

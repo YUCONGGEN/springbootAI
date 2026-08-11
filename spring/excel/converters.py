@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Optional, Type
+from typing import Any, Optional
 
 
 class Converter:

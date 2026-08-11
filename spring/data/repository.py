@@ -14,11 +14,10 @@
   Python 无等价元编程惯例，故采用**基类继承** + 显式方法，更符合 Python 习惯。
 - ``@DataRepository`` 为标记注解（声明管理的实体类型），实际能力由继承基类获得。
 """
-import inspect
-from typing import Any, Callable, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
 
 from spring.data.page import Page, Pageable, Sort
-from spring.data.specification import ColResolver, Specification
+from spring.data.specification import Specification
 
 T = TypeVar("T")
 

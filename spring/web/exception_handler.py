@@ -1,5 +1,4 @@
-from typing import Type, Callable, Dict, Any, Optional
-from fastapi import Request
+from typing import Type, Callable, Dict, Optional
 from spring.web.result import Result
 import logging
 

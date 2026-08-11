@@ -12,11 +12,7 @@
 - 风险9: discovery / rabbitmq 的 configure() 方法
 - 风险10: redis.timeout 配置生效
 """
-import os
 import sys
-import importlib
-import tempfile
-from unittest import mock
 
 import pytest
 
@@ -413,7 +409,7 @@ class TestDiscoveryConfigure:
         assert client._ready is True
 
     def test_init_discovery_uses_configure(self):
-        from spring.cloud.discovery import NacosDiscoveryClient, init_discovery, nacos_client
+        from spring.cloud.discovery import NacosDiscoveryClient, init_discovery
         NacosDiscoveryClient._instance = None
         # 重建全局单例
         import spring.cloud.discovery as disc

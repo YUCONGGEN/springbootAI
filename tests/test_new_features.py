@@ -5,11 +5,7 @@ API Gateway、ORM DDL自动建表
 运行方式: pytest test_new_features.py -v
 """
 import time
-import threading
-import sqlite3
 import pytest
-from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 # ==================== Sentinel 限流熔断测试 ====================
@@ -125,7 +121,7 @@ class TestTracer:
 
     def test_nested_spans(self):
         """测试嵌套Span（父子关系）"""
-        from spring.cloud.tracer import Tracer, SpanKind
+        from spring.cloud.tracer import Tracer
         tracer = Tracer("test-svc")
         with tracer.span("parent") as parent:
             with tracer.span("child") as child:
@@ -136,7 +132,7 @@ class TestTracer:
 
     def test_w3c_traceparent_propagation(self):
         """测试W3C traceparent header 传播"""
-        from spring.cloud.tracer import Tracer, _parse_traceparent, _build_traceparent
+        from spring.cloud.tracer import Tracer, _parse_traceparent
         tracer = Tracer("test-svc")
         with tracer.span("propagate") as span:
             tp = tracer.get_traceparent_header()
@@ -193,7 +189,7 @@ class TestSeataHttpAt:
 
     def test_begin_commit(self):
         """测试基本的事务开启和提交"""
-        from spring.cloud.seata import seata_manager, BranchStatus
+        from spring.cloud.seata import seata_manager
         commits = []
         def on_commit(xid, bid): commits.append(bid)
         def on_rollback(xid, bid): pass
@@ -322,7 +318,7 @@ class TestDdlAuto:
 
     def test_generate_create_table_sql(self):
         """测试生成CREATE TABLE语句"""
-        from spring.orm.ddl_auto import DdlAutoManager, table, Column, Id
+        from spring.orm.ddl_auto import DdlAutoManager, table
         
         @table("t_user")
         class User:

@@ -1,7 +1,6 @@
 """Cloud 内嵌功能完整测试 - 覆盖 Cloud 注解、Sentinel、Tracer、Seata、Gateway、LoadBalancer。"""
 
 import sys
-import threading
 from pathlib import Path
 
 import pytest

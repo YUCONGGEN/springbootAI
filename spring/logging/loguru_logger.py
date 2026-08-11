@@ -5,8 +5,6 @@ Loguru结构化日志模块
 import logging
 import sys
 import os
-import tempfile
-from datetime import datetime
 from typing import Optional
 
 # 尝试导入loguru，失败则使用标准logging

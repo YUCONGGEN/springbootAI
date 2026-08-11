@@ -7,7 +7,7 @@ import logging
 import json
 import inspect
 from dataclasses import asdict, is_dataclass
-from typing import Dict, Any, Optional, Type, Callable
+from typing import Dict, Any, Optional, Type
 from starlette.concurrency import run_in_threadpool
 from spring.cloud.load_balancer import LoadBalancer
 

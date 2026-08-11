@@ -23,7 +23,7 @@ import inspect
 from typing import Any, Callable, Optional
 
 from spring.annotations.core import SpringAnnotation
-from .context import DataSourceContextHolder, routing_scope
+from .context import routing_scope
 
 # 占位路由键：``@Slave`` 标记进入从库轮询逻辑，由装饰器解析为具体 slave。
 _SLAVE_PLACEHOLDER = "@__slave__"

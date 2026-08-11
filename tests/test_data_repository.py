@@ -5,7 +5,6 @@ PagingAndSortingRepository 的 CRUD/分页/排序/动态查询。
 ``spring.orm.ddl_auto`` 的实体注解（@entity/Id/Column），用 ``DdlAutoManager``
 建表，验证 Repository 的真实 SQL 行为。
 """
-import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -19,7 +18,7 @@ if PROJECT_ROOT not in sys.path:
 from spring.orm.ddl_auto import DdlAutoManager, entity, Id, Column
 from spring.data import (
     Direction, Order, Sort, Pageable, Page,
-    Specification, Specifications,
+    Specifications,
     PagingAndSortingRepository, DataRepository, get_data_repository_entity,
 )
 

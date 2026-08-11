@@ -479,14 +479,21 @@ def configure_ai(registry: Optional[BeanRegistry] = None,
     registry.register("aiVectorStore", vector_store)
     beans["aiVectorStore"] = vector_store
 
-    # 4. ChatClient（注入默认 Memory Advisor）
+    # 4. ChatClient（注入默认 Memory Advisor — 可通过 spring.ai.memory.auto-advisor=false 禁用）
     memory = _build_memory(props, redis_client)
     registry.register("aiChatMemory", memory)
     beans["aiChatMemory"] = memory
 
-    memory_advisor = MessageChatMemoryAdvisor(memory)
-    chat_client = (ChatClientBuilder(chat_model)
-                   .default_advisors(memory_advisor).build())
+    auto_advisor = str(
+        os.environ.get("SPRING_AI_MEMORY_AUTO_ADVISOR",
+                       os.environ.get("spring.ai.memory.auto-advisor", "true"))
+    ).strip().lower() in ("true", "1", "yes", "on")
+    if auto_advisor:
+        memory_advisor = MessageChatMemoryAdvisor(memory)
+        chat_client = (ChatClientBuilder(chat_model)
+                       .default_advisors(memory_advisor).build())
+    else:
+        chat_client = ChatClient(chat_model)
     registry.register("aiChatClient", chat_client)
     beans["aiChatClient"] = chat_client
 

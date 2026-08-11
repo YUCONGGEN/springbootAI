@@ -12,6 +12,7 @@ Chain / Agent 体系」共享同一个底层模型 Bean，避免重复配置 API
 
 所有桥接均委托到底层 Bean，不重写算法、不缓存密钥。
 """
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -69,6 +70,7 @@ def _make_langchain_chat_model(spring_chat_model: ChatModel):
     """
     from langchain_core.language_models.chat_models import BaseChatModel
     from langchain_core.outputs import ChatGeneration, ChatResult
+    from pydantic import ConfigDict
 
     class _SpringChatModelAdapter(BaseChatModel):
         """springbootAI ChatModel -> langchain BaseChatModel 适配器。
@@ -79,9 +81,7 @@ def _make_langchain_chat_model(spring_chat_model: ChatModel):
         这样 openai-functions / structured-chat agent 在真实模型下可正常调工具。
         """
 
-        # Pydantic v1/v2 兼容：允许任意类型字段（持有 spring 模型引用）
-        class Config:
-            arbitrary_types_allowed = True
+        model_config = ConfigDict(arbitrary_types_allowed=True)
 
         def __init__(self, spring_model: ChatModel,
                      tool_registry=None, **kwargs):
@@ -198,19 +198,57 @@ class LangChainModelToSpring(ChatModel):
                   tool_registry=None,
                   options: Optional[Dict[str, Any]] = None) -> ChatResponse:
         lc_messages = [_spring_message_to_langchain(m) for m in messages]
+
+        # 传递 tool_registry：把 springbootAI ToolRegistry 转为 langchain Tool
+        # 列表并绑定到模型，使 Function Calling 在反向适配路径下也生效
+        model = self._lc_model
+        if tool_registry is not None and hasattr(tool_registry, "schemas"):
+            try:
+                from langchain_core.tools import StructuredTool
+                lc_tools = []
+                for name in tool_registry.names():
+                    td = tool_registry.get(name)
+                    if td is None:
+                        continue
+                    lc_tools.append(StructuredTool.from_function(
+                        name=name, func=td.func, description=td.description))
+                if lc_tools and hasattr(model, "bind_tools"):
+                    model = model.bind_tools(lc_tools)
+            except Exception:
+                pass  # bind_tools 不可用时跳过
+
         try:
-            result = self._lc_model.invoke(lc_messages)
+            result = model.invoke(lc_messages)
         except Exception as exc:
             logger.error("langchain 模型调用失败: %s", exc)
             raise
         content = getattr(result, "content", str(result))
         usage = getattr(result, "usage_metadata", None) or {}
+        # 提取 langchain 返回的 tool_calls
+        lc_tc = getattr(result, "tool_calls", None) or []
+        tool_calls = None
+        if lc_tc:
+            out = []
+            for tc in lc_tc:
+                out.append({
+                    "id": getattr(tc, "id", "") or "",
+                    "function": {"name": getattr(tc, "name", ""),
+                                 "arguments": json.dumps(
+                                     getattr(tc, "args", {}),
+                                     ensure_ascii=False)},
+                })
+            if out:
+                tool_calls = out
         meta = {"provider": "langchain",
                 "backend": type(self._lc_model).__name__}
         if usage:
             meta["usage"] = usage
+        if tool_calls:
+            meta["tool_calls"] = tool_calls
         return ChatResponse(
-            generations=[Generation(output=Message.assistant(content))],
+            generations=[Generation(output=Message(
+                content=content, type=MessageType.ASSISTANT,
+                metadata={"tool_calls": tool_calls or []}))],
             metadata=meta,
         )
 

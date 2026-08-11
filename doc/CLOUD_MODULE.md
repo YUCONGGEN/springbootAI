@@ -1,78 +1,133 @@
-# SpringBootAI Cloud 模块使用指南
+# SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
 
-> 对齐 Spring Cloud Alibaba：服务注册发现 / 配置中心动态刷新 / Feign 远程调用 / Sentinel 限流熔断 / Gateway / 负载均衡 / 分布式事务。
-> 本文档从 README.md 第 5.10 节（Cloud 注解）与第 14.3 节（功能说明）分离而来。
-> 框架版本：SpringBootAI 1.8.8
+> 框架版本：SpringBootAI 2.0.0
 
 ---
 
-## 零、新手先读
+## 什么时候需要微服务？
 
-### 0.1 Cloud 模块解决什么问题
+**如果你的系统不超过 1000 个用户，你大概率不需要微服务。先看完这段再决定是否继续。**
 
-当一个应用拆成多个服务后，需要知道“服务在哪里”、调用失败怎么办、流量过大怎么办，以及如何统一入口。Cloud 模块提供这些基础能力，但不是所有项目都需要微服务。一个小型内部系统优先做成单体，通常更容易开发和运维。
+### 你遇到了什么问题？
 
-### 0.2 常见名词的大白话解释
+你的单体应用越来越庞大，某个模块挂了整个系统都崩；或者某个功能访问量特别大，其他功能也被拖慢。你想拆分成多个独立的小应用，但不知道从哪下手。
 
-| 名词 | 作用 | 类比 |
+### 一句话大白话
+
+**微服务就是把一个大应用拆成多个小应用，每个小应用只专注做一件事。** 就像一家公司：不是所有人挤在一个办公室干所有活，而是分成销售部、财务部、仓库——每个部门各司其职，通过内部电话沟通。
+
+拆分之后，新问题来了：部门之间怎么找到对方？（服务注册发现）一个部门瘫痪了怎么办？（熔断降级）来访的人太多怎么分流？（网关和限流）——这就是 Cloud 模块要解决的。
+
+### 新手选型指南
+
+**你可能不需要微服务，如果：**
+
+- 项目是小型内部系统，用户量在几百人以内
+- 团队只有 2-3 个开发者
+- 没有独立部署不同模块的需求
+- 单体应用跑得好好的
+
+> 结论：**先做单体，跑起来再说。** 单体应用更容易开发、调试、部署。
+
+**你应该考虑微服务，如果：**
+
+- 不同模块需要独立部署（比如订单模块频繁更新，但用户模块很少变）
+- 某个模块需要单独扩容（比如秒杀时只给订单服务加机器）
+- 多个团队各自维护不同的服务
+
+### 学习路线
+
+1. 先用固定 URL 跑通 Feign 调用
+2. 再启动 Nacos，把固定 URL 改成服务名发现
+3. 为远程调用增加超时、Fallback 和 Sentinel
+4. 有统一入口需求时再部署 Gateway
+5. 最后才处理分布式事务
+
+---
+
+## 名词速查表
+
+| 名词 | 一句话大白话 | 生活类比 |
 |---|---|---|
-| Nacos 服务发现 | 记录每个服务的 IP 和端口 | 通讯录 |
-| Feign | 用统一客户端调用其他 HTTP 服务 | 电话 |
-| LoadBalancer | 多个实例中选择一个 | 分配接线员 |
-| Sentinel | 限流、熔断和降级 | 保险丝 |
-| Gateway | 对外统一入口并转发到内部服务 | 总机 |
-| Trace | 给跨服务请求添加同一个链路编号 | 快递单号 |
-| Seata / 补偿事务 | 协调多个服务的提交或补偿 | 跨部门流程单 |
+| Nacos 服务发现 | 自动签到系统——新员工入职自动登记，找人时查通讯录就行 | 公司内部通讯录 |
+| Nacos 配置中心 | 总控制台——改一处配置，所有门店自动调价 | 连锁店总部调价系统 |
+| Feign | 打电话叫外卖——你不用自己跑到餐厅，电话里说就行 | 打电话叫外卖 |
+| LoadBalancer | 排队分流——哪个窗口空着去哪个 | 银行叫号系统 |
+| Sentinel | 水库大坝——控制流量，防止系统被冲垮 | 三峡大坝 |
+| Gateway | 公司前台——所有访客先到前台，前台根据来意分派到不同部门 | 公司大堂前台 |
+| Seata | 跨国转账——需要确保两边银行的账都对得上 | 国际汇款 |
+| Trace | 快递单号——跟踪一个包裹经过的所有中转站 | 快递追踪 |
 
-### 0.3 应该按什么顺序学习
+---
 
-1. 先用固定 `url` 跑通 Feign 调用。
-2. 再启动 Nacos，把固定 URL 改成服务名发现。
-3. 为远程调用增加超时、Fallback 和 Sentinel。
-4. 有统一入口需求时再部署 Gateway。
-5. 最后才处理分布式事务；支付、订单、库存强一致必须使用真实协调器。
+## 一、Nacos 服务注册 —— 自动签到系统
 
-### 0.4 最小 Nacos 配置
+### 你遇到了什么问题？
 
-```yaml
-discovery:
-  enabled: true
-  server_addr: 127.0.0.1:8848
-  namespace: ""
-  group: DEFAULT_GROUP
-  username: nacos
-  password: nacos
-```
+你的用户服务跑在 `192.168.1.10:8081`，订单服务跑在 `192.168.1.20:8082`。订单服务要调用用户服务，你得把地址写死在代码里。哪天用户服务换了一台机器，你就得改代码重新部署——太蠢了。
 
-还需要安装客户端：
+### ① 是什么
+
+**服务注册就像是自动签到系统。** 每天早上员工刷卡签到，公司系统就知道谁来了、坐在哪个工位。Nacos 就是这个签到系统——每个服务启动时自动"签到"（注册），其他服务要找人时查一下通讯录（服务发现）就知道对方在哪里。
+
+### ② 怎么用
+
+先用 pip 安装 Nacos 客户端：
 
 ```powershell
 python -m pip install "springbootAI[nacos]"
 ```
 
-验证时不要只看应用启动日志。还应打开 Nacos 控制台，确认服务名、实例 IP、端口和健康状态正确，并停止一个实例验证它会被摘除。
+在 `application.yml` 中配置：
 
-## 一、注解参考
+```yaml
+# Nacos 最小配置 —— 照着填就行
+discovery:
+  enabled: true                    # 开启服务注册发现
+  server_addr: 127.0.0.1:8848     # Nacos 服务器地址（默认端口 8848）
+  namespace: ""                    # 命名空间，留空用默认
+  group: DEFAULT_GROUP             # 分组名称
+  username: nacos                  # 用户名
+  password: nacos                  # 密码
+```
 
-#### @EnableDiscoveryClient
-
-**参数**：`client_type`（str，默认 "nacos"，nacos/eureka/consul）
+在启动类上加注解：
 
 ```python
 from spring.annotations import SpringBootApplication
 from spring.annotations.cloud import EnableDiscoveryClient
 
 @SpringBootApplication
-@EnableDiscoveryClient(client_type="nacos")
+@EnableDiscoveryClient(client_type="nacos")  # 开启"自动签到"功能
 class Application:
     pass
 ```
 
-**边界**：注解提供发现元数据；实际初始化由 `discovery.enabled` 和 `ApplicationContext` 启动流程控制。Nacos 需要安装 `nacos-sdk-python`，并配置 `NACOS_SERVER`、`NACOS_USERNAME`、`NACOS_PASSWORD`；Nacos 2.2+ Docker 还需要服务端 `NACOS_AUTH_TOKEN`、`NACOS_AUTH_IDENTITY_KEY` 和 `NACOS_AUTH_IDENTITY_VALUE`。
+### ③ 运行结果
 
-#### @NacosValue
+应用启动后会自动向 Nacos 注册自己的 IP 和端口。打开 Nacos 控制台（http://127.0.0.1:8848/nacos），你能看到自己的服务已经出现在服务列表里了。停止应用后，服务会自动从列表中消失。
 
-**参数**：`value`（str，必填，如 `"${user.name}"`）、`auto_refreshed`（bool，默认 False）
+### 什么时候用 / 什么时候不用
+
+| 用 | 不用 |
+|---|---|
+| 多个服务之间需要互相调用 | 只有一个服务，没有调用需求 |
+| 服务可能会换机器、换端口 | 服务地址永远不会变 |
+| 服务实例数量动态变化 | 用固定 IP+端口就够了 |
+
+---
+
+## 二、Nacos 配置中心 —— 总控制台
+
+### 你遇到了什么问题？
+
+你把数据库密码、第三方 API 密钥写在了 `application.yml` 里。有一天数据库密码改了，你不得不改配置文件、重新打包、重新部署所有服务——改了 10 个服务，搞了一下午。
+
+### ① 是什么
+
+**配置中心就像是连锁店的总部调价系统。** 以前每家店各自定价，改一个价格要打 100 个电话。有了总部调价系统，在总部改一次，所有门店自动更新。Nacos 配置中心就是这个"总部系统"——在 Nacos 上改配置，所有服务自动生效，不用重启。
+
+### ② 怎么用
 
 ```python
 from spring.annotations import Service
@@ -80,114 +135,189 @@ from spring.annotations.cloud import NacosValue
 
 @Service
 class ConfigService:
+    # auto_refreshed=True 表示 Nacos 上的值变了，这里自动更新
     @NacosValue(value="${app.version}", auto_refreshed=True)
     def get_version(self):
         return self._app_version
+# 结果：首次读取 Nacos 中的 app.version 值，之后改了自动刷新
 ```
 
-**边界**：与 `@Value` 的区别是支持 `auto_refreshed` 动态刷新；基础类型效果最好，复杂实体类推荐用 `@ConfigurationProperties`。
-
-#### @RefreshScope
-
-**含义**：配置刷新作用域，添加此注解的类在配置变更时会重新创建实例。**参数**：无。
+如果整个类都需要动态配置，用 `@RefreshScope`：
 
 ```python
 from spring.annotations import Service
 from spring.annotations.cloud import RefreshScope
 
 @Service
-@RefreshScope
+@RefreshScope  # 贴上"可刷新"标签
 class DynamicConfigService:
     def __init__(self):
+        # Nacos 配置刷新后，这个 Service 会重新创建，拿到最新配置
         self.feature_flag = True
         self.timeout = 30
 ```
 
-**触发刷新**：
+手动触发刷新：
 
 ```python
 from spring.aop.cloud_aop import trigger_config_refresh
 
-trigger_config_refresh()
+trigger_config_refresh()  # 触发一次配置刷新，所有 @RefreshScope 的 Bean 重新创建
 ```
 
-**注意事项**：不能标注在 `@Controller` 上，会导致请求参数解析异常；动态配置读取建议放在 Service 层；会创建代理类，存在循环依赖的 Bean 会启动失败。
+### ③ 运行结果
 
-#### @EnableFeignClients
+在 Nacos 控制台把 `app.version` 从 `1.0` 改成 `2.0`，你的应用不用重启，`get_version()` 返回的就是 `2.0` 了。
 
-**参数**：`base_packages`（List[str]，默认 None，默认扫描启动类同包）
+### 什么时候用 / 什么时候不用
+
+| 用 | 不用 |
+|---|---|
+| 配置经常变动（开关、阈值、地址） | 配置几年不变 |
+| 多个服务共享同一份配置 | 每个服务配置完全不同 |
+| 不想重启就能改配置 | 不介意重启 |
+
+---
+
+## 三、Feign —— 打电话叫外卖
+
+### 你遇到了什么问题？
+
+订单服务要调用用户服务查用户信息。你要手写 HTTP 请求：拼 URL、设请求头、解析响应、处理超时、处理异常……每次调用都要写几十行代码，烦死了。
+
+### ① 是什么
+
+**Feign 就像打电话叫外卖——你不用自己跑到餐厅，也不用亲自下厨，打个电话说你要什么，外卖就送到你面前。** Feign 让你像调用本地方法一样调用远程 HTTP 服务，框架帮你搞定网络通信。
+
+### ② 怎么用
+
+先开启 Feign 扫描：
 
 ```python
 from spring.annotations import SpringBootApplication
 from spring.annotations.cloud import EnableFeignClients
 
 @SpringBootApplication
-@EnableFeignClients(base_packages=["com.example.feign"])
+@EnableFeignClients(base_packages=["com.example.feign"])  # 扫描这个包下的 Feign 接口
 class Application:
     pass
 ```
 
-#### @FeignClient
-
-**参数**：`value`（str，必填，目标服务名）、`path`（str，默认 ""）、`fallback`（Type，默认 None）、`fallback_factory`（Type，默认 None）、`url`（str，默认 ""，调试用）
+声明远程调用接口：
 
 ```python
 from spring.annotations.cloud import FeignClient
 from spring.annotations import GetMapping, PostMapping
 
-@FeignClient(value="user-service", path="/api")
+@FeignClient(value="user-service", path="/api")  # 目标服务名是 user-service
 class UserFeign:
     @GetMapping("/users/{id}")
     def get_user(self, id: int):
-        pass  # 由 Feign 自动实现
+        pass  # 框架自动帮你实现网络请求
 
     @PostMapping("/users")
     def create_user(self, name: str, email: str):
         pass
 ```
 
-当前不会仅凭类声明自动创建 Java interface proxy，需要显式构建客户端：
+构建客户端并调用：
 
 ```python
 from spring.annotations.cloud import FeignClient
 from spring.cloud.feign import create_declared_feign_client
 
+# 从注解元数据构造客户端
 annotation = next(
     item for item in UserFeign.__spring_annotations__
     if isinstance(item, FeignClient)
 )
 user_client = create_declared_feign_client(UserFeign, annotation)
+
+# 像调本地方法一样调远程服务
 user = user_client.get_user(1)
+print(user)  # 输出: {"id": 1, "name": "张三", "email": "zhangsan@example.com"}
 ```
 
-本地调试也可以跳过声明式接口：
+本地调试时可以跳过声明式接口，直接指定 URL：
 
 ```python
 from spring.cloud.feign import create_feign_client
 
+# url 参数直接指定目标地址，不经过 Nacos
 client = create_feign_client(
     "user-service",
     path="/api",
-    url="http://127.0.0.1:8081",
-    timeout=5,
+    url="http://127.0.0.1:8081",  # 直接指定地址
+    timeout=5,                     # 超时 5 秒
 )
 user = client.get("/users/1")
 client.close()
+# 输出: {"id": 1, "name": "张三"}
 ```
 
-**注意事项**：`value` 必须和目标服务注册到 Nacos 的名称完全一致；目标服务有路径前缀时通过 `path` 指定。Feign 当前使用同步 `requests.Session`，在 async 业务方法中直接调用会阻塞事件循环，应使用同步 Service/Controller 的线程池路径或显式 `await asyncio.to_thread(...)`。生产环境必须设置超时并验证连接池耗尽和下游失败。
+### ③ 运行结果
 
-#### @SentinelResource
+调用 `user_client.get_user(1)` 时，Feign 自动向 `http://user-service/api/users/1` 发起 GET 请求，把 JSON 响应解析成字典返回。你完全不用关心 HTTP 细节。
 
-**参数**（内嵌引擎版）：
+### 什么时候用 / 什么时候不用
 
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| value | str | "" | 资源名，为空时用类名.方法名 |
-| block_handler | str | "" | 限流/熔断处理方法名 |
-| fallback | str | "" | 业务异常降级方法名 |
-| hotkey | str/bool | ""/False | 热点参数名（或是否启用热点参数限流） |
-| exceptions_to_ignore | list | None | 忽略的异常类型列表 |
+| 用 | 不用 |
+|---|---|
+| 服务之间需要 HTTP 调用 | 不需要跨服务调用 |
+| 想用声明式写法代替手写 HTTP 代码 | 需要高度自定义的 HTTP 请求 |
+| 结合 Nacos 做服务发现 | 单服务架构 |
+
+---
+
+## 四、LoadBalancer —— 排队分流
+
+### 你遇到了什么问题？
+
+你的用户服务部署了 3 台机器：`192.168.1.10:8081`、`192.168.1.11:8081`、`192.168.1.12:8081`。请求来了该发给哪台？总不能随便选或者手动轮换吧？
+
+### ① 是什么
+
+**负载均衡就像是排队分流——银行有 3 个窗口，你拿号之后系统自动分配你去当前空闲的窗口。** LoadBalancer 从服务的多个实例中自动选一个来处理请求，让每台机器压力均匀。
+
+### ② 怎么用
+
+配合 Feign 使用，只要目标服务在 Nacos 注册了多个实例，Feign 调用时自动负载均衡。不需要额外代码。
+
+在需要自己控制 HTTP 客户端时，可以用 `@LoadBalanced` 注解：
+
+```python
+# @LoadBalanced 给 HTTP 客户端加上负载均衡能力
+# 标注在 @Bean 方法上，不能标注在字段或类上
+```
+
+### ③ 运行结果
+
+当用户服务有 3 个实例时，Feign 发起的请求会自动分散到 3 个实例上，不会全打到同一台机器。
+
+### 什么时候用 / 什么时候不用
+
+| 用 | 不用 |
+|---|---|
+| 一个服务部署了多个实例 | 每种服务只有一个实例 |
+| 需要分散请求压力 | 用 Nginx/Kong 等外部负载均衡器就行 |
+
+---
+
+## 五、Sentinel —— 水库大坝
+
+### 你遇到了什么问题？
+
+秒杀活动来了，瞬间涌进来 10 万个请求，你的订单服务扛不住直接 OOM 崩溃。或者库存服务挂了，但订单服务还在不断调用它，导致订单服务也被拖死——一个服务挂了，像多米诺骨牌一样全倒了。
+
+### ① 是什么
+
+**Sentinel 就像是水库大坝。** 洪水来了，大坝控制放水量，保护下游不被冲垮；下游出问题，大坝关闸断流，防止连带破坏。Sentinel 三个核心能力：
+
+- **限流**：每秒只放行 100 个请求，超过的直接拒绝——就像大坝控制放水量
+- **熔断**：下游服务错误率超过 50%，自动"切断电路"不再调用它——就像保险丝熔断
+- **降级**：熔断后给一个兜底响应，比如"系统繁忙请稍后重试"——就像断电后用应急灯
+
+### ② 怎么用
 
 ```python
 from spring.annotations import Service
@@ -195,41 +325,137 @@ from spring.annotations.cloud import SentinelResource
 
 @Service
 class OrderService:
-    @SentinelResource(value="create_order", fallback="create_order_fallback")
+    @SentinelResource(
+        value="create_order",                  # 资源名
+        fallback="create_order_fallback"       # 出问题时的兜底方法
+    )
     def create_order(self, user_id: str, product_id: str):
-        return {"order_id": "ORD_123"}
+        # 正常逻辑：创建订单
+        return {"order_id": "ORD_123", "status": "success"}
 
     def create_order_fallback(self, user_id: str, product_id: str):
+        # 兜底逻辑：系统繁忙时返回友好提示
         return {"status": "degraded", "message": "系统繁忙，请稍后重试"}
+
+# 结果：
+# 正常时调用 create_order → {"order_id": "ORD_123", "status": "success"}
+# 限流或异常时自动调用 create_order_fallback → {"status": "degraded", "message": "系统繁忙，请稍后重试"}
 ```
 
-**blockHandler vs fallback 区别**：**blockHandler** 处理 Sentinel 主动阻断（限流、系统保护、黑名单等）；**fallback** 处理业务异常、远程调用失败。降级/限流处理方法的返回值、参数列表必须和原方法完全一致。内嵌引擎支持 QPS 限流、异常比例/异常数/慢调用熔断、热点参数限流，无需 Sentinel Dashboard。
+两个关键概念的区别：
 
-#### @EnableGateway
+| 概念 | 什么时候触发 | 干什么用 |
+|---|---|---|
+| `block_handler` | 被限流/熔断主动阻断 | 处理"请稍后重试"的提示 |
+| `fallback` | 业务逻辑抛异常 | 处理"服务暂时不可用"的兜底 |
 
-**参数**：无。仅网关模块启动类添加，业务服务禁止引入。配合 `GatewayRouter` 使用：
+### ③ 运行结果
+
+配置 QPS 限制为每秒 10 次后，当第 11 个请求到达时，不会进入 `create_order` 方法，直接返回 `create_order_fallback` 的结果。用户看到的是友好的"系统繁忙"提示，而不是报错页面。
+
+### 什么时候用 / 什么时候不用
+
+| 用 | 不用 |
+|---|---|
+| 接口可能被突发流量打垮 | 流量非常稳定且远低于系统容量 |
+| 下游服务不稳定需要熔断保护 | 不依赖任何外部服务 |
+| 秒杀、抢购等高并发场景 | 内部定时任务之类的后台服务 |
+
+---
+
+## 六、Gateway —— 公司前台
+
+### 你遇到了什么问题？
+
+你的系统有 10 个微服务，每个都有自己的地址和端口。前端要记住 10 个地址，而且每个服务都要各自处理跨域、鉴权、限流——代码重复到爆炸。外部用户直接访问内部服务也不安全。
+
+### ① 是什么
+
+**Gateway 就像是公司前台——所有访客必须先到前台登记，前台根据来意把你分派到相应的部门。** 前台统一处理签到、安全检查、引导分流。Gateway 就是你的 API 前台：
+
+- 所有外部请求统一从网关进来
+- 网关根据路径转发到对应的内部服务
+- 在网关统一做鉴权、限流、日志
+
+### ② 怎么用
+
+在启动类开启网关：
+
+```python
+from spring.annotations import SpringBootApplication
+from spring.annotations.cloud import EnableGateway
+
+@SpringBootApplication
+@EnableGateway  # 开启"公司前台"功能
+class GatewayApplication:
+    pass
+```
+
+配置路由规则：
 
 ```python
 from spring.cloud.gateway import GatewayRouter
 
-gateway = GatewayRouter(timeout=5, max_body_size=10 * 1024 * 1024)
+# 创建网关路由器
+gateway = GatewayRouter(timeout=5, max_body_size=10 * 1024 * 1024)  # 超时5秒，最大请求体10MB
+
+# 添加路由：/api/users/** 开头的请求转发到用户服务
 gateway.route(
-    "/api/users/**",
-    uri="http://127.0.0.1:8081",
+    "/api/users/**",                         # 匹配这个路径
+    uri="http://127.0.0.1:8081",             # 转发到这个地址
+    strip_prefix=True,                       # 去掉 /api/users 前缀
+)
+
+# 添加路由：/api/orders/** 开头的请求转发到订单服务
+gateway.route(
+    "/api/orders/**",
+    uri="http://127.0.0.1:8082",
     strip_prefix=True,
 )
+
+# 安装到 FastAPI 应用
 gateway.install(app, "/api/{path:path}")
+
+# 结果：
+# 用户访问 http://网关地址/api/users/profile
+# → 网关转发到 http://127.0.0.1:8081/profile
+# 用户访问 http://网关地址/api/orders/list
+# → 网关转发到 http://127.0.0.1:8082/list
 ```
 
-`route()` 只添加路由规则，`install()` 才会把异步端点注册到 FastAPI 应用。上例使用固定 `uri`，最适合第一次验证；按服务名发现时传入的 discovery adapter 需要提供 `get_instances(service_id)` 并返回包含 `ip`、`port`、可选 `scheme` 的字典列表。不要直接把 `handle_asgi` 当成普通三参数 ASGI 函数注册。内嵌网关支持异步转发、路径重写、过滤器链和负载均衡；公网入口、复杂鉴权、WAF、灰度发布等需求应使用 Kong/APISIX 等专业网关。
+### ③ 运行结果
 
-#### @LoadBalanced
+前端只需要知道网关地址，所有请求都走网关。网关负责转发到正确的服务，前端不用管后面有几个服务、地址是什么。
 
-**参数**：无。只能标注在 `@Bean` 修饰的创建 RestTemplate 的方法上，不能标注在注入字段、类上。实际请求仍需配合框架负载均衡客户端。
+### 什么时候用 / 什么时候不用
 
-#### @GlobalTransactional
+| 用 | 不用 |
+|---|---|
+| 有多个微服务需要统一入口 | 只有一个服务 |
+| 需要在入口统一鉴权、日志、限流 | 内部微服务之间的调用 |
+| 前端需要对接多个后端服务 | 用 Nginx/Kong 已经解决了问题 |
 
-**参数**：`timeout`（int，默认 60000，毫秒）、`name`（str，默认 ""）、`rollback_for`（List[Type]，默认 []）、`no_rollback_for`（List[Type]，默认 []）
+> **注意**：框架内嵌网关适合内部微服务路由。公网入口、HTTPS 证书管理、WAF 防火墙等需求，建议用 Nginx 或 Kong 等专业网关。
+
+---
+
+## 七、Seata 分布式事务 —— 跨国转账
+
+### 你遇到了什么问题？
+
+用户下单涉及三个操作：① 订单服务创建订单、② 库存服务扣库存、③ 支付服务扣款。前两步成功了，第三步扣款失败——但库存已经扣了，用户钱没扣，老板哭了。
+
+### ① 是什么
+
+**分布式事务就像是跨国转账。** 你在中国的银行向美国银行转 100 美元，必须确保：你的账户扣了 100 美元，同时对方的账户加 100 美元。两边要么都成功，要么都失败——不能出现钱扣了但对方没收到的情况。
+
+Seata 就是负责跨多个服务协调事务的：
+
+- **local 模式**：只做事务追踪，不做跨服务协调。开发调试用。
+- **http 模式**：持久化补偿协调。服务挂了重启后能恢复未完成的事务。**但它不具备强一致性**——就像发微信让对方确认，你发了但对方可能没收到。
+- **distributed 模式**：对接真实 Seata Server，具备全局锁和 undo_log 回滚。**这是唯一具备强一致性的模式**。
+
+### ② 怎么用
 
 ```python
 from spring.annotations import Service, Autowired
@@ -239,132 +465,144 @@ from spring.annotations.cloud import GlobalTransactional
 class OrderService:
     @Autowired
     def __init__(self, inventory_feign, payment_feign):
-        self.inventory_feign = inventory_feign
-        self.payment_feign = payment_feign
+        self.inventory_feign = inventory_feign  # 库存服务的 Feign 客户端
+        self.payment_feign = payment_feign      # 支付服务的 Feign 客户端
 
-    @GlobalTransactional(timeout=30000, name="create_order_tx")
+    @GlobalTransactional(timeout=30000, name="create_order_tx")  # 30 秒超时
     def create_order(self, user_id: str, product_id: str, amount: float):
+        # 第 1 步：保存订单
         order = self.save_order(user_id, product_id, amount)
-        self.inventory_feign.deduct(product_id, 1)   # 远程调用
-        self.payment_feign.deduct(user_id, amount)   # 远程调用
+
+        # 第 2 步：远程调用库存服务扣库存
+        self.inventory_feign.deduct(product_id, 1)
+
+        # 第 3 步：远程调用支付服务扣款
+        self.payment_feign.deduct(user_id, amount)
+
         return order
+        # 结果：任意一步失败，前面成功的步骤都会回滚
 ```
 
-**注意事项**：只在事务发起入口方法添加，参与方不需要重复开启全局事务；不支持嵌套。受管 `async def` 方法已经支持事务上下文隔离，协调器的同步 I/O 会移入线程池；但自己创建的裸线程、进程池或脱离当前任务的后台任务不会自动继承事务上下文。
-
----
-
-## 二、功能说明
-
-- **Sentinel 限流熔断**：通过 `@SentinelResource` 注解使用，支持 QPS 限流、异常比例/异常数/慢调用熔断、热点参数限流。
-- **OpenTelemetry 追踪**：通过 `@Trace` 注解使用，自动生成并传播 W3C `traceparent` 标准 traceId/spanId，自动注入 HTTP 请求和 Feign 调用，追踪信息通过日志输出。
-- **Seata 分布式事务（三模式）**：通过 `@GlobalTransactional` 注解使用，支持 `local`/`http`/`distributed` 三种模式。`distributed` 对接真实 Seata Server；`http` 为持久化补偿协调器（**非 AT 强一致性**，详见下文"架构限制与生产边界"）；Feign 客户端自动传播 XID。
-- **API Gateway**：`@EnableGateway` + `GatewayRouter`，支持路由转发、路径重写、全局过滤器、负载均衡。
-- **ORM DDL 自动建表**：`@entity` + `database.ddl-auto`（JPA ddl-auto 风格）。
-
-```python
-from spring.annotations import SentinelResource, Trace, GlobalTransactional
-
-@SentinelResource(value="createOrder", block_handler="handle_block", fallback="handle_fallback")
-def create_order(user_id: int, product_id: int):
-    pass
-
-@Trace("order-service.create")
-def create_order_traced(user_id: int):
-    pass
-
-@GlobalTransactional(timeout=60000)
-def place_order(user_id: int, product_id: int):
-    order_service.create(user_id, product_id)
-    inventory_service.deduct(product_id)
-```
-
----
-
-## 三、架构限制与生产边界
-
-### HTTP 补偿模式 ≠ Seata AT 强一致性
-
-> **已修复（文档披露）**：早期文档将 `http` 模式表述为"HTTP-AT 分布式事务"，该表述容易误导。现明确披露架构限制，避免被误读为具备企业级分布式一致性。
-
-**HTTP 补偿模式当前实现**：
-
-- 全局事务、分支、状态和回调 URL 持久化到 SQLite WAL，不再以进程内字典作为事实来源。
-- 同一主机上的多个 worker 可以共享同一个 `store_path`；状态转换使用原子更新，避免两个 worker 同时完成同一事务。
-- worker 启动后会周期扫描未完成事务；超时的 `BEGIN` 会回滚，崩溃留下的提交/回滚状态会在宽限期后接管。
-- 仅注册 Python 本地函数的回调无法跨进程恢复。需要重启恢复的分支必须提供持久化的 HTTP `callback_url`，并保证提交/回滚接口幂等。
-- 远端回调成功但本地确认落库前发生崩溃时，恢复器可能再次调用回调，因此接口必须接受重复请求并返回同一业务结果。
-- 它**不具备** Seata AT 的全局锁、undo_log 回滚、分支资源代理等强一致性语义。
-- 因此**不能据此宣称**支付、订单、库存等场景具备**企业级分布式一致性**。
-
-最小配置（仅限补偿流程和企业试点，不会通过生产强一致校验）：
+http 补偿模式配置：
 
 ```yaml
 seata:
   enabled: true
-  mode: http
-  http_compensation_enabled: true
-  store_path: ./data/seata-http.sqlite3
-  recover_on_startup: true
-  recovery_grace_ms: 30000
-  recovery_interval_s: 30
+  mode: http                           # 使用 http 补偿模式
+  http_compensation_enabled: true      # 必须显式开启
+  store_path: ./data/seata-http.sqlite3  # 协调器数据存储位置
+  recover_on_startup: true             # 启动时恢复未完成事务
+  recovery_grace_ms: 30000             # 宽限期 30 秒
+  recovery_interval_s: 30              # 每 30 秒扫描一次
 ```
 
-| 配置 | 作用 | 新手建议 |
+### ③ 运行结果
+
+`@GlobalTransactional` 标注的方法中，所有远程调用被纳入一个全局事务。任何一步失败，全局事务回滚，已执行的操作被撤销。
+
+### 什么时候用 / 什么时候不用
+
+| 场景 | 用什么模式 | 为什么 |
 |---|---|---|
-| `store_path` | 保存协调状态的 SQLite 文件 | 使用绝对路径或持久化数据盘，同主机 worker 必须完全一致 |
-| `recover_on_startup` | 启动时扫描未完成事务 | 保持 `true` |
-| `recovery_grace_ms` | 接管疑似死亡 worker 前等待多久 | 大于一次回调的最大正常耗时 |
-| `recovery_interval_s` | 运行期间多久扫描一次 | 30 秒起步，按业务恢复目标调整 |
+| 开发调试 | `local` | 只在本地追踪事务，不做跨服务协调 |
+| 非关键业务的补偿流程 | `http` | 能持久化和恢复，但不是强一致 |
+| 支付/订单/库存等核心业务 | `distributed` | 唯一具备强一致性的模式 |
 
-验证补偿模式至少要覆盖：正常提交、业务异常回滚、远端 500、回调超时、重复回调、杀死 worker 后恢复，以及 SQLite 文件不可写时启动失败。
+### ⚠️ 重要警告
 
-**生产场景选型**：
+**http 模式不等于强一致性。** 它就像发微信让对方确认——消息发出去了，但如果对方没收到或者系统崩溃了，需要不断重试。真正的 Seata distributed 模式就像银行转账：要么成功、要么失败，不会有中间状态。
 
-| 场景 | 推荐模式 | 说明 |
-|------|---------|------|
-| 开发调试 / 单服务事务追踪 | `local` | 仅追踪事务上下文，无跨服务协调 |
-| 故障演练 / 补偿流程验证 | `http` | 持久化补偿，支持重启恢复，**非强一致** |
-| **生产强一致（支付/订单/库存）** | `distributed` | 必须部署真实 Seata Server + 兼容 Python SDK |
+---
 
-`distributed` 模式要求：
+## 八、Trace —— 快递单号
+
+### 你遇到了什么问题？
+
+一个用户请求经过了 5 个微服务，某个环节出错了，你想查日志——每个服务都有自己的日志，你怎么把这些日志串起来找到完整调用链？
+
+### ① 是什么
+
+**Trace 就像是快递单号——包裹从发货到你手里，经过好几个中转站，你扫一下单号就知道全过程。** Trace 给每个请求生成一个全局唯一的 traceId，这个 traceId 在所有服务间传递，日志里带上它，你就能追踪整个调用链。
+
+### ② 怎么用
+
+```python
+from spring.annotations import Trace
+
+@Trace("order-service.create")  # 这个方法被追踪
+def create_order_traced(user_id: int):
+    # 你的业务逻辑
+    pass
+# 结果：日志中会带上 traceId，串联整个请求链路
+```
+
+### ③ 运行结果
+
+查看日志时，同一个 traceId 的所有日志跨越多个服务串联在一起，你可以清楚看到请求从哪个服务进来、经过了哪些服务、在哪个环节出了问题。
+
+---
+
+## 九、新手常见错误 ❌/✅
+
+| # | ❌ 错误做法 | ✅ 正确做法 |
+|---|---|---|
+| 1 | "微服务一定比单体好，所有项目都该用微服务" | 小项目用微服务反而增加复杂度。先做单体，等真的需要拆分时再加微服务 |
+| 2 | "Nacos 配置改了，服务马上生效" | 只有加了 `auto_refreshed=True` 或 `@RefreshScope` 的配置才会自动刷新。普通的 `@Value` 不会刷新 |
+| 3 | "Feign 调用和本地方法一模一样，不用处理错误" | Feign 调用要走网络，有超时、失败、重试等问题。必须配置 fallback 或超时处理 |
+| 4 | "加了 `@SentinelResource` 就万事大吉" | 必须配置 fallback 方法，否则限流时客户端会收到异常而不是友好提示 |
+| 5 | "分布式事务和数据库事务一样可靠" | 完全不同。只有 Seata `distributed` 模式才具备强一致性，`http` 模式只是补偿 |
+| 6 | "Gateway 可以替代 Nginx" | 框架内嵌网关适合内部微服务路由。公网入口、HTTPS、WAF 还是用 Nginx/Kong |
+
+---
+
+## 十、FAQ
+
+### Q1：本地测试 Feign 一定要装 Nacos 吗？
+
+不用。用 `url` 参数直接指定目标地址：
+
+```python
+client = create_feign_client("svc", url="http://127.0.0.1:8081")
+```
+
+### Q2：Feign 能在 async 方法里用吗？
+
+Feign 底层用的是同步 `requests.Session`，在 `async def` 方法里直接调用会阻塞事件循环。需要在同步 Service/Controller 中使用，或用 `await asyncio.to_thread(...)` 包装。
+
+### Q3：多服务调试太麻烦了，怎么简化？
+
+先在一个进程里用单体模式开发。等业务逻辑稳定了，再按模块拆分成独立服务部署。
+
+### Q4：`@RefreshScope` 能加在 Controller 上吗？
+
+不能。会导致请求参数解析异常。动态配置读取建议放在 Service 层。
+
+### Q5：事务中能切换数据源吗？
+
+不能。一个事务只绑定一个数据库连接，事务中途切数据源不会生效。
+
+### Q6：Sentinel 一定要装 Dashboard 吗？
+
+不用。内嵌引擎支持 QPS 限流、异常比例/异常数/慢调用熔断、热点参数限流，无需 Sentinel Dashboard。
+
+---
+
+## 附录：架构限制说明
+
+### HTTP 补偿模式 ≠ 强一致性
+
+http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复、补偿幂等，**不等于强一致性**。支付/订单/库存等核心业务强一致场景必须使用 `distributed` 模式对接真实 Seata Server，或采用可靠消息最终一致方案。
+
+### Distributed 模式要求
 
 1. 部署 Seata Server（https://seata.io）
-2. 安装与本适配层 API 兼容的企业 Seata Python SDK
+2. 安装兼容的企业 Seata Python SDK
 3. 配置 `registry.conf` / `file.conf`，创建 `seata_undo_log` 表
-4. 启动时设置 `SEATA_ENABLED=true`、`seata.mode=distributed`
+4. 设置 `SEATA_ENABLED=true`、`seata.mode=distributed`
 
-> ⚠️ `distributed` 模式未检测到兼容 SDK 时**失败关闭**（不静默降级到 `local`），避免核心业务在无强一致保障下继续运行。
+> ⚠️ `distributed` 模式未检测到兼容 SDK 时会启动失败（不会静默降级到 `local`），避免核心业务在无强一致保障下继续运行。
 
-### HTTP 持久化补偿配置（v1.8.2 落地）
+### 相关代码位置
 
-`http` 模式在 v1.8.2 兑现了"持久化补偿协调器"的承诺：事务/分支元数据落盘到 SQLite（WAL 模式），支持重启恢复、幂等提交、过期分支回滚、并发 commit 单次 claim 与 `PARTIAL_COMMIT`/`PARTIAL_ROLLBACK` 失败关闭。**但架构限制不变**——协调器仍运行在应用进程内，不具备 Seata AT 全局锁/undo_log 回滚/分支资源代理等强一致性语义。
-
-```yaml
-seata:
-  enabled: ${SEATA_ENABLED:false}
-  mode: ${SEATA_MODE:local}            # local | http | distributed
-  http_compensation_enabled: ${SEATA_HTTP_COMPENSATION_ENABLED:false}  # http 模式必须显式 opt-in
-  store_path: ${SEATA_HTTP_STORE_PATH:./data/seata-http.sqlite3}       # SQLite 路径
-  recover_on_startup: ${SEATA_HTTP_RECOVER_ON_STARTUP:true}            # 启动时恢复未完成事务
-  recovery_grace_ms: ${SEATA_HTTP_RECOVERY_GRACE_MS:30000}             # 完成 lease 宽限期
-  recovery_interval_s: ${SEATA_HTTP_RECOVERY_INTERVAL_S:30}            # recovery worker 轮询间隔
-```
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `http_compensation_enabled` | `false` | `mode=http` 时必须显式设为 `true`，否则 `init_seata` 抛 `ValueError`（失败关闭，防误用） |
-| `store_path` | `./data/seata-http.sqlite3` | SQLite 文件路径；跨主机部署须指向共享事务数据库或改用 `distributed` |
-| `recover_on_startup` | `true` | 启动时调用 `recover_pending_transactions`，提交 BEGIN 态过期事务的回滚 |
-| `recovery_grace_ms` | `30000` | COMMITTING/ROLLING_BACK 的完成 lease 宽限期，超时后可被 reclaim |
-| `recovery_interval_s` | `30` | 后台 recovery worker 轮询间隔 |
-
-**运行时行为**：
-- `SpringApplication` 启动时若 `seata.mode=http` 则启动 recovery worker，关闭时停止。
-- `/actuator/health` 的 seata 探针在 http 模式下返回 `UP` + `warning: Persistent compensation only; no Seata AT consistency` + `active_global_tx`/`active_branches` 计数 + `store_path`（不再虚报 DOWN）。
-- `@GlobalTransactional` 异步路径用 `asyncio.to_thread` 包装 SQLite 阻塞操作，避免事件循环阻塞。
-- 兼容旧配置项 `experimental_http_enabled`（作为 `http_compensation_enabled` 的 fallback）。
-
-> ⚠️ **再次强调**：上述持久化能力仅保证协调器元数据不丢、重启可恢复、补偿幂等，**仍不等于企业级分布式一致性**。支付/订单/库存等核心业务强一致场景必须使用 `distributed` 模式对接真实 Seata Server，或采用可靠消息最终一致方案。
-
-**代码实现位置**：[`spring/cloud/seata.py`](../spring/cloud/seata.py) — `SeataTransactionManager` 三模式实现；持久化存储 [`spring/cloud/transaction_store.py`](../spring/cloud/transaction_store.py) — `SQLiteTransactionStore`（WAL + 原子状态迁移 + 外键级联）。
+- [`spring/cloud/seata.py`](../spring/cloud/seata.py) — `SeataTransactionManager` 三模式实现
+- [`spring/cloud/transaction_store.py`](../spring/cloud/transaction_store.py) — `SQLiteTransactionStore`（WAL + 原子状态迁移）

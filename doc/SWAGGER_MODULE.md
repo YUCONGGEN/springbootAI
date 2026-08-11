@@ -1,183 +1,178 @@
 # SpringBootAI Swagger / OpenAPI 模块使用文档
 
-> 版本：SpringBootAI Swagger 1.0.0 ｜ 框架版本：SpringBootAI 1.8.8
-> 对齐 SpringDoc OpenAPI 3 注解体系（`@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`/`@Schema`/`@SecurityScheme`/`@SecurityRequirement`），同时提供 Swagger 2 风格别名（`@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam`），**无新增第三方依赖**（复用 FastAPI 自带的 OpenAPI 生成），`pip install springbootAI` 即可用。
-> 设计原则：**复用项目既有范式，不重复造轮子**——注解复用 `SpringAnnotation` 描述符，元数据在 `WebApplicationContext` 注册路由时同步注入 FastAPI 路由参数，全局 `securitySchemes`/`@Schema`/`@Parameter` 通过自定义 `app.openapi()` 后处理注入。
+> 框架版本：SpringBootAI 2.0.0
 
 ---
 
-## 零、新手先读
+## Swagger 是什么？
 
-Swagger UI 是给人看的交互式 API 页面，OpenAPI 是给工具读取的接口描述 JSON。写好文档后，前端、测试和其他服务可以知道接口路径、参数、返回值和认证方式，也可以直接在浏览器点击“Try it out”发请求。
+**Swagger 就是自动生成 API 说明书——你不用手写文档，代码写完文档就有了。** 启动应用后，浏览器打开 `http://localhost:8000/docs`，你会看到一个网页，上面列出了你写的所有接口、每个接口需要什么参数、返回什么数据。更酷的是，你还可以直接在网页上点按钮发请求、看返回结果——连 Postman 都不用装。
 
-SpringBootAI 会基于 FastAPI 自动生成基础 OpenAPI；`@Tag`、`@Operation` 等注解用于补充人能看懂的说明。最小验证流程：
+> 生活比喻：去餐厅吃饭，菜单告诉你有什么菜、菜名是什么、需要付多少钱。Swagger 就是你 API 的菜单——前端同事、测试同事不用跑来问你"这个接口怎么调"，自己看菜单就全知道了。
 
-1. 给 Controller 添加 `@Tag`，给方法添加 `@Operation`。
-2. 启动应用并打开 `http://127.0.0.1:8080/docs`。
-3. 确认分组、摘要、参数和响应状态码正确。
-4. 打开 `/openapi.json`，确认同一路由也存在。
-5. 用“Try it out”调用一次，检查真实响应而不只是页面文字。
+### 本节导航
 
-Swagger 是文档和调试工具，不会自动替代认证、参数校验和接口测试。生产环境是否公开 `/docs` 应按安全要求决定；内网管理系统也应防止 OpenAPI 暴露敏感内部接口。
+| 如果你想... | 跳到 |
+|------------|------|
+| 5 分钟上手，从零写出带文档的接口 | [5 分钟零代码生成 API 文档](#5-分钟零代码生成-api-文档) |
+| 看懂 Swagger 网页上的按钮和输入框 | [Swagger 页面怎么用](#swagger-页面怎么用) |
+| 给接口加上 JWT 登录（锁图标） | [JWT 认证集成](#jwt-认证集成) |
+| 给接口加上 API Key 验证 | [API Key 认证](#api-key-认证) |
+| 描述返回数据的结构 | [模型文档 @Schema](#模型文档-schema) |
+| 描述某个参数的含义 | [参数文档 @Parameter](#参数文档-parameter) |
+| 生产环境关闭 Swagger | [生产环境关闭 Swagger](#生产环境关闭-swagger) |
+| 常见问题 | [Swagger UI 常见问题](#swagger-ui-常见问题) |
+---
 
-## 一、模块组成
+## 注解速查表
 
-| 文件 | 职责 |
-|------|------|
-| `spring/web/swagger.py` | 注解定义 + `SwaggerConfig` 配置 + `collect_openapi_metadata` 元数据收集 + `configure_swagger` schema 后处理 |
-| `spring/web/web_context.py` | `WebApplicationContext.__init__` 用 `SwaggerConfig` 初始化 FastAPI；`_register_handler` 收集注解元数据传给路由；`init()` 末尾调用 `_configure_swagger` |
+**注解就像便利贴——贴在类或方法上，框架启动时读取这些便利贴并自动配置行为。**
 
-### 注解一览（对齐 SpringDoc OpenAPI 3 + Swagger 2 别名）
-
-| 注解 | 别名 | 作用域 | 对齐 SpringDoc | 说明 |
-|------|------|--------|---------------|------|
-| `@Tag` | `@Api` | 类 | `@Tag` | Controller 分组标签 |
-| `@Operation` | `@ApiOperation` | 方法 | `@Operation` | 操作描述（summary/description/operationId/deprecated/tags） |
-| `@ApiResponse` | — | 方法（可重复） | `@ApiResponse` | 响应状态码描述 |
-| `@ApiResponses` | — | 方法 | `@ApiResponses` | 聚合多个 `@ApiResponse` |
-| `@Parameter` | `@ApiParam` | 方法 | `@Parameter` | 参数描述（description/example/required/deprecated） |
-| `@Schema` | `@ApiModel` | 模型类 | `@Schema` | 模型描述（title/description/example/deprecated） |
-| `@SecurityScheme` | — | 类 | `@SecurityScheme` | 全局安全方案（bearer/apiKey） |
-| `@SecurityRequirement` | — | 方法 | `@SecurityRequirement` | 标记路由需要认证 |
+| 注解 | 一句话解释 | 写在哪 | 生活比喻 |
+|------|-----------|--------|---------|
+| `@Tag` | 给接口分组，Swagger 页面上显示为一个折叠区域 | 类上 | 书签分类——把相关接口归到一组 |
+| `@Operation` | 描述这个接口是干什么的 | 方法上 | 菜名下面的小字说明 |
+| `@ApiResponse` | 描述成功/失败时会返回什么 | 方法上 | "下单成功会收到确认短信，失败会收到退款通知" |
+| `@Parameter` | 描述参数的含义和是否必填 | 方法上 | 表格栏旁边的小字标注 |
+| `@Schema` | 描述请求体/返回数据的结构 | 模型类上 | 快递包裹上的标签——里面是什么、长什么样 |
+| `@SecurityScheme` | 声明认证方式（JWT 或 API Key） | 类上 | "本区域需要刷卡进入" |
+| `@SecurityRequirement` | 标记这个接口需要登录才能调 | 方法上 | 门上的🔒锁 |
 
 ---
 
-## 二、配置（application.yml）
+## Swagger 页面怎么用
+
+启动应用后，浏览器打开 `http://localhost:8000/docs`，你会看到：
+
+1. **顶部标题栏**：API 标题、描述、版本号；有认证配置时右上角会出现 🔒 **Authorize** 按钮
+2. **分组标签**：每个 Controller 是一个折叠分组，比如「用户管理」「订单管理」
+3. **路由列表**：展开一个接口可以看到：
+   - **摘要**：一句话说明这个接口干什么
+   - **描述**：更详细的说明
+   - **参数**：参数名、类型、是否必填、默认值
+   - **响应**：200 成功、404 找不到等
+   - **🔒 锁图标**：表示这个接口需要认证（要先点 Authorize 填 Token）
+4. **Try it out 按钮**：点击后参数变输入框，填好点 **Execute** 就能看到真实响应
+5. **底部**：Contact 联系人信息、License 许可信息
+
+另外两个有用地址：
+- `http://localhost:8000/redoc` — 只读格式的漂亮文档，适合截图给外部看
+- `http://localhost:8000/openapi.json` — 机器可读 JSON，给其他工具用
+
+---
+
+## 5 分钟零代码生成 API 文档
+
+> 不用手写一行文档，代码写完 + 启动 → 打开浏览器 → 文档就有了。
+
+### 第一步：配置文件 application.yml
 
 ```yaml
 spring:
   swagger:
-    enabled: true                    # 是否启用 OpenAPI/docs（生产环境可设 false）
-    title: "SpringBootAI 演示 API"        # API 标题
-    description: "注解驱动的 API 文档"  # API 描述
-    version: "1.0.0"                 # API 版本
-    terms-of-service: "https://tos.example.com"
-    contact:
-      name: "Tom"
-      email: "tom@example.com"
-      url: "https://example.com"
-    license:
-      name: "MIT"
-      url: "https://mit.org"
-    docs-url: "/docs"                # Swagger UI 路径（null 禁用）
-    redoc-url: "/redoc"              # ReDoc 路径（null 禁用）
-    openapi-url: "/openapi.json"     # OpenAPI JSON 路径（null 禁用）
+    enabled: true                     # 开启文档
+    title: "我的第一个 API"            # 显示在页面顶部的大标题
+    description: "一个简单的用户管理 API"
+    version: "1.0.0"
 ```
 
-> 支持松散绑定：`docs-url`/`docs_url` 均可。未配置时使用 FastAPI 默认值（`/docs`/`/redoc`/`/openapi.json`）。
-
----
-
-## 三、快速上手
-
-### 3.1 标注 Controller
+### 第二步：创建 Controller，加上注解
 
 ```python
 from spring.annotations.core import RestController, RequestMapping, GetMapping, PostMapping, PathVariable, RequestBody
 from spring.web.swagger import Tag, Operation, ApiResponse, SecurityScheme, SecurityRequirement
 
-@SecurityScheme(name="BearerAuth", scheme="bearer", bearer_format="JWT")  # 全局 JWT 认证
-@Tag(name="用户管理", description="用户增删改查接口")
+
+@SecurityScheme(name="BearerAuth", scheme="bearer", bearer_format="JWT")  # 声明 JWT 认证方式
+@Tag(name="用户管理", description="用户的增删改查接口")  # 给这组接口取个分组名
 @RestController
 @RequestMapping("/api/users")
 class UserController:
 
-    @Operation(summary="获取用户列表", description="分页查询所有用户", operation_id="listUsers")
+    @Operation(summary="获取用户列表", description="分页查询所有用户")
     @ApiResponse(code=200, description="成功返回用户列表")
     @GetMapping("/list")
     def list_users(self):
-        return [{"id": 1, "name": "Tom"}]
+        # 返回: 用户列表的 JSON 数组
+        return [{"id": 1, "name": "张三"}, {"id": 2, "name": "李四"}]
 
-    @Operation(summary="获取用户详情", deprecated=False)
-    @ApiResponse(code=200, description="成功")
+    @Operation(summary="获取用户详情")
+    @ApiResponse(code=200, description="成功返回用户信息")
     @ApiResponse(code=404, description="用户不存在")
     @GetMapping("/{user_id}")
     def get_user(self, user_id: int):
-        return {"id": user_id, "name": "Tom"}
+        # URL: /api/users/1 → 返回: {"id": 1, "name": "张三"}
+        return {"id": user_id, "name": "张三"}
 
     @Operation(summary="创建用户")
-    @SecurityRequirement(name="BearerAuth")   # 此接口需要认证
+    @SecurityRequirement(name="BearerAuth")  # 这个接口需要登录
     @ApiResponse(code=201, description="创建成功")
     @PostMapping("/create")
     def create_user(self, body: dict):
+        # 返回: {"id": 999, "name": "...", ...}
         return {"id": 999, **body}
 ```
 
-### 3.2 访问文档
+### 第三步：启动应用
 
-启动应用后访问：
-- **Swagger UI**：`http://localhost:8000/docs`（交互式 API 文档，可在线测试）
-- **ReDoc**：`http://localhost:8000/redoc`（只读美观文档）
-- **OpenAPI JSON**：`http://localhost:8000/openapi.json`（机器可读 schema）
-
-Swagger UI 顶部会出现 **Authorize** 按钮（因为声明了 `@SecurityScheme`），输入 JWT token 后即可调用需要认证的接口。
-
-### 3.3 禁用文档（生产环境）
-
-```yaml
-spring:
-  swagger:
-    enabled: false   # /docs /redoc /openapi.json 全部返回 404
+```bash
+python main.py
 ```
+
+### 第四步：打开浏览器访问
+
+打开 `http://localhost:8000/docs`，你会看到：
+
+- 顶部显示「我的第一个 API」标题和版本 1.0.0
+- 「用户管理」分组下面有三个接口
+- 展开任意接口可以看到参数说明和返回格式
+- 创建用户接口前面有一个 🔒 锁图标，表示需要认证
+- 点击 **Try it out** → 填参数 → **Execute**，就能看到真实返回结果
+- 右上角有 **Authorize** 按钮，点进去填 Token
 
 ---
 
-## 四、JWT 认证集成
+## JWT 认证集成
+
+> 生活比喻：JWT 就像一张电子门禁卡。有卡（Token）才能进特定房间，没卡的只能去公共区域。
 
 ```python
 from spring.web.swagger import SecurityScheme, SecurityRequirement
 
-# 1. 在 Controller 类上声明全局安全方案
+
+# 1. 在 Controller 类上声明"这个控制器用的是 JWT 门禁"
 @SecurityScheme(name="BearerAuth", scheme="bearer", bearer_format="JWT")
 @RestController
 @RequestMapping("/api")
 class Api:
 
-    # 2. 在需要认证的方法上标记 @SecurityRequirement
+    # 2. 在需要认证的方法上标记"这个接口需要门禁卡"
     @SecurityRequirement(name="BearerAuth")
     @GetMapping("/secret")
     def secret(self):
-        return {"data": "confidential"}
+        return {"data": "机密数据"}  # 只有带 Token 才能看到
 
-    # 3. 不标记 = 公开接口
+    # 3. 不标记 = 公开接口，任何人都能访问
     @GetMapping("/public")
     def public(self):
-        return {"data": "open"}
+        return {"data": "公开数据"}
 ```
 
-生成的 OpenAPI schema：
-
-```json
-{
-  "components": {
-    "securitySchemes": {
-      "BearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "JWT"
-      }
-    }
-  },
-  "paths": {
-    "/api/secret": {
-      "get": {
-        "security": [{"BearerAuth": []}],
-        ...
-      }
-    },
-    "/api/public": {
-      "get": { ... }
-    }
-  }
-}
-```
+**Swagger 中如何使用：**
+1. 点页面右上角的 🔒 **Authorize** 按钮
+2. 在弹出的对话框中填入 `Bearer <你的Token>`
+3. 点 **Authorize** 确认
+4. 现在带锁图标的接口就可以正常调用了
 
 ---
 
-## 五、API Key 认证
+## API Key 认证
+
+> 生活比喻：API Key 就像一把固定密码的钥匙。你把钥匙发给合作方，他们每次请求都带上。
 
 ```python
 from spring.web.swagger import SecurityScheme, SecurityRequirement
+
 
 @SecurityScheme(name="ApiKey", type="apiKey", header_name="X-API-Key", description="API 密钥认证")
 @RestController
@@ -186,32 +181,32 @@ class Api:
     @SecurityRequirement(name="ApiKey")
     @GetMapping("/data")
     def data(self):
-        return {}
+        return {"result": "ok"}
 ```
 
-生成 `{"type": "apiKey", "in": "header", "name": "X-API-Key"}`。
+## 模型文档 @Schema
 
----
-
-## 六、模型文档（@Schema）
+> 生活比喻：就像给快递包裹贴标签——外面写着"里面是什么、长什么样"。
 
 ```python
 from spring.web.swagger import Schema
 
+
 @Schema(title="订单模型", description="订单实体", example={"id": 1, "amount": 99.9})
 class OrderDTO:
-    id: int
-    amount: float
+    id: int        # 订单 ID
+    amount: float  # 金额
 ```
 
-`@Schema` 通过后处理 `components/schemas` 注入 `title`/`description`/`example`（在 FastAPI 自动生成的 Pydantic schema 基础上叠加）。
+加了 `@Schema` 后，Swagger 页面底部的 Schemas 区域会显示 `OrderDTO` 的结构说明。
 
----
+## 参数文档 @Parameter
 
-## 七、参数文档（@Parameter）
+> 生活比喻：就像表格栏旁边的小字标注——"请填身份证上的名字，示例：张三"。
 
 ```python
 from spring.web.swagger import Parameter
+
 
 @RestController
 @RequestMapping("/api")
@@ -222,100 +217,77 @@ class Api:
         return {"id": user_id}
 ```
 
-`@Parameter` 通过后处理 OpenAPI schema 的 `parameters` 注入 `description`/`example`/`required`/`deprecated`。
+## 生产环境关闭 Swagger
 
----
-
-## 八、Swagger 2 别名兼容
-
-如果你习惯 Swagger 2 注解名，以下别名等价可用：
-
-```python
-from spring.web.swagger import Api, ApiOperation, ApiModel, ApiParam
-
-@Api(name="订单")           # = @Tag
-@RestController
-class OrderCtrl:
-    @ApiOperation(summary="查询订单")  # = @Operation
-    @ApiParam(name="id", description="订单ID")  # = @Parameter
-    @GetMapping("/orders/{id}")
-    def get(self, id: int): ...
+```yaml
+spring:
+  swagger:
+    enabled: false   # /docs /redoc /openapi.json 全部返回 404
 ```
 
 ---
 
-## 九、与 Java Spring 的对齐与差异
+## 新手常见错误
 
-| 特性 | Java SpringDoc | SpringBootAI | 差异 |
-|------|---------------|----------|------|
-| 注解体系 | `io.swagger.v3.oas.annotations.*` | `spring.web.swagger.*` | 命名对齐，复用 `SpringAnnotation` 描述符 |
-| 自动扫描 | `springdoc-openapi-starter-webmvc-ui` 自动扫描 | `WebApplicationContext` 注册路由时同步注入 | 无额外依赖，复用路由注册流程 |
-| 配置 | `springdoc.api-docs.*` / `springdoc.swagger-ui.*` | `spring.swagger.*` | 松散绑定（kebab/snake） |
-| 认证 | `@SecurityScheme` + `@SecurityRequirement` | 同 | JWT Bearer / API Key |
-| 模型文档 | `@Schema`（完整 OpenAPI Schema 属性） | `@Schema`（title/description/example/deprecated） | 通过后处理注入，不支持完整属性全集 |
-| 参数文档 | `@Parameter`（完整属性） | `@Parameter`（description/example/required/deprecated） | 后处理注入到 FastAPI 生成的 parameters |
-| 禁用文档 | `springdoc.api-docs.enabled=false` | `spring.swagger.enabled=false` | docs/redoc/openapi 全部 404 |
-| Swagger 2 别名 | swagger-annotations `@Api`/`@ApiOperation` | `@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam` | 提供常用别名兼容习惯 |
+| ❌ 错误做法 | ✅ 正确做法 |
+|------------|------------|
+| 以为加了 `@SecurityScheme` 就会自动拦截未登录请求 | `@SecurityScheme` 只是**声明**认证方案（在 Swagger 页面上显示 Authorize 按钮），真正拦截请求需要配合中间件或手动校验 Token |
+| 忘记点 Authorize 填 Token 就去调带锁接口 | 先点页面右上角 🔒 按钮，填入 `Bearer <你的Token>`，再调接口 |
+| 生产环境把 Swagger 页面暴露在公网 | 设置 `enabled: false` 或通过网关/防火墙限制 `/docs` 访问 |
+| 静态路径和动态路径随便排顺序 | **静态路径（如 `/list`）必须写在动态路径（如 `/{user_id}`）前面**，否则 `/list` 会被 `/{user_id}` 拦截，`user_id="list"` 不是 int 会报错 |
+| Swagger 会自动帮我校验参数 | Swagger 只是文档展示，不校验参数。校验要配合 `@NotBlank`、`@Min` 等注解 |
+| 觉得 `@ApiResponse` 的 description 只是装饰 | description 会显示在 Swagger 页面上，帮助调用者理解各种情况，不要省略 |
 
 ---
 
-## 十、测试覆盖
+## Swagger UI 常见问题
 
-共 **43 用例**，详见 [TEST_REPORT.md](TEST_REPORT.md)。
+### Q1: 打开 /docs 是空白页？
 
-| 测试类 | 用例数 | 覆盖范围 |
-|--------|--------|---------|
-| TestAnnotationMetadata | 11 | @Tag/@Api/@Operation/@ApiOperation/@ApiResponse 重复/@ApiResponses/@Parameter/@Schema/@SecurityScheme(bearer+apiKey)/@SecurityRequirement |
-| TestCollectOpenApiMetadata | 6 | 类@Tag+方法@Operation 组合/@ApiResponse 收集/@SecurityRequirement 收集/operation_id+deprecated/无注解空/方法 tag 叠加类 tag |
-| TestCollectSecuritySchemes | 3 | bearer/apiKey/无 scheme |
-| TestSwaggerConfig | 8 | 默认值/kebab-case/snake_case/disabled/contact+license/to_fastapi_kwargs 启用/禁用/contact+license kwargs |
-| TestSwaggerIntegration | 15 | openapi title+version/docs 可访问/docs 禁用 404/@Tag 出现/@Operation summary+description/operation_id+deprecated/@ApiResponse/JWT securitySchemes/security requirement on route/apiKey securityScheme/@Schema 后处理/@Parameter 后处理/别名注解/Swagger UI HTML 含标题/多 Controller tags |
+**检查清单：**
+- `application.yml` 中 `spring.swagger.enabled` 是否为 `true`？
+- Controller 类有没有加 `@RestController`？
+- 方法有没有加 `@GetMapping` / `@PostMapping` 等路由注解？
 
----
+### Q2: Try it out 点了 Execute 没反应？
 
-## 十一、浏览器网页实测（2026-08-09）
+**可能原因：**
+- 浏览器控制台是否有 JavaScript 报错？
+- 接口是否加了 `@SecurityRequirement` 但你还没填 Token？
+- 检查 `http://localhost:8000/openapi.json` 是否能正常返回 JSON
 
-除单元测试外，另启动真实 uvicorn 服务器（带完整 Swagger 注解的 Controller）用浏览器访问 `/docs` 进行端到端验证，截图存档。
+### Q3: 加了 @SecurityRequirement，Swagger 页面上没看到锁图标？
 
-### 11.1 实测覆盖项
+确认在 Controller 类上也加了对应的 `@SecurityScheme`。两者搭配使用：`@SecurityScheme` 声明认证方式，`@SecurityRequirement` 标记具体接口。
 
-| # | 验证项 | 结果 |
-|---|--------|------|
-| 1 | Swagger UI 页面加载（标题/描述/版本/OAS 3.1 标识） | ✅ |
-| 2 | `@Tag` 分组渲染（用户管理/订单管理/default[actuator]） | ✅ |
-| 3 | `@Operation` summary 显示在每个路由行 | ✅ |
-| 4 | `@Operation` description 显示在展开区 | ✅ |
-| 5 | `@ApiResponse` 状态码描述（200 成功返回用户列表） | ✅ |
-| 6 | `@Parameter` 默认值显示（page=1/size=10） | ✅ |
-| 7 | `operation_id` 出现在 URL 锚点（`#/用户管理/listUsers`） | ✅ |
-| 8 | **Try it out** 按钮可用，参数可编辑 | ✅ |
-| 9 | **Execute** 实际调用接口成功，响应体正确（`page=2` 透传） | ✅ |
-| 10 | `@SecurityScheme` 渲染为 **Authorize** 按钮 + 弹窗（BearerAuth/JWT Bearer 认证） | ✅ |
-| 11 | `@SecurityRequirement` 标记的路由显示锁图标（POST /create） | ✅ |
-| 12 | Contact/License 信息渲染（SpringBootAI 网站/邮箱/MIT） | ✅ |
-| 13 | Actuator 端点自动归入 default 分组 | ✅ |
+### Q4: /docs 和 /redoc 有什么区别？
 
-> 截图：`swagger_ui_overview.png`（总览）、`swagger_ui_tryitout_response.png`（Try it out 响应）、`swagger_ui_authorize_dialog.png`（Authorize 弹窗）。
+- `/docs` = Swagger UI，可以点 **Try it out** 在线测试接口
+- `/redoc` = ReDoc，只能看不能测，排版更漂亮，适合截图发给外部
 
-### 11.2 实测发现并修复：路由注册顺序（Spring 迁移陷阱）
+### Q5: 怎么修改 /docs 的访问路径？
 
-**现象**：`@GetMapping("/list")` 与 `@GetMapping("/{user_id}")` 共存时，`/api/users/list` 被动态路径 `/{user_id}` 拦截，返回 422（`user_id="list"` 无法解析为 int）。
-
-**根因**：`WebApplicationContext._register_controllers` 原用 `inspect.getmembers`，按**字母序**遍历方法，`get_user` 排在 `list_users` 之前注册，导致 `/{user_id}` 先匹配。FastAPI/Starlette 按**注册顺序**匹配路由，无静态优先级。
-
-**与 Spring 的差异**：Spring MVC 的 `RequestMappingHandlerMapping` 对路径模式有**特异性排序**，静态路径（`/list`）天然优先于动态路径（`/{user_id}`），开发者无需关心声明顺序。FastAPI 无此机制。
-
-**修复**：[web_context.py](../spring/web/web_context.py) 改用遍历 `__mro__` 的 `__dict__`（Python 3.7+ 类命名空间保留定义顺序），按**源码声明顺序**注册路由。开发者把静态路径声明在动态路径之前即可避免拦截，体验对齐 Spring。
-
-```python
-# 修复后：静态路径 /list 必须声明在动态路径 /{user_id} 之前
-@GetMapping("/list")
-def list_users(self): ...
-
-@GetMapping("/{user_id}")   # 动态路径放后面
-def get_user(self, user_id: int): ...
+```yaml
+spring:
+  swagger:
+    docs-url: "/api-docs"    # 改成你想要的路径
+    redoc-url: "/api-redoc"
+    openapi-url: "/api-spec.json"
 ```
 
-**回归验证**：`test_swagger_module.py` / `test_web_annotations_full.py` / `test_test_slicing.py` / `test_actuator.py` 共 145 用例全部通过。
+设为 `null` 可以单独禁用某个页面：
+```yaml
+    redoc-url: null   # 禁用 ReDoc
+```
 
-> ⚠️ **迁移提示**：从 Spring 迁移时，若同一 Controller 内存在静态路径与 `/{var}` 动态路径并存，请将静态路径声明在前。这是 FastAPI 路由匹配机制决定的，框架已按定义顺序注册以最大程度对齐 Spring 体验。
+### Q6: 分组标签太多，页面很乱怎么办？
+
+每个 `@RestController` 类对应一个分组。如果你的 Controller 太多，可以考虑按业务模块合并 Controller，或者给关联度低的接口加上 `@Tag(name="其他")`。
+
+---
+
+## 代码位置
+
+- 实现：[`spring/web/swagger.py`](../spring/web/swagger.py)
+- 测试：[`tests/test_swagger_module.py`](../tests/test_swagger_module.py)（43 个用例）
+- 测试报告：[TEST_REPORT.md](TEST_REPORT.md)

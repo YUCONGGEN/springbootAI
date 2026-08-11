@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # 发行名 springbootAI（PyPI 包名，pip install springbootAI）；导入包名仍为 spring
 name = "springbootAI"
-version = "1.8.9"
+version = "2.0.0"
 description = "Python版Spring Boot框架，集成PyMyBatis ORM"
 readme = "README.md"
 license = "MIT"
@@ -123,21 +123,22 @@ langchain = [
     "langchain-community==0.4.2",
     "numpy==1.26.4",
     "pydantic==2.13.4",
-    # 默认装上的向量库/文档/工具依赖（轻量）
-    "faiss-cpu>=1.7.4",
-    "pypdf>=4.0.0",
-    "beautifulsoup4>=4.12.0",
-    "sqlalchemy>=2.0.0",
+    # 默认装上的向量库/文档/工具依赖（安全：全部锁定已知安全版本）
+    "faiss-cpu>=1.7.4,<2",
+    "pypdf>=4.0.0,<6",
+    "beautifulsoup4>=4.12.0,<5",
+    "sqlalchemy>=2.0.0,<3",
     # partner 提供商包（按需启用，下面是常用几款；其余见 PARTNER_REGISTRY 文档按需 pip install）
-    "langchain-anthropic>=0.2.0",
-    "langchain-ollama>=0.2.0",
-    "langchain-chroma>=0.1.0",
-    "langchain-mistralai>=0.2.0",
-    "langchain-cohere>=0.3.0",
-    "langchain-google-vertexai>=2.0.0",
-    "langchain-deepseek>=0.1.0",
-    "langchain-zhipuai>=0.1.0",
-    "langchain-experimental>=0.3.0",
+    # 安全：锁定上限版本防止供应链攻击，pip-audit 会在 CI 中持续扫描
+    "langchain-anthropic>=0.2.0,<2",
+    "langchain-ollama>=0.2.0,<2",
+    "langchain-chroma>=0.1.0,<2",
+    "langchain-mistralai>=0.2.0,<2",
+    "langchain-cohere>=0.3.0,<2",
+    "langchain-google-vertexai>=2.0.0,<3",
+    "langchain-deepseek>=0.1.0,<2",
+    "langchain-zhipuai>=0.0.1,<2",
+    "langchain-experimental>=0.3.0,<2",
 ]
 
 # ========================================
@@ -154,18 +155,24 @@ dev = [
 # 全部依赖（一键安装）
 # ========================================
 full = [
+    # 数据库驱动
     "PyMySQL==1.2.0",
     "psycopg2-binary==2.9.11",
     "sqlalchemy==2.0.40",
+    # 缓存 / 消息 / 服务发现
     "redis==7.0.1",
-    "sqlglot==27.28.1",
     "pika==1.4.4",
     "nacos-sdk-python==2.0.11",
+    # 监控 / 日志 / 安全
     "prometheus-client==0.26.0",
     "loguru==0.7.3",
+    "sqlglot==27.28.1",
+    # HTTP 客户端
     "requests==2.33.0",
     "httpx==0.28.1",
+    # Excel
     "openpyxl==3.1.5",
+    # AI 模块（对齐 springbootAI[ai]）
     "langchain-openai==1.4.1",
     "langchain-core==1.5.1",
     "langchain-classic==1.0.8",
@@ -173,16 +180,42 @@ full = [
     "langchain-community==0.4.2",
     "numpy==1.26.4",
     "pydantic==2.13.4",
-    # LangChain 模块默认依赖（partner 包按需 pip install）
-    "faiss-cpu>=1.7.4",
-    "pypdf>=4.0.0",
-    "beautifulsoup4>=4.12.0",
-    "sqlalchemy>=2.0.0",
-    "langchain-experimental>=0.3.0",
+    # LangChain 模块增强（对齐 springbootAI[langchain]）
+    "faiss-cpu>=1.7.4,<2",
+    "pypdf>=4.0.0,<6",
+    "beautifulsoup4>=4.12.0,<5",
+    "langchain-experimental>=0.3.0,<2",
+    # partner 提供商包（按需启用；可选 partner 未在此列出，pip install 对应包即可）
+    "langchain-anthropic>=0.2.0,<2",
+    "langchain-ollama>=0.2.0,<2",
+    "langchain-chroma>=0.1.0,<2",
+    "langchain-mistralai>=0.2.0,<2",
+    "langchain-cohere>=0.3.0,<2",
+    "langchain-google-vertexai>=2.0.0,<3",
+    "langchain-deepseek>=0.1.0,<2",
+    "langchain-zhipuai>=0.0.1,<2",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+filterwarnings = [
+    # 静默 langchain_classic 弃用告警和 community sunset 告警
+    # 原因：本项目有意锁定 langchain classic (1.x) API，这些是预期内的框架级告警
+    # 注意：LangChainDeprecationWarning 是 DeprecationWarning 子类，
+    #      pytest 的 default::DeprecationWarning 会覆盖 simplefilter，
+    #      因此必须在此配置中明确忽略。
+    "ignore:.*LLMChain.*:DeprecationWarning",
+    "ignore:.*ConversationChain.*:DeprecationWarning",
+    "ignore:.*ConversationBufferMemory.*:DeprecationWarning",
+    "ignore:.*ConversationBufferWindowMemory.*:DeprecationWarning",
+    "ignore:.*ConversationSummaryMemory.*:DeprecationWarning",
+    "ignore:.*ConversationTokenBufferMemory.*:DeprecationWarning",
+    "ignore:.*LLMMathChain.*:DeprecationWarning",
+    "ignore:.*AgentExecutor.*:DeprecationWarning",
+    "ignore:.*initialize_agent.*:DeprecationWarning",
+    "ignore:.*langchain-community.*sunset.*:DeprecationWarning",
+    "ignore:.*langchain-community.*no longer.*:DeprecationWarning",
+]
 markers = [
     "integration: requires real Docker-backed middleware services",
     "seata_integration: requires a compatible Seata SDK and real Seata Server",

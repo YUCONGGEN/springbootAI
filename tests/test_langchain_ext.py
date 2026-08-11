@@ -20,13 +20,11 @@
 - Callbacks(15)   回调：全类型/注册/all/clear/文件回调
 - E2E(40)         端到端：完整流程/组合使用/错误恢复/性能
 """
+import importlib
 import os
 import sys
-import json
-import tempfile
 import warnings
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -45,16 +43,16 @@ except ImportError:
     pass
 
 from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
-from spring.ai.core import ChatModel, EmbeddingModel, Message, MessageType
+from spring.ai.core import ChatModel, EmbeddingModel, Message
 from spring.context.registry import BeanRegistry
 from spring.langchain.adapters import (
-    LangChainEmbeddingToSpring, LangChainModelToSpring,
+    LangChainModelToSpring,
     SpringChatModelToLangChain, SpringEmbeddingToLangChain,
     to_langchain_embeddings, to_langchain_model,
     to_spring_embeddings, to_spring_model,
 )
 from spring.langchain.autoconfig import (
-    LangChainProperties, bind_langchain_config, configure_langchain,
+    bind_langchain_config, configure_langchain,
 )
 from spring.langchain.partners import (
     PARTNER_REGISTRY, PartnerProviderFactory,
@@ -835,6 +833,10 @@ class TestPartnersExt:
         with pytest.raises((ValueError, KeyError, ImportError)):
             PartnerProviderFactory.create("nonexistent", {})
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("langchain_anthropic") is not None,
+        reason="langchain_anthropic 已安装，缺失测试不适用",
+    )
     def test_20_factory_create_missing_package_raises(self):
         """缺失依赖包抛 ImportError。"""
         with pytest.raises(ImportError):
@@ -2238,6 +2240,10 @@ class TestVectorStoresExt:
         with pytest.raises(ImportError):
             VectorStoreFactory.create("faiss", embeddings=lc_embeddings)
 
+    @pytest.mark.skipif(
+        importlib.util.find_spec("chromadb") is not None,
+        reason="chromadb 已安装，缺失测试不适用",
+    )
     def test_19_create_chroma_missing_dep_raises(self, lc_embeddings):
         """chroma 依赖缺失抛 ImportError。"""
         with pytest.raises(ImportError):

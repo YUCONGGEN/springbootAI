@@ -24,7 +24,7 @@ import threading
 import re
 import random
 import inspect
-from typing import Dict, List, Optional, Callable, Any, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 
 import httpx

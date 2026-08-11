@@ -11,8 +11,6 @@ import shutil
 import sqlite3
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
-from collections import OrderedDict
 
 import pytest
 
@@ -333,7 +331,6 @@ class TestReplayProtection:
 
     def test_valid_request_passes(self):
         """测试有效请求通过验证"""
-        from spring.security.replay_protection import ReplayProtection
 
         timestamp, nonce, signature = self._generate_valid_request()
         valid, reason = self.protector.validate_request(

@@ -13,7 +13,7 @@ name: Publish
 #     workflow filename = publish.yml, environment 留空
 #   参见 https://docs.pypi.org/trusted-publishers/
 #
-# 版本：1.8.9（pyproject.toml 单一来源）
+# 版本：2.0.0（pyproject.toml 单一来源）
 # ====================================================================
 
 on:

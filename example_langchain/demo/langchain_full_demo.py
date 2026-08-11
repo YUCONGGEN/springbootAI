@@ -56,10 +56,8 @@ os.environ.setdefault("AI_ALLOW_FAKE", "true")
 
 from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
 from spring.langchain.adapters import (
-    SpringChatModelToLangChain, SpringEmbeddingToLangChain,
-    LangChainModelToSpring, LangChainEmbeddingToSpring,
     to_langchain_model, to_langchain_embeddings,
-    to_spring_model, to_spring_embeddings,
+    to_spring_model,
 )
 from spring.langchain.prompts.templates import PromptTemplateFactory
 from spring.langchain.chains.services import ChainService
@@ -229,9 +227,12 @@ def demo_agents():
         return f"搜索结果: {query}"
 
     def calculate(expression: str) -> str:
-        """计算工具 - 算术表达式求值。"""
+        """计算工具 - 安全的算术表达式求值。"""
         try:
-            return str(eval(expression))  # demo 仅演示，生产用 safe_eval_arithmetic
+            from spring.langchain.utilities.utils import safe_eval_arithmetic
+            return str(safe_eval_arithmetic(expression))
+        except ImportError:
+            return "safe_eval_arithmetic 未安装"
         except Exception:
             return "无法计算"
 

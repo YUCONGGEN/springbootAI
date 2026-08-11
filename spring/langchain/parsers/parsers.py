@@ -9,7 +9,7 @@
 - enum: EnumOutputParser（枚举）
 """
 import logging
-from typing import Any, Optional, Type
+from typing import Any, Type
 
 
 logger = logging.getLogger("Spring.LangChain")

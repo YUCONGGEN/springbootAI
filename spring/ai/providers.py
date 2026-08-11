@@ -181,33 +181,84 @@ class OpenAIChatModel(ChatModel):
         queue: asyncio.Queue = asyncio.Queue()
 
         def _producer():
-            for chunk in self.stream(messages, tool_registry, options):
-                asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
-            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+            try:
+                for chunk in self.stream(messages, tool_registry, options):
+                    asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
+            except Exception as exc:
+                logger.warning("异步流式生产者异常: %s", exc)
+                # 向消费端发送异常标记，防止永久挂起
+                asyncio.run_coroutine_threadsafe(
+                    queue.put(RuntimeError(f"stream error: {exc}")), loop)
+            finally:
+                # 无论成功或异常都发送结束哨兵
+                asyncio.run_coroutine_threadsafe(queue.put(None), loop)
 
         loop.run_in_executor(None, _producer)
         while True:
             chunk = await queue.get()
             if chunk is None:
                 break
+            if isinstance(chunk, Exception):
+                raise chunk
             yield chunk
 
     # ---------- Provider 单次调用 ----------
 
     def _raw_call(self, messages, tool_registry=None, options=None) -> ChatResponse:
         if self._llm is not None:
-            return self._call_via_langchain(messages, options)
+            return self._call_via_langchain(messages, tool_registry, options)
         return self._call_via_http(messages, tool_registry, options)
 
-    def _call_via_langchain(self, messages, options) -> ChatResponse:
+    def _call_via_langchain(self, messages, tool_registry, options) -> ChatResponse:
         lc_messages = [(m.type, m.content) for m in messages]
+        # 传递 tool_registry：若 langchain-openai 版本支持 bind_tools，
+        # 把 ToolRegistry 的 schema 绑定到 LLM，使 Function Calling 在 LangChain 路径下也生效
+        if tool_registry is not None and hasattr(tool_registry, "schemas"):
+            try:
+                from langchain_core.tools import StructuredTool
+                lc_tools = []
+                for name in tool_registry.names():
+                    td = tool_registry.get(name)
+                    if td is None:
+                        continue
+                    lc_tools.append(StructuredTool.from_function(
+                        name=name, func=td.func, description=td.description))
+                if lc_tools:
+                    self._llm = self._llm.bind_tools(lc_tools)
+            except Exception:
+                pass  # bind_tools 不可用时跳过，不影响主线
         result = self._llm.invoke(lc_messages)
         content = result.content if hasattr(result, "content") else str(result)
         usage = getattr(result, "usage_metadata", None) or {}
+        # 提取 langchain 返回的 tool_calls（如有）
+        tool_calls = self._extract_lc_tool_calls(result)
+        meta = {"provider": "openai", "backend": "langchain", "usage": usage}
+        if tool_calls:
+            meta["tool_calls"] = tool_calls
         return ChatResponse(
-            generations=[Generation(output=Message.assistant(content))],
-            metadata={"provider": "openai", "backend": "langchain", "usage": usage},
+            generations=[Generation(output=Message(
+                content=content, type=MessageType.ASSISTANT,
+                metadata={"tool_calls": tool_calls or []}))],
+            metadata=meta,
         )
+
+    @staticmethod
+    def _extract_lc_tool_calls(result) -> Optional[List[Dict]]:
+        """从 langchain AIMessage 提取 tool_calls（兼容 langchain 1.x 格式）。"""
+        lc_tc = getattr(result, "tool_calls", None) or []
+        if not lc_tc:
+            return None
+        out = []
+        for tc in lc_tc:
+            out.append({
+                "id": getattr(tc, "id", "") or "",
+                "function": {
+                    "name": getattr(tc, "name", ""),
+                    "arguments": json.dumps(getattr(tc, "args", {}),
+                                            ensure_ascii=False),
+                },
+            })
+        return out if out else None
 
     def _stream_via_langchain(self, messages, options):
         if self._llm is None:
@@ -447,12 +498,53 @@ class OpenAICompatChatModel(ChatModel):
 
     def _raw_call(self, messages, tool_registry=None, options=None):
         if self._llm is not None:
-            result = self._llm.invoke([(m.type, m.content) for m in messages])
-            content = result.content if hasattr(result, "content") else str(result)
-            return ChatResponse(
-                generations=[Generation(output=Message.assistant(content))],
-                metadata={"provider": self._provider, "backend": "langchain"})
+            return self._call_via_langchain(messages, tool_registry, options)
         return self._call_via_http(messages, tool_registry, options)
+
+    def _call_via_langchain(self, messages, tool_registry, options):
+        """LangChain 路径：传递 tool_registry 使 Function Calling 生效。"""
+        from langchain_core.messages import (
+            AIMessage, HumanMessage, SystemMessage, ToolMessage,
+        )
+        lc_msgs = []
+        for m in messages:
+            t = m.type
+            if t == "system":
+                lc_msgs.append(SystemMessage(content=m.content))
+            elif t == "assistant":
+                lc_msgs.append(AIMessage(content=m.content))
+            elif t == "tool":
+                lc_msgs.append(ToolMessage(content=m.content,
+                                           tool_call_id=m.metadata.get("tool_call_id", "")))
+            else:
+                lc_msgs.append(HumanMessage(content=m.content))
+
+        if tool_registry is not None and hasattr(tool_registry, "schemas"):
+            try:
+                from langchain_core.tools import StructuredTool
+                lc_tools = []
+                for name in tool_registry.names():
+                    td = tool_registry.get(name)
+                    if td is None:
+                        continue
+                    lc_tools.append(StructuredTool.from_function(
+                        name=name, func=td.func, description=td.description))
+                if lc_tools:
+                    self._llm = self._llm.bind_tools(lc_tools)
+            except Exception:
+                pass
+        result = self._llm.invoke(lc_msgs)
+        content = result.content if hasattr(result, "content") else str(result)
+        tool_calls = OpenAIChatModel._extract_lc_tool_calls(result)
+        meta = {"provider": self._provider, "backend": "langchain",
+                "usage": getattr(result, "usage_metadata", None) or {}}
+        if tool_calls:
+            meta["tool_calls"] = tool_calls
+        return ChatResponse(
+            generations=[Generation(output=Message(
+                content=content, type=MessageType.ASSISTANT,
+                metadata={"tool_calls": tool_calls or []}))],
+            metadata=meta)
 
     def _call_via_http(self, messages, tool_registry, options):
         payload = {"model": self.model,

@@ -10,7 +10,6 @@
 import sys
 import types
 from unittest.mock import MagicMock
-from pathlib import Path
 
 
 class _MockModule(types.ModuleType):

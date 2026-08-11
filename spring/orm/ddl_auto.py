@@ -16,9 +16,8 @@ ORM DDL 自动建表/更新 (JPA hibernate.ddl-auto 风格)
 
 import logging
 import inspect
-import time
 import threading
-from typing import Dict, List, Optional, Any, Type, Tuple, get_type_hints
+from typing import Dict, List, Optional, Any, Type, get_type_hints
 from dataclasses import is_dataclass, fields as dataclass_fields
 from enum import Enum
 

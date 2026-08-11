@@ -2,7 +2,7 @@
 消息队列注解
 提供RabbitMQ消息消费和发送功能
 """
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable
 import functools
 from .core import SpringAnnotation
 

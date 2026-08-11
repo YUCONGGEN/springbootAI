@@ -10,7 +10,7 @@
 """
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Generic, List, Optional, TypeVar
+from typing import Generic, List, Optional, TypeVar
 
 T = TypeVar("T")
 

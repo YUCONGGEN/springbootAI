@@ -2,8 +2,8 @@
 数据库ORM模块
 集成SQLAlchemy实现企业级数据库操作
 """
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text, ForeignKey
-from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship, scoped_session
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
+from sqlalchemy.orm import declarative_base, sessionmaker, Session, scoped_session
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 from typing import Optional

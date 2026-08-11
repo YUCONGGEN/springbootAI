@@ -17,7 +17,6 @@ from .message_source import (
     MessageArgs,
     MessageSource,
     MessageSourceResolvable,
-    NoSuchMessageException,
 )
 
 

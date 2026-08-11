@@ -2,8 +2,8 @@
 Spring Cloud 微服务注解
 包含注册发现、配置中心、Feign、熔断限流、网关、负载均衡、分布式事务等注解
 """
-from typing import Optional, Union, Dict, Any, Type, List, Callable
-from .core import SpringAnnotation, Valid, Validated
+from typing import Optional, Type, List
+from .core import SpringAnnotation, Valid, Validated  # noqa: F401  # 重导出给 cloud 子模块使用
 
 
 # ==================== 注册发现注解 ====================

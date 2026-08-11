@@ -51,8 +51,8 @@ jobs:
 
     - name: Bandit security static analysis
       run: |
-        echo "Running Bandit on spring/ (core + langchain)..."
-        bandit -r spring/ -lll -f json -o bandit-report.json
+        echo "Running Bandit on spring/ and example_langchain/ (core + langchain + examples)..."
+        bandit -r spring/ example_langchain/ -ll -f json -o bandit-report.json
         echo "Bandit scan completed, report saved to bandit-report.json"
 
     - name: Check for hardcoded secrets
@@ -77,9 +77,12 @@ jobs:
     - name: Verify SafeEval security (no eval/exec usage)
       run: |
         echo "Verifying safe_eval_arithmetic uses AST (not eval/exec)..."
-        # 确保安全算术求值器不使用危险的 eval/exec
-        if grep -rnE "^\s*(result|return)\s*=\s*eval\(" spring/langchain/ example_langchain/; then
-          echo "::error::Found direct eval() usage — use safe_eval_arithmetic instead!"
+        # 匹配任何形式的 eval() 调用（包括 str(eval(...))、return eval(...) 等变体）
+        if grep -rnE "\beval\s*\(|exec\s*\(" spring/langchain/ example_langchain/ \
+            | grep -vE "(safe_eval_arithmetic|#.*eval|['\"]eval|\.pyc)" \
+            | grep -v "def safe_eval_arithmetic" \
+            | grep -v "mode='eval'" ; then
+          echo "::error::Found direct eval()/exec() usage — use safe_eval_arithmetic instead!"
           exit 1
         fi
         echo "SafeEval verification passed — no dangerous eval() in langchain module"

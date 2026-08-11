@@ -9,8 +9,6 @@
 2. 其他 init_* 的 except Exception 只输出简短 warning，不含配置项名/值/建议。
 3. 非 fail_fast 模式下配置错误被静默吞掉，用户不知道组件初始化失败。
 """
-import sys
-import io
 import pytest
 
 from spring.main import SpringApplication, ComponentInitError

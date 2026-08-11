@@ -31,12 +31,12 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Type, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Type
 
 from spring.annotations.core import SpringAnnotation
 
 from .exceptions import WebSocketHandlerException
-from .session import WebSocketSession, global_session_registry
+from .session import WebSocketSession
 
 logger = logging.getLogger("Spring.WebSocket.Handler")
 

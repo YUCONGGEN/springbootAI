@@ -23,7 +23,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Type
 
 from .annotations import (
     MessageEndpoint,
@@ -362,7 +362,7 @@ class WebSocketRouter:
     def _install_route(self, app: Any, entry: _RouteEntry) -> None:
         """挂载单个 WebSocket 路由到应用。"""
         # 延迟导入 Starlette WebSocket
-        from starlette.websockets import WebSocket, WebSocketState
+        from starlette.websockets import WebSocket
 
         async def endpoint(websocket: WebSocket) -> None:
             # 握手：接受连接

@@ -25,7 +25,6 @@
 """
 from __future__ import annotations
 
-import inspect
 from typing import Any, Dict, List, Optional, Type
 
 from .constraints import Constraint

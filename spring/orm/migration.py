@@ -9,12 +9,11 @@
 - 迁移文件命名: V{version}__{description}.sql
 """
 
-import os
 import re
 import hashlib
 import logging
 import time
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Tuple
 from pathlib import Path
 
 logger = logging.getLogger("Spring.ORM.Migration")

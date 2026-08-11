@@ -1,27 +1,21 @@
 """
-Agent 服务 - 封装 langchain classic 的 Agent / AgentExecutor，作为 @Service Bean。
+Agent 服务 - 封装 langchain classic 的各类 Agent，作为 @Service Bean。
 
-封装的 Agent 类型：
+封装的 Agent 类型（对齐 langchain-master libs/langchain/langchain_classic/agents/）：
 - react: ZERO_SHOT_REACT_DESCRIPTION（经典 ReAct）
 - chat-zero-shot-react: CHAT_ZERO_SHOT_REACT_DESCRIPTION（对话版 ReAct）
+- conversational: CHAT_CONVERSATIONAL_REACT_DESCRIPTION（带记忆的事务型 Agent）
 - openai-tools: OPENAI_FUNCTIONS / create_openai_tools_agent（OpenAI 函数调用）
 - structured-chat: create_structured_chat_agent（结构化工具调用）
 - self-ask-with-search: SELF_ASK_WITH_SEARCH
+- xml: XMLAgent（XML 格式 Agent）
 
-通过 create_agent / create_react_agent / run_agent 统一入口。
+All agents receive langchain BaseChatModel (bridged from springbootAI ChatModel).
+
+Deprecation warnings from langchain_classic are centrally suppressed by spring.langchain.__init__.
 """
 import logging
-import warnings
-from typing import Any, List, Optional, Sequence
-
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*deprecated.*")
-try:
-    from langchain_core._api import LangChainDeprecationWarning
-    warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
-except ImportError:
-    pass
+from typing import Any, Optional, Sequence
 
 logger = logging.getLogger("Spring.LangChain")
 
@@ -31,12 +25,13 @@ logger = logging.getLogger("Spring.LangChain")
 _AGENT_TYPE_MAP = {
     "react": "ZERO_SHOT_REACT_DESCRIPTION",
     "chat-zero-shot-react": "CHAT_ZERO_SHOT_REACT_DESCRIPTION",
+    "conversational": "CHAT_CONVERSATIONAL_REACT_DESCRIPTION",
     "openai-functions": "OPENAI_FUNCTIONS",
     "self-ask-with-search": "SELF_ASK_WITH_SEARCH",
 }
 
-# structured-chat 走专用工厂函数（无 AgentType 枚举值）
-_SPECIAL_AGENT_TYPES = {"structured-chat", "openai-tools"}
+# structured-chat/openai-tools/xml 走专用工厂函数（无 AgentType 枚举值）
+_SPECIAL_AGENT_TYPES = {"structured-chat", "openai-tools", "xml"}
 
 
 class AgentService:
@@ -84,6 +79,10 @@ class AgentService:
             return executor
         if agent_type == "openai-tools":
             executor = self.create_openai_tools_agent(tools, llm=llm)
+            executor.max_iterations = max_iterations
+            return executor
+        if agent_type == "xml":
+            executor = self.create_xml_agent(tools, llm=llm)
             executor.max_iterations = max_iterations
             return executor
 
@@ -160,6 +159,29 @@ class AgentService:
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
         agent = create_structured_chat_agent(llm or self._lc_model, tools, prompt)
+        return AgentExecutor(agent=agent, tools=tools,
+                             handle_parsing_errors=True)
+
+    def create_xml_agent(self, tools: Sequence[Any],
+                         llm: Optional[Any] = None) -> Any:
+        """创建 XML AgentExecutor。
+
+        对齐 langchain-master agents/xml，使用 XML 格式进行工具调用。
+        适合需要结构化输入/输出的场景。
+        """
+        from langchain_classic.agents import create_xml_agent, AgentExecutor
+        from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "You are a helpful assistant. Use XML format for tool calls.\n"
+             "Available tools: {tools}\n"
+             "Format:\n"
+             "<tool>{tool_name}</tool>\n"
+             "<tool_input>{input}</tool_input>"),
+            ("user", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ])
+        agent = create_xml_agent(llm or self._lc_model, tools, prompt)
         return AgentExecutor(agent=agent, tools=tools,
                              handle_parsing_errors=True)
 

@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, List, Optional, Type, Union
+from typing import Any, List, Optional, Type
 
 from .annotations import (
     ExcelColumnModel, ExcelSheet, _get_class_sheet_meta, parse_excel_columns,
