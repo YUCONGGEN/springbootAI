@@ -10,7 +10,7 @@ from prometheus_client import (
     Summary,
     generate_latest,
 )
-from prometheus_client.exposition import start_http_server
+from prometheus_client.exposition import start_http_server, CONTENT_TYPE_LATEST
 import logging
 import os
 
