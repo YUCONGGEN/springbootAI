@@ -105,7 +105,7 @@ ai = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==1.26.4",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
 ]
 
@@ -121,7 +121,7 @@ langchain = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==1.26.4",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
     # 默认装上的向量库/文档/工具依赖（安全：全部锁定已知安全版本）
     "faiss-cpu>=1.7.4,<2",
@@ -178,7 +178,7 @@ full = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==1.26.4",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
     # LangChain 模块增强（对齐 springbootAI[langchain]）
     "faiss-cpu>=1.7.4,<2",
