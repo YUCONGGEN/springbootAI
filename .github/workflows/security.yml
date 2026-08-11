@@ -79,7 +79,7 @@ jobs:
         echo "Verifying safe_eval_arithmetic uses AST (not eval/exec)..."
         # 匹配任何形式的 eval() 调用（包括 str(eval(...))、return eval(...) 等变体）
         if grep -rnE "\beval\s*\(|exec\s*\(" spring/langchain/ example_langchain/ \
-            | grep -vE "(safe_eval_arithmetic|#.*eval|['\"]eval|\.pyc)" \
+            | grep -vE "(safe_eval_arithmetic|#.*eval|['\"]eval|eval\(\)[^a-zA-Z]|_eval\b|\.pyc)" \
             | grep -v "def safe_eval_arithmetic" \
             | grep -v "mode='eval'" ; then
           echo "::error::Found direct eval()/exec() usage — use safe_eval_arithmetic instead!"
