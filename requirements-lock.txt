@@ -197,7 +197,7 @@ python-dotenv==1.2.2
     # via -r requirements.txt
 pyyaml==6.0.3
     # via -r requirements.txt
-redis==7.0.1
+redis==8.1.0
     # via -r requirements.txt
 requests==2.33.0
     # via

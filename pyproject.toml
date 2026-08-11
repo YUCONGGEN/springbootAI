@@ -64,7 +64,7 @@ sqlalchemy = ["sqlalchemy==2.0.40"]
 # ========================================
 # Redis - 类似 Spring Boot Starter Data Redis
 # ========================================
-redis = ["redis==7.0.1"]
+redis = ["redis==8.1.0"]
 
 # ========================================
 # 消息队列 - 类似 Spring Boot Starter AMQP
@@ -147,7 +147,7 @@ langchain = [
 dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
-    "redis==7.0.1",
+    "redis==8.1.0",
     "sqlglot==27.28.1",
 ]
 
@@ -160,7 +160,7 @@ full = [
     "psycopg2-binary==2.9.11",
     "sqlalchemy==2.0.40",
     # 缓存 / 消息 / 服务发现
-    "redis==7.0.1",
+    "redis==8.1.0",
     "pika==1.4.4",
     "nacos-sdk-python==2.0.11",
     # 监控 / 日志 / 安全

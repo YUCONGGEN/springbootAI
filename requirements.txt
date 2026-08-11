@@ -14,7 +14,7 @@ pyyaml==6.0.3
 python-dotenv==1.2.2
 
 # Redis - 分布式锁、限流、熔断持久化存储
-redis==7.0.1
+redis==8.1.0
 
 # 数据库 ORM
 sqlalchemy==2.0.40
