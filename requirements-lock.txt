@@ -39,7 +39,7 @@ alibabacloud-gateway-spi==0.0.4
     # via
     #   alibabacloud-gateway-pop
     #   alibabacloud-tea-openapi
-alibabacloud-kms20160120==2.4.0
+alibabacloud-kms20160120==3.2.0
     # via nacos-sdk-python
 alibabacloud-openapi-util==0.2.4
     # via
