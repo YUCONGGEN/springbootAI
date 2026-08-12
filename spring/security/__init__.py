@@ -5,6 +5,7 @@ Spring Security 模块
 from .security_context import SecurityContext, SecurityContextHolder
 from .security_aop import (
     pre_authorize_decorator,
+    post_authorize_decorator,
     secured_decorator,
     authenticate_decorator,
 )
@@ -26,6 +27,7 @@ __all__ = [
     'SecurityContext',
     'SecurityContextHolder',
     'pre_authorize_decorator',
+    'post_authorize_decorator',
     'secured_decorator',
     'authenticate_decorator',
     'SecretManager',

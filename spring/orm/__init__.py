@@ -142,6 +142,8 @@ from spring.orm.ddl_auto import (
     Column,
     Id,
     Version,
+    CreateTime,
+    UpdateTime,
     Transient,
     Index,
     entity,
@@ -150,12 +152,15 @@ from spring.orm.ddl_auto import (
     id_column as id_column_decorator,
     version_column,
     version_column as version_column_decorator,
+    create_time_column,
+    update_time_column,
     transient_field,
     transient_field as transient_field_decorator,
     init_ddl_auto,
     get_ddl_manager,
     OptimisticLockExecutor,
     OptimisticLockError,
+    AuditTimeExecutor,
 )
 
 # 版本信息
@@ -238,6 +243,8 @@ __all__ = [
     'Column',
     'Id',
     'Version',
+    'CreateTime',
+    'UpdateTime',
     'Transient',
     'Index',
     'entity',
@@ -246,6 +253,8 @@ __all__ = [
     'id_column_decorator',
     'version_column',
     'version_column_decorator',
+    'create_time_column',
+    'update_time_column',
     'transient_field',
     'transient_field_decorator',
     'init_ddl_auto',
@@ -253,6 +262,8 @@ __all__ = [
     # JPA @Version 乐观锁执行器
     'OptimisticLockExecutor',
     'OptimisticLockError',
+    # JPA @CreateTime/@UpdateTime 自动时间填充执行器
+    'AuditTimeExecutor',
     # 版本
     '__version__',
 ]

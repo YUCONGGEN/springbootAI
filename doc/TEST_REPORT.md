@@ -1,9 +1,9 @@
 # SpringBootAI 框架综合测试报告
 
 **测试日期**: 2026-08-12（下文保留 2026-08-08 至 2026-08-10 的历史增量记录）
-**测试环境**: Windows + Python 3.11.9 + Docker Desktop 29.6.1；CI 配置覆盖 Python 3.10 / 3.11 / 3.12
-**框架版本**: SpringBootAI 2.1.1 / PyMyBatis 2.1.1 / SpringBootAI AI 2.1.1 / SpringBootAI Excel 2.1.1 / SpringBootAI Validation 2.1.1 / SpringBootAI CSV 2.1.1 / SpringBootAI Data 2.1.1 / SpringBootAI i18n 2.1.1 / SpringBootAI WebSocket 2.1.1 / SpringBootAI Swagger 2.1.1
-**测试结果**: **2333 passed、4 skipped、154 subtests passed、0 failed**；`spring` 行覆盖率 **67.58%**，高于 60% CI 门禁。真实 Docker 集成测试 **5 passed**：MySQL、Redis、RabbitMQ、Nacos、Seata TCC；Redis 和 Seata bridge 停机失败关闭测试各 1 个通过。
+**测试环境**: Windows + Conda Python 3.10.20 + Docker Desktop 28.5.2；先用 `pip install "springbootAI[full]"` 配齐完整可选依赖，再直接测试工作区中的 2.2.0 源码
+**框架版本**: SpringBootAI 2.2.0 / PyMyBatis 2.2.0 / SpringBootAI AI 2.2.0 / SpringBootAI Excel 2.2.0 / SpringBootAI Validation 2.2.0 / SpringBootAI CSV 2.2.0 / SpringBootAI Data 2.2.0 / SpringBootAI i18n 2.2.0 / SpringBootAI WebSocket 2.2.0 / SpringBootAI Swagger 2.2.0
+**测试结果**: **2372 passed、4 skipped、172 subtests passed、0 failed**；`spring` 行覆盖率 **68.63%**，高于 60% CI 门禁。真实 Docker 集成测试 **5 passed**：MySQL、Redis、RabbitMQ、Nacos、Seata TCC；Redis 和 Seata bridge 停机失败关闭测试 **2 passed**。4 个 skipped 均为 full 环境已安装对应可选包后不再适用的“缺失依赖”反向测试，不是未安装功能。
 
 ## 给新手：这份报告如何阅读和复现
 
@@ -16,25 +16,34 @@
 第一次运行建议按下面顺序操作：
 
 ```powershell
-# 1. 创建并启用虚拟环境（只需做一次）
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -X utf8 -m pip install -r requirements.txt
+# 1. 进入电脑已有的 Conda 环境并安装完整功能（只需做一次）
+conda activate py3.10
+python -X utf8 -m pip install "springbootAI[full]"
+python -m pip check
 
 # 2. 先跑快速单元测试，适合每次改代码后执行
 python -X utf8 -m pytest tests tests_runtime -q
 
 # 3. Docker 已启动时，再跑真实依赖集成测试
-python -X utf8 -m pytest tests_integration -q
+docker compose -f docker-compose.integration.yml up -d --build --wait
+$env:RUN_INTEGRATION_TESTS = "1"
+$env:RUN_SEATA_INTEGRATION_TESTS = "1"
+$env:SEATA_BRIDGE_TOKEN = "springpy-integration-secret"
+python -X utf8 -m pytest tests_integration -m integration -v
+
+# 4. 测试完成后清理本次创建的容器和网络；不加 -v 会保留数据卷
+docker compose -f docker-compose.integration.yml down --remove-orphans
 ```
 
-看到 `2333 passed` 表示本报告顶部这次全量回归通过；`skipped` 表示测试明确判断当前环境缺少可选依赖，不能当成“功能已验证”。要定位失败原因，用 `-x -vv` 让 pytest 在第一个失败处停止并显示详细日志。压测不属于这 2333 个单元/运行时用例，压测命令和 p95/p99 的解释见 [`tests_performance/README.md`](../tests_performance/README.md)。
+看到 `2372 passed` 表示本报告顶部这次全量回归通过。要判断 `skipped` 是否合理，可加 `-rs` 显示每项原因；本次 4 项都是在依赖已经安装时不适用的缺失依赖分支。要定位失败原因，用 `-x -vv` 让 pytest 在第一个失败处停止并显示详细日志。压测不属于这 2372 个单元/运行时用例，压测命令和 p95/p99 的解释见 [`tests_performance/README.md`](../tests_performance/README.md)。
 
-> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 2.1.1 / PyMyBatis 2.1.1）。
+> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 2.2.0 / PyMyBatis 2.2.0）。
 >
 > **2026-08-09 TOP5 注解模块增量**：补齐 Bean Validation / JPA @Version·@Transient / 条件装配 / 缓存增强 / CSV 注解 5 个模块的测试套件（共 166 用例），并修复 4 处生产代码缺陷（见第六节）。
 >
 > **2026-08-09 P0/P1/P2 八大模块增量**：实现缺失注解模块分析中推荐的 P0 三项（Spring Data Repository 抽象 / Actuator 运维端点 / 多数据源读写分离）、P1 三项（事务事件监听 / 配置松散绑定与校验 / 测试切片）、P2 两项（i18n 国际化 / WebSocket 实时通信），共 342 用例。修复 `_test_helpers.py` 全局 mock 污染（仅对 stub 模块注入 mock 属性，不再覆盖真实已安装模块）与 `test_test_slicing` 的 Result 包装期望（见第六节）。
+>
+> **2026-08-12 声明式 AOP / 后置鉴权 / 重试恢复增量**：新增 `@Aspect` / `@Pointcut` / `@Before` / `@After` / `@Around` / `@AfterReturning` / `@AfterThrowing`、`@PostAuthorize`、`@Recover` 共 9 个公共注解。新增 26 个专项用例，覆盖受管 Bean 扫描与代理、5 类切点表达式及布尔组合、5 类通知的正常和异常顺序、同步/异步通知、返回值安全表达式与不可执行语法、最具体恢复方法选择、旧式 `recover="method"` 兼容、独立重试装饰器入口、恢复失败和歧义处理；公共注解契约的 172 个 subtests 同步覆盖新增导出。完整小白文档见 [`AOP_SECURITY_RETRY.md`](AOP_SECURITY_RETRY.md)。
 >
 > **2026-08-09 Swagger/OpenAPI 模块增量**：实现注解驱动 API 文档（`@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`/`@Schema`/`@SecurityScheme`/`@SecurityRequirement` + Swagger 2 别名 `@Api`/`@ApiOperation`/`@ApiModel`/`@ApiParam`），对齐 SpringDoc OpenAPI 3，共 43 用例。`WebApplicationContext` 注册路由时同步注入 OpenAPI 元数据，全局 `securitySchemes`/`@Schema`/`@Parameter` 通过自定义 `app.openapi()` 后处理注入。**浏览器网页端到端实测**：启动真实 uvicorn 服务器访问 `/docs`，验证 13 项（页面加载/分组/注解渲染/Try it out 实调/Authorize 弹窗等）全通过，3 张截图存档。**实测发现并修复路由注册顺序问题**：`_register_controllers` 原用 `inspect.getmembers`（字母序）导致 `/{user_id}` 拦截 `/list`，改为按方法定义顺序遍历 `__mro__.__dict__`，对齐 Spring MVC 静态路径优先体验；145 个 web 相关用例回归通过。
 
@@ -72,9 +81,9 @@ python -X utf8 -m pytest tests_integration -q
 
 | 组件 | 版本 | 状态 |
 |------|------|------|
-| Python | 3.9.6 | ✅ |
-| SpringBootAI | 2.1.1 | ✅ |
-| PyMyBatis（内嵌ORM） | 2.1.1 | ✅ |
+| Python | 3.10.20（Conda） | ✅ |
+| SpringBootAI | 2.2.0 | ✅ |
+| PyMyBatis（内嵌ORM） | 2.2.0 | ✅ |
 | MySQL（Docker） | 8.0.46 | ✅ 运行中（端口 3306，springpy 库已就绪） |
 | Redis（Docker） | 7-alpine | ✅ 运行中（healthy，PONG） |
 | RabbitMQ（Docker） | 3-management-alpine | ✅ 运行中（healthy） |
@@ -773,7 +782,7 @@ python test_all_features.py
 
 ## 一、结论
 
-当前代码是 v2.1.1，核心功能、AI/LangChain/LangGraph/MCP 和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿不是 Seata AT；distributed 模式当前验证真实 Seata TC + TCC 回调，也不会自动代理 Python 数据源。支付、订单、库存等核心交易必须完成业务 TCC/Saga/可靠消息和故障恢复验证后再采用。
+当前代码是 v2.2.0，核心功能、AI/LangChain/LangGraph/MCP 和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿不是 Seata AT；distributed 模式当前验证真实 Seata TC + TCC 回调，也不会自动代理 Python 数据源。支付、订单、库存等核心交易必须完成业务 TCC/Saga/可靠消息和故障恢复验证后再采用。
 
 ## 二、本轮已完成
 

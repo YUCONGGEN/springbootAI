@@ -740,10 +740,18 @@ def _retryable_decorator(annotation: Retryable):
                         )
                         await asyncio.sleep(delay / 1000.0)
 
-                if last_exception and annotation.recover and args:
-                    recover_func = getattr(args[0], annotation.recover, None)
-                    if recover_func and callable(recover_func):
-                        result = recover_func(*args[1:], **kwargs)
+                if last_exception and args:
+                    from spring.retry.recovery import (
+                        invoke_recovery,
+                        resolve_recovery_method,
+                    )
+                    recovery = resolve_recovery_method(
+                        args[0], annotation, last_exception, args[1:], kwargs
+                    )
+                    if recovery is not None:
+                        result = invoke_recovery(
+                            recovery, last_exception, args[1:], kwargs
+                        )
                         if inspect.isawaitable(result):
                             return await result
                         return result
@@ -759,7 +767,6 @@ def _retryable_decorator(annotation: Retryable):
             exceptions_to_retry = annotation.value
             exceptions_to_exclude = annotation.exclude
             backoff = annotation.backoff
-            recover_method = annotation.recover
             
             last_exception = None
             retry_count = 0
@@ -798,23 +805,18 @@ def _retryable_decorator(annotation: Retryable):
                     time.sleep(delay / 1000.0)
             
             # 重试失败，尝试调用恢复方法
-            if last_exception and recover_method:
-                logger.info(f"[Retry] Calling recover method '{recover_method}' for {func.__name__}")
-                try:
-                    # 尝试从实例中获取恢复方法
-                    if args:
-                        recover_func = getattr(args[0], recover_method, None)
-                    else:
-                        recover_func = None
-                    
-                    if recover_func and callable(recover_func):
-                        # 移除self参数（如果存在）
-                        if args:
-                            return recover_func(*args[1:], **kwargs)
-                        else:
-                            return recover_func(**kwargs)
-                except Exception as recover_e:
-                    logger.error(f"[Retry] Recover method '{recover_method}' failed: {recover_e}")
+            if last_exception and args:
+                from spring.retry.recovery import (
+                    invoke_recovery,
+                    resolve_recovery_method,
+                )
+                recovery = resolve_recovery_method(
+                    args[0], annotation, last_exception, args[1:], kwargs
+                )
+                if recovery is not None:
+                    return invoke_recovery(
+                        recovery, last_exception, args[1:], kwargs
+                    )
             
             # 所有重试都失败，抛出最后一个异常
             if last_exception:

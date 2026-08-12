@@ -2,7 +2,8 @@
 Spring Security AOP 切面实现
 提供认证授权功能
 """
-from typing import Any, Callable
+from typing import Any, Callable, Dict
+import ast
 import functools
 import inspect
 from spring.security.security_context import SecurityContext, SecurityContextHolder
@@ -60,7 +61,137 @@ def pre_authorize_decorator(annotation):
     return decorator
 
 
-def _evaluate_expression(expression: str) -> bool:
+class _ExpressionValue:
+    """Read-only attribute view for security expression values."""
+
+    def __init__(self, value: Any):
+        self._value = value
+
+    def get(self, name: str) -> Any:
+        if name.startswith('_'):
+            raise ValueError("Private attributes are not allowed in security expressions")
+        if isinstance(self._value, dict):
+            value = self._value.get(name)
+        else:
+            value = getattr(self._value, name)
+        return _wrap_expression_value(value)
+
+    def unwrap(self) -> Any:
+        return self._value
+
+
+def _wrap_expression_value(value: Any) -> Any:
+    if isinstance(value, _ExpressionValue):
+        return value
+    if isinstance(value, (dict, list, tuple)) or (
+        value is not None and not isinstance(value, (str, int, float, bool))
+    ):
+        return _ExpressionValue(value)
+    return value
+
+
+def _unwrap_expression_value(value: Any) -> Any:
+    return value.unwrap() if isinstance(value, _ExpressionValue) else value
+
+
+class _SecurityExpressionEvaluator:
+    """Evaluate a small, non-executable Spring Security expression subset."""
+
+    def __init__(self, variables: Dict[str, Any]):
+        self.variables = variables
+        self.functions = {
+            'hasRole': SecurityContextHolder.has_role,
+            'hasAnyRole': SecurityContextHolder.has_any_role,
+            'hasPermission': SecurityContextHolder.has_permission,
+            'hasAnyPermission': SecurityContextHolder.has_any_permission,
+        }
+
+    def evaluate(self, expression: str) -> bool:
+        normalized = expression.replace('#returnObject', 'returnObject')
+        tree = ast.parse(normalized, mode='eval')
+        return bool(_unwrap_expression_value(self._visit(tree.body)))
+
+    def _visit(self, node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            if node.id == 'true':
+                return True
+            if node.id == 'false':
+                return False
+            if node.id == 'null':
+                return None
+            if node.id in self.variables:
+                return _wrap_expression_value(self.variables[node.id])
+            if node.id in self.functions:
+                return self.functions[node.id]
+            raise ValueError(f"Unknown security expression name: {node.id}")
+        if isinstance(node, ast.Attribute):
+            value = self._visit(node.value)
+            if not isinstance(value, _ExpressionValue):
+                value = _ExpressionValue(_unwrap_expression_value(value))
+            return value.get(node.attr)
+        if isinstance(node, ast.Subscript):
+            value = _unwrap_expression_value(self._visit(node.value))
+            key = _unwrap_expression_value(self._visit(node.slice))
+            return _wrap_expression_value(value[key])
+        if isinstance(node, (ast.List, ast.Tuple)):
+            values = [_unwrap_expression_value(self._visit(item)) for item in node.elts]
+            return values if isinstance(node, ast.List) else tuple(values)
+        if isinstance(node, ast.Call):
+            function = self._visit(node.func)
+            if function not in self.functions.values() or node.keywords:
+                raise ValueError("Only security helper calls with positional arguments are allowed")
+            args = [_unwrap_expression_value(self._visit(item)) for item in node.args]
+            return function(*args)
+        if isinstance(node, ast.BoolOp):
+            if isinstance(node.op, ast.And):
+                return all(bool(_unwrap_expression_value(self._visit(item))) for item in node.values)
+            if isinstance(node.op, ast.Or):
+                return any(bool(_unwrap_expression_value(self._visit(item))) for item in node.values)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not bool(_unwrap_expression_value(self._visit(node.operand)))
+        if isinstance(node, ast.Compare):
+            left = _unwrap_expression_value(self._visit(node.left))
+            for operator, comparator in zip(node.ops, node.comparators):
+                right = _unwrap_expression_value(self._visit(comparator))
+                if isinstance(operator, ast.Eq):
+                    matched = left == right
+                elif isinstance(operator, ast.NotEq):
+                    matched = left != right
+                elif isinstance(operator, ast.In):
+                    matched = left in right
+                elif isinstance(operator, ast.NotIn):
+                    matched = left not in right
+                elif isinstance(operator, ast.Is):
+                    matched = left is right
+                elif isinstance(operator, ast.IsNot):
+                    matched = left is not right
+                else:
+                    raise ValueError("Unsupported security comparison operator")
+                if not matched:
+                    return False
+                left = right
+            return True
+        raise ValueError(
+            f"Unsupported security expression syntax: {type(node).__name__}"
+        )
+
+
+def _authentication_expression_value() -> Dict[str, Any]:
+    authentication = SecurityContextHolder.get_authentication() or {}
+    principal = authentication.get('principal')
+    if isinstance(principal, dict):
+        name = principal.get('name') or principal.get('username') or principal.get('id')
+    else:
+        name = principal
+    value = dict(authentication)
+    value.setdefault('name', name)
+    value.setdefault('principal', principal)
+    return value
+
+
+def _evaluate_expression(expression: str, **variables: Any) -> bool:
     """
     评估权限表达式
     
@@ -72,46 +203,41 @@ def _evaluate_expression(expression: str) -> bool:
     """
     if not expression:
         return True
-    
-    # 处理 hasRole 表达式
-    if expression.startswith('hasRole('):
-        role = expression.replace('hasRole(', '').replace(')', '').strip().strip("'\"")
-        return SecurityContextHolder.has_role(role)
-    
-    # 处理 hasAnyRole 表达式
-    if expression.startswith('hasAnyRole('):
-        roles_str = expression.replace('hasAnyRole(', '').replace(')', '').strip()
-        roles = [r.strip().strip("'\"") for r in roles_str.split(',')]
-        return SecurityContextHolder.has_any_role(*roles)
-    
-    # 处理 hasPermission 表达式
-    if expression.startswith('hasPermission('):
-        permission = expression.replace('hasPermission(', '').replace(')', '').strip().strip("'\"")
-        return SecurityContextHolder.has_permission(permission)
-    
-    # 处理 hasAnyPermission 表达式
-    if expression.startswith('hasAnyPermission('):
-        permissions_str = expression.replace('hasAnyPermission(', '').replace(')', '').strip()
-        permissions = [p.strip().strip("'\"") for p in permissions_str.split(',')]
-        return SecurityContextHolder.has_any_permission(*permissions)
-    
-    # 处理 authentication.name == 'xxx' 表达式
-    if 'authentication.name' in expression:
-        # 提取用户名
-        import re
-        match = re.search(r"authentication\.name\s*==\s*['\"]([^'\"]+)['\"]", expression)
-        if match:
-            expected_name = match.group(1)
-            authentication = SecurityContextHolder.get_authentication()
-            if authentication:
-                principal = authentication.get('principal', {})
-                if isinstance(principal, dict):
-                    name = principal.get('name', '')
-                else:
-                    name = str(principal)
-                return name == expected_name
-    
-    return False
+    context = {
+        'authentication': _authentication_expression_value(),
+        'principal': SecurityContextHolder.get_principal(),
+        **variables,
+    }
+    try:
+        return _SecurityExpressionEvaluator(context).evaluate(expression)
+    except (SyntaxError, TypeError, ValueError, KeyError, AttributeError, IndexError):
+        return False
+
+
+def post_authorize_decorator(annotation):
+    """Authorize after successful completion with ``returnObject`` available."""
+    def decorator(func: Callable) -> Callable:
+        def authorize(result: Any) -> None:
+            if not SecurityContextHolder.is_authenticated():
+                raise AuthenticationError("Authentication required")
+            if not _evaluate_expression(annotation.value, returnObject=result):
+                raise AuthorizationError("Access denied")
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                result = await func(*args, **kwargs)
+                authorize(result)
+                return result
+            return async_wrapper
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            authorize(result)
+            return result
+        return wrapper
+    return decorator
 
 
 # ==================== @Secured 注解切面 ====================
@@ -223,6 +349,7 @@ def authenticate_decorator(annotation):
 # ==================== 注解处理映射 ====================
 SECURITY_ANNOTATION_DECORATORS = {
     'PreAuthorize': pre_authorize_decorator,
+    'PostAuthorize': post_authorize_decorator,
     'Secured': secured_decorator,
     'Authenticate': authenticate_decorator,
 }

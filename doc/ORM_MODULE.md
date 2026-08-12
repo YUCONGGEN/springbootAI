@@ -1,6 +1,6 @@
 # SpringBootAI 数据库操作（ORM）—— 小白也能看懂的使用指南
 
-> 框架版本：SpringBootAI 2.1.1 / 内嵌 PyMyBatis 2.1.1
+> 框架版本：SpringBootAI 2.2.0 / 内嵌 PyMyBatis 2.2.0
 
 ---
 
@@ -459,6 +459,83 @@ CREATE INDEX idx_email ON sys_user(email);
 
 ---
 
+## 第三章补充：自动时间戳 —— `@CreateTime` / `@UpdateTime`
+
+> 场景：每张表几乎都有 `created_at`（创建时间）和 `updated_at`（更新时间）。
+> 手动每次插入、更新都写 `datetime.now()` 很烦，用这两个注解可以**自动填充**。
+
+### ① 是什么
+
+- `@CreateTime`：标记**创建时间**字段，**插入时**自动写入当前时间。
+- `@UpdateTime`：标记**更新时间**字段，**插入时**写入、**更新时**自动刷新为当前时间。
+
+对齐 JPA/Hibernate 的 `@CreationTimestamp` / `@UpdateTimestamp`。
+
+### ② 怎么用（两种写法任选一种）
+
+```python
+from spring.orm import entity, Id, CreateTime, UpdateTime, AuditTimeExecutor
+
+@entity("sys_user")
+class User:
+    id = Id()
+
+    # 写法一：类属性描述符（推荐）
+    created_at = CreateTime()
+    updated_at = UpdateTime()
+
+    def __init__(self, id=None, name="", created_at=None, updated_at=None):
+        self.id = id
+        self.name = name
+        self.created_at = created_at
+        self.updated_at = updated_at
+```
+
+```python
+# 写法二：函数装饰器（可自定义列名）
+from spring.orm import create_time_column, update_time_column
+
+class User:
+    id = Id()
+    @create_time_column(name="create_time")
+    def ctime(self): ...
+    @update_time_column(name="update_time")
+    def utime(self): ...
+```
+
+### ③ 自动建表也会适配
+
+框架生成的 DDL 会自动给这些列加**数据库默认值**，即使代码漏填，数据库也会兜底写入当前时间：
+
+| 方言 | 生成效果 |
+|------|----------|
+| MySQL | `created_at DATETIME DEFAULT CURRENT_TIMESTAMP` |
+| PostgreSQL | `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP` |
+| SQLite | `created_at TEXT DEFAULT (datetime('now','localtime'))` |
+
+### ④ 运行时自动填充（`AuditTimeExecutor`）
+
+DDL 兜底只对"不填就插入"有效。若你的插入/更新 SQL 里**显式**写了这些列，可用执行器在调用前自动填好时间：
+
+```python
+executor = AuditTimeExecutor()
+
+user = User(name="John")
+executor.fill_on_insert(User, user)   # 写入 created_at 与 updated_at
+user_mapper.insert(user)              # 执行 INSERT
+
+executor.fill_on_update(User, user)   # 仅刷新 updated_at
+user_mapper.update(user)              # 执行 UPDATE
+```
+
+要点：
+
+- `fill_on_insert`：`created_at` 与 `updated_at` 都写入当前时间；若字段已有值则**保留**。
+- `fill_on_update`：只刷新 `updated_at`，`created_at` 保持不变。
+- 也可手动构造 `AuditTimeExecutor(now="2026-08-12 10:00:00")` 注入固定时间，用于测试。
+
+---
+
 ## 第四章：SQL 注入防护 —— 为什么 `#{}` 比 `${}` 安全
 
 ### ① 是什么
@@ -801,6 +878,17 @@ def do_something(self):
 | `@Options` | "调一下查询行为（一次取多少、超时多久）" | Mapper 方法上 |
 | `Param` | "SQL 里的参数名和 Python 参数名不一样，对个账" | 方法参数类型标注里 |
 | `@MapperTransactional` | "这个 Mapper 里的操作要么全成功要么全失败" | Mapper 类或方法 |
+
+### 实体字段注解（DDL 自动建表）
+
+| 注解 | 一句话 | 放哪里 |
+|------|--------|--------|
+| `Column` / `@column` | "这是一个数据库列" | 实体字段 |
+| `Id` / `@id_column` | "这是主键，默认自增" | 实体字段 |
+| `Version` / `@version_column` | "乐观锁版本号，更新时自动 +1 并作冲突检查" | 实体字段 |
+| `CreateTime` / `@create_time_column` | "创建时间，插入时自动填充" | 实体字段 |
+| `UpdateTime` / `@update_time_column` | "更新时间，插入/更新时自动填充" | 实体字段 |
+| `Transient` / `@transient_field` | "这个字段不存数据库" | 实体字段 |
 
 ### @entity 注解参数
 

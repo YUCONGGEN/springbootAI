@@ -1,6 +1,6 @@
 # SpringBootAI 安全模块 —— 小白也能看懂的 Web 安全指南
 
-> 框架版本：SpringBootAI 2.1.1
+> 框架版本：SpringBootAI 2.2.0
 
 ---
 
@@ -195,6 +195,37 @@ def finance_report(self):
 # 角色是 FINANCE 或 ADMIN 任一即可
 ```
 
+### ④ @PostAuthorize —— 根据返回的数据判断能不能看
+
+`@PreAuthorize` 在方法执行前检查权限；`@PostAuthorize` 在方法成功返回后检查结果。比如“用户只能看自己创建的文档”，
+必须先查到文档的 `owner`，才能和当前用户比较：
+
+```python
+from spring.annotations import Authenticate, GetMapping, PostAuthorize
+
+@Authenticate
+@PostAuthorize(
+    "returnObject.owner == authentication.name "
+    "and hasPermission('document:read')"
+)
+@GetMapping("/documents/{document_id}")
+def get_document(self, document_id: int):
+    return {
+        "id": document_id,
+        "owner": "alice",
+        "content": "private data",
+    }
+# 当前用户是 alice 且有 document:read 权限 -> 正常返回
+# 当前用户不是 alice -> 返回 403，不把文档交给调用者
+```
+
+返回值是字典时，`returnObject.owner` 会读取 `owner` 键；返回值是普通对象时，会读取同名属性。
+也可以写 Spring 风格的 `#returnObject.owner`。
+
+> 注意：方法在鉴权前已经执行，所以 `@PostAuthorize` 适合查询结果的所有者检查。扣款、删除、发消息等有副作用的操作
+> 应优先使用 `@PreAuthorize`，不能指望最后的 403 撤销已经发生的操作。表达式、异步用法和完整边界见
+> [AOP / 后置鉴权 / 重试恢复指南](AOP_SECURITY_RETRY.md)。
+
 ### 常用授权表达式速查
 
 | 表达式 | 含义 | 一句话 |
@@ -204,6 +235,7 @@ def finance_report(self):
 | `hasPermission('order:read')` | 包含指定权限 | 你能查看订单吗？ |
 | `hasAnyPermission('order:read','order:write')` | 包含任一权限 | 你能读写订单吗？ |
 | `authentication.name == 'alice'` | 当前用户名等于 alice | 你是 alice 本人吗？ |
+| `returnObject.owner == authentication.name` | 返回对象属于当前用户 | 这条数据是你的吗？（仅 `@PostAuthorize`） |
 
 ### ③ 运行结果
 
@@ -211,6 +243,7 @@ def finance_report(self):
 |---|---|---|
 | 没带 token 访问 `@Authenticate` 接口 | 401 | 需要登录 |
 | 带了 token 但角色不对访问 `@PreAuthorize` 接口 | 403 | 没有权限 |
+| 方法返回的数据不满足 `@PostAuthorize` | 403 | 不允许读取这份结果 |
 | 带了有效 token 且权限匹配 | 200 | 正常返回 |
 
 > 前端可以根据 401 跳转登录页，根据 403 提示"没有权限"。

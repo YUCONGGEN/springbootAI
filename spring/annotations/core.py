@@ -230,6 +230,76 @@ class Component(SpringAnnotation):
         super().__init__(value=value)
 
 
+class Aspect(Component):
+    """Declare a component whose methods contain AOP advice."""
+
+    _annotation_type = "aspect"
+
+
+class Pointcut(SpringAnnotation):
+    """Declare a reusable pointcut expression on an aspect method."""
+
+    _annotation_type = "pointcut"
+
+    def __init__(self, value: str):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Pointcut value must be a non-empty string")
+        super().__init__(value=value.strip())
+
+
+class _AdviceAnnotation:
+    def _init_advice(self, value: str = "", *, pointcut: Optional[str] = None):
+        expression = pointcut if pointcut is not None else value
+        if not isinstance(expression, str) or not expression.strip():
+            raise ValueError("Advice pointcut must be a non-empty string")
+        SpringAnnotation.__init__(self, value=expression.strip())
+
+
+class Before(_AdviceAnnotation, SpringAnnotation):
+    """Run advice before a matched method."""
+
+    _annotation_type = "advice"
+
+    def __init__(self, value: str = "", *, pointcut: Optional[str] = None):
+        self._init_advice(value, pointcut=pointcut)
+
+
+class After(Before):
+    """Run advice after a matched method, including exceptional completion."""
+
+
+class Around(Before):
+    """Wrap a matched method with a ``ProceedingJoinPoint``."""
+
+
+class AfterReturning(Before):
+    """Run advice after a matched method returns successfully."""
+
+    def __init__(
+        self,
+        value: str = "",
+        *,
+        pointcut: Optional[str] = None,
+        returning: str = "result",
+    ):
+        self._init_advice(value, pointcut=pointcut)
+        self.returning = returning
+
+
+class AfterThrowing(Before):
+    """Run advice after a matched method raises an exception."""
+
+    def __init__(
+        self,
+        value: str = "",
+        *,
+        pointcut: Optional[str] = None,
+        throwing: str = "exception",
+    ):
+        self._init_advice(value, pointcut=pointcut)
+        self.throwing = throwing
+
+
 class Repository(SpringAnnotation):
     _annotation_type = "component"
 
@@ -595,6 +665,35 @@ class Retryable(SpringAnnotation):
         )
 
 
+class Recover(SpringAnnotation):
+    """Mark a method as a fallback for an exhausted ``@Retryable`` call."""
+
+    _annotation_type = "recover"
+
+    def __new__(cls, *args, **kwargs):
+        # ``@Recover(SomeError)`` uses an exception class as configuration,
+        # not as the decorator target understood by SpringAnnotation.__new__.
+        if args and isinstance(args[0], type) and issubclass(args[0], Exception):
+            return object.__new__(cls)
+        return super().__new__(cls, *args, **kwargs)
+
+    def __init__(
+        self,
+        value: Optional[Union[Type[Exception], Tuple[Type[Exception], ...]]] = None,
+    ):
+        if value is None:
+            exception_types = None
+        elif isinstance(value, type) and issubclass(value, Exception):
+            exception_types = (value,)
+        elif isinstance(value, tuple) and value and all(
+            isinstance(item, type) and issubclass(item, Exception) for item in value
+        ):
+            exception_types = value
+        else:
+            raise TypeError("Recover value must be an exception type or non-empty tuple")
+        super().__init__(value=exception_types)
+
+
 class Async(SpringAnnotation):
     _annotation_type = "aop"
 
@@ -830,6 +929,17 @@ class PreAuthorize(SpringAnnotation):
 
     def __init__(self, value: str):
         super().__init__(value=value)
+
+
+class PostAuthorize(SpringAnnotation):
+    """Authorize a method after evaluating its return value."""
+
+    _annotation_type = "security"
+
+    def __init__(self, value: str):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("PostAuthorize value must be a non-empty expression")
+        super().__init__(value=value.strip())
 
 
 class Secured(SpringAnnotation):

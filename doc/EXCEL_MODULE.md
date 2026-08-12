@@ -1,6 +1,6 @@
 # SpringBootAI Excel 模块 —— 小白也能看懂的使用指南
 
-> 模块版本：`spring.excel` 2.1.1 ｜ 框架版本：SpringBootAI 2.1.1
+> 模块版本：`spring.excel` 2.2.0 ｜ 框架版本：SpringBootAI 2.2.0
 
 ---
 

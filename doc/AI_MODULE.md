@@ -1,7 +1,7 @@
 # SpringBootAI AI 模块使用指南 —— 小白也能看懂
 
 > 让你的 Python 程序能和 ChatGPT、DeepSeek 等大模型聊天、回答问题、调用你的函数、读你的文档来回答。
-> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.1.1 / SpringBootAI AI 2.1.1
+> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.2.0 / SpringBootAI AI 2.2.0
 
 ---
 

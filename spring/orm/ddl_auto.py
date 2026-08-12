@@ -149,6 +149,66 @@ class Version(Column):
         self.version = True
 
 
+class CreateTime(Column):
+    """``@CreateTime`` 自动填充创建时间（对齐 JPA/Hibernate ``@CreationTimestamp``）。
+
+    标记该字段为创建时间：DDL 生成 ``DATETIME DEFAULT CURRENT_TIMESTAMP``（SQLite 为
+    ``DEFAULT (datetime('now','localtime'))``）；配合 ``AuditTimeExecutor.fill_on_insert``
+    在 INSERT 前自动写入当前时间。
+
+    用法（与 ``Column``/``Id``/``Version`` 一致的两种形式）::
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            created_at = CreateTime()        # 类属性描述符形式
+            def __init__(self, id=None, created_at=None): ...
+
+        # 或函数装饰器形式
+        @create_time_column()
+        def created_at(self): ...
+
+    说明：``@CreateTime`` 仅在插入时填充；``@UpdateTime`` 在插入与更新时都会刷新。
+    """
+    def __init__(self, name: str = "", **kwargs):
+        kwargs.pop('primary_key', None)
+        kwargs.pop('auto_increment', None)
+        # 创建时间非空
+        kwargs.setdefault('nullable', False)
+        super().__init__(name=name, primary_key=False, auto_increment=False, **kwargs)
+        # 标记，供 _build_column_meta 识别
+        self.create_time = True
+
+
+class UpdateTime(Column):
+    """``@UpdateTime`` 自动填充更新时间（对齐 JPA/Hibernate ``@UpdateTimestamp``）。
+
+    标记该字段为更新时间：DDL 生成 ``DATETIME DEFAULT CURRENT_TIMESTAMP``（SQLite 为
+    ``DEFAULT (datetime('now','localtime'))``）；配合 ``AuditTimeExecutor`` 在 INSERT 和
+    UPDATE 时都刷新为当前时间。
+
+    用法（两种形式，与 ``CreateTime`` 一致）::
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            updated_at = UpdateTime()        # 类属性描述符形式
+            def __init__(self, id=None, updated_at=None): ...
+
+        # 或函数装饰器形式
+        @update_time_column()
+        def updated_at(self): ...
+    """
+    def __init__(self, name: str = "", **kwargs):
+        kwargs.pop('primary_key', None)
+        kwargs.pop('auto_increment', None)
+        # 更新时间非空
+        kwargs.setdefault('nullable', False)
+        super().__init__(name=name, primary_key=False, auto_increment=False, **kwargs)
+        # 标记，供 _build_column_meta 识别
+        self.update_time = True
+
+
 class Transient:
     """``@Transient`` 瞬态字段标记（对齐 JPA ``javax.persistence.Transient``）。
 
@@ -234,6 +294,42 @@ def version_column(**kwargs):
             def version(self): ...
     """
     col = Version(**kwargs)
+    def decorator(f):
+        setattr(f, '__column__', col)
+        return f
+    return decorator
+
+
+def create_time_column(**kwargs):
+    """``@CreateTime`` 函数装饰器形式（镜像 ``column()`` / ``version_column()``）。
+
+    用法::
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            @create_time_column()
+            def created_at(self): ...
+    """
+    col = CreateTime(**kwargs)
+    def decorator(f):
+        setattr(f, '__column__', col)
+        return f
+    return decorator
+
+
+def update_time_column(**kwargs):
+    """``@UpdateTime`` 函数装饰器形式（镜像 ``column()`` / ``version_column()``）。
+
+    用法::
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            @update_time_column()
+            def updated_at(self): ...
+    """
+    col = UpdateTime(**kwargs)
     def decorator(f):
         setattr(f, '__column__', col)
         return f
@@ -529,6 +625,8 @@ class DdlAutoManager:
             'scale': 0,
             'column_definition': '',
             'version': False,      # @Version 乐观锁标记
+            'create_time': False,  # @CreateTime 创建时间标记
+            'update_time': False,  # @UpdateTime 更新时间标记
         }
         if col_info and isinstance(col_info, Column):
             if col_info.name:
@@ -557,11 +655,31 @@ class DdlAutoManager:
                 else:
                     info['sql_type'] = 'INTEGER'
                 return info
+            # @CreateTime 创建时间字段：标记并强制日期时间类型 + 非空
+            if isinstance(col_info, CreateTime) or getattr(col_info, 'create_time', False):
+                info['create_time'] = True
+                info['nullable'] = False
+                info['sql_type'] = self._datetime_sql_type()
+                return info
+            # @UpdateTime 更新时间字段：标记并强制日期时间类型 + 非空
+            if isinstance(col_info, UpdateTime) or getattr(col_info, 'update_time', False):
+                info['update_time'] = True
+                info['nullable'] = False
+                info['sql_type'] = self._datetime_sql_type()
+                return info
         else:
             info['name'] = _camel_to_snake(attr_name)
 
         info['sql_type'] = _get_sql_type(py_type, self.dialect, info)
         return info
+
+    def _datetime_sql_type(self) -> str:
+        """``@CreateTime``/``@UpdateTime`` 字段在各方言下的日期时间 SQL 类型。"""
+        if self.dialect == 'mysql':
+            return 'DATETIME'
+        elif self.dialect == 'postgresql':
+            return 'TIMESTAMP'
+        return 'TEXT'  # sqlite 无真正的日期时间类型，用 TEXT 存储
 
     def _quote(self, identifier: str) -> str:
         """引用标识符（表名/列名）"""
@@ -603,7 +721,13 @@ class DdlAutoManager:
                         parts.append("NOT NULL")
                     if col['unique']:
                         unique_cols.append(col['name'])
-                    if col['default'] is not None:
+                    if col.get('create_time') or col.get('update_time'):
+                        # 自动时间字段：由数据库默认值兜底，ORM 未填充时仍能写入当前时间
+                        if self.dialect == 'sqlite':
+                            parts.append("DEFAULT (datetime('now', 'localtime'))")
+                        else:
+                            parts.append("DEFAULT CURRENT_TIMESTAMP")
+                    elif col['default'] is not None:
                         if isinstance(col['default'], str):
                             parts.append(f"DEFAULT '{col['default']}'")
                         elif isinstance(col['default'], bool):
@@ -829,7 +953,12 @@ class DdlAutoManager:
                              self._quote(col['name']), col['sql_type']]
                     if not col['nullable']:
                         parts.append("NOT NULL")
-                    if col['default'] is not None:
+                    if col.get('create_time') or col.get('update_time'):
+                        if self.dialect == 'sqlite':
+                            parts.append("DEFAULT (datetime('now', 'localtime'))")
+                        else:
+                            parts.append("DEFAULT CURRENT_TIMESTAMP")
+                    elif col['default'] is not None:
                         if isinstance(col['default'], str):
                             parts.append(f"DEFAULT '{col['default']}'")
                         else:
@@ -1215,3 +1344,92 @@ class OptimisticLockExecutor:
                     conn.close()
                 except Exception:
                     pass
+
+
+# ==================== JPA @CreateTime / @UpdateTime 自动填充执行器 ====================
+
+def _find_audit_time_column(entity_class: Type, flag: str) -> Optional[dict]:
+    """解析实体类，返回 ``@CreateTime``/``@UpdateTime`` 列元数据 dict（无则 None）。
+
+    ``flag`` 为 ``'create_time'`` 或 ``'update_time'``（对应列元数据里的布尔标记）。
+    复用 ``DdlAutoManager._parse_entity`` 解析逻辑，避免重复实现字段扫描。
+    """
+    tmp = DdlAutoManager.__new__(DdlAutoManager)
+    tmp.dialect = 'sqlite'
+    tmp.mode = DdlAutoMode.NONE
+    try:
+        et = tmp._parse_entity(entity_class)
+    except Exception:
+        return None
+    for col in et.columns:
+        if col.get(flag):
+            return col
+    return None
+
+
+class AuditTimeExecutor:
+    """``@CreateTime``/``@UpdateTime`` 自动时间填充执行器（对齐 JPA/Hibernate 审计时间戳）。
+
+    在 INSERT / UPDATE 前调用 ``fill_on_insert`` / ``fill_on_update``，把当前时间写入实体上
+    标记了 ``@CreateTime`` / ``@UpdateTime`` 的字段，之后再把实体传给 Mapper 的 ``@Insert`` /
+    ``@Update`` 即可自动带上时间。同时 DDL 自动建表会给这些列加 ``DEFAULT CURRENT_TIMESTAMP``
+    作为兜底，即使漏调填充方法，数据库也会写入当前时间。
+
+    用法::
+
+        from spring.orm import AuditTimeExecutor, CreateTime, UpdateTime, Id, entity
+
+        @entity("sys_user")
+        class User:
+            id = Id()
+            created_at = CreateTime()
+            updated_at = UpdateTime()
+            def __init__(self, id=None, name=None, created_at=None, updated_at=None):
+                self.id = id; self.name = name
+                self.created_at = created_at; self.updated_at = updated_at
+
+        executor = AuditTimeExecutor()
+        user = User(name="John")
+        executor.fill_on_insert(User, user)   # 写入 created_at 与 updated_at
+        user_mapper.insert(user)              # 执行 INSERT
+
+        executor.fill_on_update(User, user)   # 仅刷新 updated_at
+        user_mapper.update(user)              # 执行 UPDATE
+
+    Args:
+        now: 可选，注入固定时间字符串（默认取系统当前时间），用于测试与幂等场景。
+    """
+
+    def __init__(self, now: Optional[str] = None):
+        self._now = now
+
+    def _current_time(self) -> str:
+        """返回待写入的时间字符串。"""
+        if self._now is not None:
+            return self._now
+        from datetime import datetime
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    def fill_on_insert(self, entity_class: Type, entity: Any) -> Any:
+        """INSERT 前自动填充：``@CreateTime`` 与 ``@UpdateTime`` 都写入当前时间。
+
+        若字段已有值则保留（便于业务自定义时间），否则写入当前时间。
+        返回原实体对象。
+        """
+        now = self._current_time()
+        for flag in ('create_time', 'update_time'):
+            col = _find_audit_time_column(entity_class, flag)
+            if col is None:
+                continue
+            py_name = col['py_name'] or col['name']
+            if getattr(entity, py_name, None) in (None, ''):
+                setattr(entity, py_name, now)
+        return entity
+
+    def fill_on_update(self, entity_class: Type, entity: Any) -> Any:
+        """UPDATE 前自动填充：仅刷新 ``@UpdateTime`` 为当前时间（``@CreateTime`` 保持不变）。"""
+        col = _find_audit_time_column(entity_class, 'update_time')
+        if col is not None:
+            py_name = col['py_name'] or col['name']
+            setattr(entity, py_name, self._current_time())
+        return entity

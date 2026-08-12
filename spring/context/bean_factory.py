@@ -502,6 +502,20 @@ class BeanFactory:
                     method = apply_security_annotations(instance, method)
                 except ImportError as e:
                     logger.error(f"  Failed to import security_aop: {e}")
+
+                # Declarative aspect advice is the outermost managed-Bean
+                # layer and sees the final result of built-in AOP/security.
+                try:
+                    from spring.aop.aspect import apply_aspects
+                    method = apply_aspects(
+                        self,
+                        instance,
+                        getattr(bean_class, name),
+                        method,
+                        definition.bean_name,
+                    )
+                except ImportError as e:
+                    logger.error(f"  Failed to import declarative AOP: {e}")
                 
                 # 创建绑定方法并设置到实例
                 bound_method = types.MethodType(method, instance)

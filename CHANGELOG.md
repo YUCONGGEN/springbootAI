@@ -2,6 +2,27 @@
 
 本项目从 `2.1.0` 开始按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录面向使用者的变化，并使用语义化版本号。
 
+## [2.2.0] - 2026-08-12
+
+### 新增
+
+- 新增声明式 AOP：`@Aspect`、`@Pointcut`、`@Before`、`@After`、`@Around`、`@AfterReturning`、`@AfterThrowing`。支持受管 Bean 自动代理、同步/异步通知、`JoinPoint` / `ProceedingJoinPoint`，以及 `execution`、`within`、`bean`、`@annotation` 和切点引用。
+- 新增 `@PostAuthorize`，方法成功返回后可使用 `returnObject` / `#returnObject`、当前认证信息、角色和权限进行授权。
+- 新增 `@Recover`，在 `@Retryable` 重试耗尽后按异常类型选择最具体的恢复方法；兼容原有 `recover="method"` 写法和独立重试装饰器入口。
+- 新增面向新手的 [`AOP_SECURITY_RETRY.md`](doc/AOP_SECURITY_RETRY.md)，包含完整示例、执行顺序、表达式速查、安全边界和常见错误。
+
+### 安全与兼容性
+
+- 安全表达式改为白名单 AST 求值，不执行任意 Python 代码；不支持的语法按授权失败处理。
+- 声明式切面作为受管 Bean 的最外层扩展，可观察内置 AOP、重试和安全包装后的最终结果；手工实例化对象不会自动代理。
+- 旧式命名恢复方法继续保持原签名；显式命名的方法同时标记 `@Recover` 时使用包含最终异常的新签名。
+
+### 测试
+
+- 新增 26 个声明式 AOP、后置鉴权和重试恢复专项用例，并将 9 个新公共注解加入 172 项注解契约检查。
+- Conda Python 3.10.20 完整回归：2372 passed、4 skipped、172 subtests passed，覆盖率 68.63%。
+- Docker 真实集成测试：MySQL、Redis、RabbitMQ、Nacos、Seata TCC 共 5 项通过；Redis 和 Seata bridge 停机失败关闭 2 项通过。
+
 ## [2.1.1] - 2026-08-12
 
 ### 修复
@@ -41,5 +62,6 @@
 - Seata `distributed` 提供真实 TC + TCC 协调，不是 Python AT 数据源代理，不会自动生成 `undo_log`。
 - 内存 LangGraph checkpointer 仅用于测试；多 worker 生产环境必须注入共享存储后端。
 
+[2.2.0]: https://github.com/YUCONGGEN/springbootAI/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/YUCONGGEN/springbootAI/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/YUCONGGEN/springbootAI/compare/v2.0.2...v2.1.0

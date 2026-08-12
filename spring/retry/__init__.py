@@ -4,9 +4,11 @@
 """
 from .retry_annotations import Retryable, Backoff
 from .retry_decorator import retryable_decorator
+from spring.annotations.core import Recover
 
 __all__ = [
     'Retryable',
+    'Recover',
     'Backoff',
     'retryable_decorator',
 ]

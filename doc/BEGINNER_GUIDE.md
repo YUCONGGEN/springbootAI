@@ -346,6 +346,7 @@ class GreetingController:
 |---|---|
 | 做普通 CRUD 接口（大白话：增删改查） | [README Web 章节](../README.md#7-web-控制器) + [ORM 指南](ORM_MODULE.md) |
 | 校验用户输入、条件装配、缓存更新 | [常用注解模块指南](ANNOTATION_MODULES.md) |
+| 统一记录方法日志、返回后鉴权、重试失败兜底 | [AOP / 后置鉴权 / 重试恢复指南](AOP_SECURITY_RETRY.md) |
 | 登录、JWT、角色权限 | [安全指南](SECURITY.md) |
 | 自动生成 Swagger 文档 | [Swagger 指南](SWAGGER_MODULE.md) |
 | 导入导出 Excel | [Excel 指南](EXCEL_MODULE.md) |

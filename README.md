@@ -17,7 +17,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.1.1`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 当前验证的是官方 TC + TCC 回调，不会为 Python 数据库操作自动生成 AT `undo_log`。
+当前版本是 `2.2.0`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 当前验证的是官方 TC + TCC 回调，不会为 Python 数据库操作自动生成 AT `undo_log`。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -112,6 +112,7 @@ curl http://127.0.0.1:8080/api/hello/Alice
 |------|------|----------|-----------|
 | ✅ 新手入门 | [BEGINNER_GUIDE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | 随核心包 | 从零安装、创建项目、运行接口、打开 Swagger |
 | ✅ 常用注解模块 | [ANNOTATION_MODULES.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ANNOTATION_MODULES.md) | 随核心包 | Bean Validation / 条件装配 / 缓存增强 / CSV / `@Version` / `@Transient` |
+| ✅ AOP / 后置鉴权 / 重试恢复 | [AOP_SECURITY_RETRY.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AOP_SECURITY_RETRY.md) | 随核心包 | `@Aspect` 通知 / `@PostAuthorize` / `@Recover`，含小白示例与常见错误 |
 | 📦 AI（对接大模型） | [AI_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AI_MODULE.md) | `pip install springbootAI[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / 多厂商适配 |
 | 📦 LangChain | [LANGCHAIN_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGCHAIN_MODULE.md) | `pip install springbootAI[langchain]` | Chains / Agents / Memory / Retrievers / VectorStores / 30+ 提供商 |
 | 📦 LangGraph | [LANGGRAPH_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGGRAPH_MODULE.md) | `pip install springbootAI[langgraph]` | 状态图 / 条件路由 / 人工中断 / 注解式工作流 |
@@ -180,10 +181,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `spring` 框架 API | 2.1.1 |
-| `spring.orm.pymybatis` | 2.1.1 |
-| `spring.ai` AI 模块 | 2.1.1 |
-| `spring.langchain` LangChain 模块 | 2.1.1 |
+| `spring` 框架 API | 2.2.0 |
+| `spring.orm.pymybatis` | 2.2.0 |
+| `spring.ai` AI 模块 | 2.2.0 |
+| `spring.langchain` LangChain 模块 | 2.2.0 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景
@@ -227,7 +228,7 @@ SpringBootAI 注解会先把元数据放到 `__spring_annotations__`。之后是
 | 应用事件 | ✅ 可用 | `ApplicationEvent`、`@EventListener`、同步有序发布和异步监听 |
 | 内嵌 ORM + DDL Auto | ✅ 可用 | PyMyBatis + JPA ddl-auto 自动建表(create/update/validate)，支持 XML/注解 SQL、事务、缓存 |
 | 本地事务 | ✅ 可用 | `@Transactional` 支持七种 Spring 传播模式 |
-| JWT 与方法安全 | ✅ 可用 | access/refresh token、`@Authenticate`、角色/权限授权、401/403 映射 |
+| JWT 与方法安全 | ✅ 可用 | access/refresh token、`@Authenticate`、前置/后置授权、401/403 映射 |
 | 重试/异步 | ✅ 可用 | 受管 Bean 的退避重试、恢复方法和 Future/Task 异步调度 |
 | Redis/缓存 | ✅ 可用 | 分布式锁、KV/Hash/List/Set/Counter，需要 Redis 服务 |
 | RabbitMQ | ✅ 可用 | `@RabbitListener` 自动注册并后台消费，`RabbitTemplate` 发送 |
@@ -238,7 +239,7 @@ SpringBootAI 注解会先把元数据放到 `__spring_annotations__`。之后是
 | API Gateway | ✅ 可用 | 轻量 ASGI/WSGI 网关，路由转发、路径重写、过滤器链、负载均衡 |
 | Prometheus 监控 | ✅ 可用 | Counter/Gauge/Histogram 指标暴露 |
 | Feign 声明式 HTTP | ✅ 可用 | 声明式接口、Fallback 降级、自动传播 XID 和 trace 头 |
-| 高级 AOP | ✅ 可用 | 限流、熔断、幂等、审计、锁、指标、追踪、缓存 |
+| 高级 AOP | ✅ 可用 | 声明式切面、限流、熔断、幂等、审计、锁、指标、追踪、缓存 |
 | AI 模块 | ✅ 可用 | ChatClient/ChatModel/EmbeddingModel/Advisor/Tools，OpenAI/Ollama/DeepSeek/Moonshot 适配 |
 | LangChain 模块 | ✅ 可用 | Chains/Agents(6 种)/Memory/Retrievers/VectorStores + 30+ 提供商，双向适配器 |
 | LangGraph 模块 | ✅ 可选 | 官方 LangGraph 状态图、条件路由、人工中断、持久化 checkpointer 和注解工作流 |
@@ -871,7 +872,7 @@ class ScheduledTasks:
         print("Current time:", time.time())
 ```
 
-**边界要点**：`max_retries=3` 包含首次调用；`@Async` 同步方法返回 `Future`；`@Scheduled` 多 worker 会重复执行。
+**边界要点**：`max_retries=3` 包含首次调用；重试耗尽可用 `@Recover` 按异常类型兜底；`@Async` 同步方法返回 `Future`；`@Scheduled` 多 worker 会重复执行。声明式切面、后置鉴权和恢复方法的完整小白示例见 [AOP_SECURITY_RETRY.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AOP_SECURITY_RETRY.md)。
 
 ### 5.10 安全、Cloud 与消息注解
 
@@ -879,6 +880,7 @@ class ScheduledTasks:
 |------|----------|--------------|
 | `@Authenticate` | 校验 JWT 并建立安全上下文 | 受管 Bean 实际执行；HTTP 控制器自动读取 `Authorization: Bearer ...` |
 | `@PreAuthorize` | 按角色/权限表达式授权 | 受管 Bean 实际执行；未认证返回 401，权限不足返回 403 |
+| `@PostAuthorize` | 根据方法返回值授权 | 受管 Bean 返回后执行；支持 `returnObject` / `#returnObject` |
 | `@Secured` | 按任一角色授权 | 受管 Bean 实际执行 |
 | `@SentinelResource` | 限流、业务异常 fallback | 受管 Bean 方法会包装；已内嵌限流熔断引擎 |
 | `@GlobalTransactional` | 通过 Seata 管理全局事务 | 受管 Bean 方法调用 Seata manager |
@@ -1230,6 +1232,22 @@ def call_remote(self):
 ```
 
 **只对幂等操作开启自动重试**（如读操作）。写操作必须先设计幂等键。
+
+重试耗尽后可以使用 `@Recover`：
+
+```python
+from spring.annotations import Recover, Retryable
+
+@Retryable(value=(ConnectionError,), max_attempts=3, backoff=200)
+def call_remote(self, key):
+    raise ConnectionError("offline")
+
+@Recover(ConnectionError)
+def recover_remote(self, error, key):
+    return {"key": key, "status": "degraded", "reason": str(error)}
+```
+
+恢复方法选择、异步用法和常见错误见 [AOP / 后置鉴权 / 重试恢复指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AOP_SECURITY_RETRY.md)。
 
 ### 11.3 @Async & @Scheduled
 

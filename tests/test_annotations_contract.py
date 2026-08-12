@@ -66,6 +66,17 @@ class AnnotationContractTests(unittest.TestCase):
             "DeleteMapping": lambda: DeleteMapping("/items/{id}"),
             "Service": lambda: Service("itemService"),
             "Component": lambda: Component("itemComponent"),
+            "Aspect": lambda: Aspect("auditAspect"),
+            "Pointcut": lambda: Pointcut("execution(* *.Service.*(..))"),
+            "Before": lambda: Before("execution(* *.Service.*(..))"),
+            "After": lambda: After("execution(* *.Service.*(..))"),
+            "Around": lambda: Around("execution(* *.Service.*(..))"),
+            "AfterReturning": lambda: AfterReturning(
+                "execution(* *.Service.*(..))", returning="result"
+            ),
+            "AfterThrowing": lambda: AfterThrowing(
+                "execution(* *.Service.*(..))", throwing="exception"
+            ),
             "Repository": lambda: Repository("itemRepository"),
             "Autowired": lambda: Autowired(required=False),
             "Qualifier": lambda: Qualifier("primaryItem"),
@@ -96,6 +107,7 @@ class AnnotationContractTests(unittest.TestCase):
             ),
             "Cacheable": lambda: Cacheable("items", key="#id", condition="id > 0"),
             "Retryable": lambda: Retryable(value=(ValueError,), max_retries=2),
+            "Recover": lambda: Recover(ValueError),
             "Async": lambda: Async(),
             "Scheduled": lambda: Scheduled(fixed_rate=1000, initial_delay=5),
             "AsyncResult": lambda: AsyncResult("done"),
@@ -112,6 +124,7 @@ class AnnotationContractTests(unittest.TestCase):
             "Validate": lambda: Validate(field="name", min_length=2, max_length=30),
             "Trace": lambda: Trace(trace_id_key="X-Request-ID", span_name="items"),
             "PreAuthorize": lambda: PreAuthorize("hasRole('ROLE_ADMIN')"),
+            "PostAuthorize": lambda: PostAuthorize("returnObject != null"),
             "Secured": lambda: Secured(["ROLE_ADMIN", "ROLE_EDITOR"]),
             "Authenticate": lambda: Authenticate(),
         }
