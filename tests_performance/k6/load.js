@@ -97,6 +97,10 @@ export const options = {
     'springpy_endpoint_duration{endpoint:websocket}': [`p(95)<${p95Ms}`],
     'springpy_endpoint_duration{endpoint:messaging}': [`p(95)<${p95Ms}`],
     'springpy_endpoint_duration{endpoint:seata}': [`p(95)<${p95Ms}`],
+    'springpy_endpoint_duration{endpoint:ai}': [`p(95)<${p95Ms}`],
+    'springpy_endpoint_duration{endpoint:langchain}': [`p(95)<${p95Ms}`],
+    'springpy_endpoint_duration{endpoint:langgraph}': [`p(95)<${p95Ms}`],
+    'springpy_endpoint_duration{endpoint:mcp}': [`p(95)<${p95Ms}`],
   },
   userAgent: 'springpy-k6/1.0',
   noConnectionReuse: false,
@@ -132,6 +136,10 @@ const paths = {
   swagger_redoc: __ENV.SPRINGPY_SWAGGER_REDOC_PATH || '/redoc',
   websocket: __ENV.SPRINGPY_WEBSOCKET_PATH || '/ws/benchmark-echo',
   messaging: __ENV.SPRINGPY_MESSAGING_PATH || '/ws/benchmark-app',
+  ai: __ENV.SPRINGPY_AI_PATH || '/benchmark/ai?text=load-test',
+  langchain: __ENV.SPRINGPY_LANGCHAIN_PATH || '/benchmark/langchain?text=load-test',
+  langgraph: __ENV.SPRINGPY_LANGGRAPH_PATH || '/benchmark/langgraph?value=3',
+  mcp: __ENV.SPRINGPY_MCP_PATH || '/benchmark/mcp?a=2&b=3',
   custom: __ENV.SPRINGPY_CUSTOM_PATH || '/',
 };
 
@@ -279,6 +287,22 @@ function record(endpoint, response) {
           return data.kind === 'i18n'
             && data.messages === data.resolved
             && data.fallback === true;
+        }
+        if (endpoint === 'ai' || endpoint === 'langchain') {
+          return data.kind === endpoint
+            && data.provider === 'fake'
+            && data.valid === true
+            && data.content.includes('load-test');
+        }
+        if (endpoint === 'langgraph') {
+          return data.kind === 'langgraph'
+            && data.valid === true
+            && data.value === data.expected;
+        }
+        if (endpoint === 'mcp') {
+          return data.kind === 'mcp'
+            && data.valid === true
+            && data.result === data.expected;
         }
         if (endpoint === 'actuator') {
           return data.contexts
@@ -530,42 +554,50 @@ export function runWorkload() {
   }
 
   const bucket = exec.scenario.iterationInTest % 100;
-  if (bucket < 15) {
+  if (bucket < 12) {
     getEndpoint('async');
-  } else if (bucket < 30) {
+  } else if (bucket < 24) {
     getEndpoint('sync');
-  } else if (bucket < 40) {
+  } else if (bucket < 34) {
     getEndpoint('gateway');
-  } else if (bucket < 45) {
+  } else if (bucket < 39) {
     postEcho();
-  } else if (bucket < 50) {
+  } else if (bucket < 44) {
     postValidation();
-  } else if (bucket < 55) {
+  } else if (bucket < 49) {
     postCache();
-  } else if (bucket < 60) {
+  } else if (bucket < 54) {
     getEndpoint('csv');
-  } else if (bucket < 65) {
+  } else if (bucket < 59) {
     getEndpoint('jpa');
-  } else if (bucket < 70) {
+  } else if (bucket < 64) {
     getEndpoint('conditional');
-  } else if (bucket < 75) {
+  } else if (bucket < 69) {
     getEndpoint('data');
-  } else if (bucket < 80) {
+  } else if (bucket < 74) {
     getEndpoint('datasource');
-  } else if (bucket < 85) {
+  } else if (bucket < 79) {
     getEndpoint('txevent');
-  } else if (bucket < 89) {
+  } else if (bucket < 83) {
     getEndpoint('config');
-  } else if (bucket < 93) {
+  } else if (bucket < 87) {
     getEndpoint('i18n');
-  } else if (bucket < 95) {
+  } else if (bucket < 89) {
     getEndpoint('actuator');
-  } else if (bucket < 96) {
+  } else if (bucket < 90) {
     runSwagger();
-  } else if (bucket < 98) {
+  } else if (bucket < 91) {
     runWebSocket();
-  } else {
+  } else if (bucket < 92) {
     runMessaging();
+  } else if (bucket < 94) {
+    getEndpoint('ai');
+  } else if (bucket < 96) {
+    getEndpoint('langchain');
+  } else if (bucket < 98) {
+    getEndpoint('langgraph');
+  } else {
+    getEndpoint('mcp');
   }
 }
 

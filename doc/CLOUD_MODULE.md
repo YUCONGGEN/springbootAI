@@ -1,6 +1,6 @@
 # SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
 
-> 框架版本：SpringBootAI 2.0.0
+> 框架版本：SpringBootAI 2.1.0
 
 ---
 
@@ -447,13 +447,13 @@ gateway.install(app, "/api/{path:path}")
 
 ### ① 是什么
 
-**分布式事务就像是跨国转账。** 你在中国的银行向美国银行转 100 美元，必须确保：你的账户扣了 100 美元，同时对方的账户加 100 美元。两边要么都成功，要么都失败——不能出现钱扣了但对方没收到的情况。
+**分布式事务像一张跨服务的操作单。** 协调器记录这张单据由哪些服务参与，并通知每个参与者确认或撤销。它比本地数据库事务复杂：网络可能中断，回调可能重复，服务也可能在任意阶段重启，因此业务代码必须设计幂等和恢复逻辑。
 
 Seata 就是负责跨多个服务协调事务的：
 
 - **local 模式**：只做事务追踪，不做跨服务协调。开发调试用。
 - **http 模式**：持久化补偿协调。服务挂了重启后能恢复未完成的事务。**但它不具备强一致性**——就像发微信让对方确认，你发了但对方可能没收到。
-- **distributed 模式**：对接真实 Seata Server，具备全局锁和 undo_log 回滚。**这是唯一具备强一致性的模式**。
+- **distributed 模式**：通过仓库提供的 Java bridge 对接真实 Seata Server，Python 业务分支使用 TCC 的 prepare/commit/rollback 回调。它具备真实 XID、TC 协调和 TCC fence，但不会自动代理 Python 数据库连接，也不会自动生成 AT `undo_log`。
 
 ### ② 怎么用
 
@@ -480,7 +480,46 @@ class OrderService:
         self.payment_feign.deduct(user_id, amount)
 
         return order
-        # 结果：任意一步失败，前面成功的步骤都会回滚
+```
+
+上面的写法只演示事务入口，**不会自动把普通 Feign 调用变成可回滚操作**。库存和支付服务必须在收到 XID 后调用 `register_branch(...)`，并提供持久化的 prepare/commit/rollback HTTP 端点。prepare 只做资源预留，commit 确认资源，rollback 释放资源；三者都要使用业务幂等键。
+
+`distributed` 最小配置：
+
+```yaml
+seata:
+  enabled: true
+  mode: distributed
+  application_id: order-service
+  transaction_group: springpy_tx_group
+  bridge_url: http://127.0.0.1:18091
+  bridge_token: ${SEATA_BRIDGE_TOKEN}
+  callback_allowed_hosts:
+    - inventory.internal
+    - payment.internal
+```
+
+业务分支注册示意：
+
+```python
+from spring.cloud.seata import seata_manager
+
+branch_id = seata_manager.register_branch(
+    xid=xid,
+    branch_id=f"inventory-{order_id}",
+    resource_id=f"inventory:{sku}",
+    callback_url="http://inventory.internal/seata/branch",
+    service_name="inventory-service",
+    metadata={"order_id": order_id, "sku": sku, "quantity": quantity},
+)
+```
+
+bridge 会依次调用：
+
+```text
+POST /seata/branch/{branch_id}/prepare
+POST /seata/branch/{branch_id}/commit    # 全局提交时
+POST /seata/branch/{branch_id}/rollback  # 全局回滚时
 ```
 
 http 补偿模式配置：
@@ -498,7 +537,7 @@ seata:
 
 ### ③ 运行结果
 
-`@GlobalTransactional` 标注的方法中，所有远程调用被纳入一个全局事务。任何一步失败，全局事务回滚，已执行的操作被撤销。
+`@GlobalTransactional` 负责开始和结束全局事务，并传播 XID。只有显式注册的 TCC 分支才由 Seata 协调；普通 HTTP/Feign 调用不会被自动撤销。本仓库集成测试验证真实 Seata TC 的 begin、分支注册、prepare、commit 和 rollback，但业务表的资源预留与释放仍由业务服务负责。
 
 ### 什么时候用 / 什么时候不用
 
@@ -506,11 +545,11 @@ seata:
 |---|---|---|
 | 开发调试 | `local` | 只在本地追踪事务，不做跨服务协调 |
 | 非关键业务的补偿流程 | `http` | 能持久化和恢复，但不是强一致 |
-| 支付/订单/库存等核心业务 | `distributed` | 唯一具备强一致性的模式 |
+| 支付/订单/库存等核心业务 | 经过业务验证的 TCC/Saga/Outbox | `distributed` 可提供 TCC 协调，但必须完成业务资源、幂等与故障验证 |
 
 ### ⚠️ 重要警告
 
-**http 模式不等于强一致性。** 它就像发微信让对方确认——消息发出去了，但如果对方没收到或者系统崩溃了，需要不断重试。真正的 Seata distributed 模式就像银行转账：要么成功、要么失败，不会有中间状态。
+**http 模式不等于强一致性，distributed 也不等于自动 AT。** distributed 模式失败时会拒绝静默降级，但 TCC 的最终正确性仍取决于业务 prepare/commit/rollback 是否持久化、幂等并正确处理空回滚和悬挂。没有这些实现和故障测试，不要把它用于支付、订单或库存核心链路。
 
 ---
 
@@ -550,7 +589,7 @@ def create_order_traced(user_id: int):
 | 2 | "Nacos 配置改了，服务马上生效" | 只有加了 `auto_refreshed=True` 或 `@RefreshScope` 的配置才会自动刷新。普通的 `@Value` 不会刷新 |
 | 3 | "Feign 调用和本地方法一模一样，不用处理错误" | Feign 调用要走网络，有超时、失败、重试等问题。必须配置 fallback 或超时处理 |
 | 4 | "加了 `@SentinelResource` 就万事大吉" | 必须配置 fallback 方法，否则限流时客户端会收到异常而不是友好提示 |
-| 5 | "分布式事务和数据库事务一样可靠" | 完全不同。只有 Seata `distributed` 模式才具备强一致性，`http` 模式只是补偿 |
+| 5 | "加上 `@GlobalTransactional` 就和数据库事务一样" | 完全不同。必须注册 TCC 分支并实现持久化、幂等的三阶段业务回调；`http` 模式只是补偿 |
 | 6 | "Gateway 可以替代 Nginx" | 框架内嵌网关适合内部微服务路由。公网入口、HTTPS、WAF 还是用 Nginx/Kong |
 
 ---
@@ -591,16 +630,16 @@ Feign 底层用的是同步 `requests.Session`，在 `async def` 方法里直接
 
 ### HTTP 补偿模式 ≠ 强一致性
 
-http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复、补偿幂等，**不等于强一致性**。支付/订单/库存等核心业务强一致场景必须使用 `distributed` 模式对接真实 Seata Server，或采用可靠消息最终一致方案。
+http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复、补偿幂等，**不等于强一致性**。支付/订单/库存等核心业务应采用经过业务验证的 TCC、Saga 或 Outbox/可靠消息方案；仅把模式切成 `distributed` 仍不够。
 
 ### Distributed 模式要求
 
 1. 部署 Seata Server（https://seata.io）
-2. 安装兼容的企业 Seata Python SDK
-3. 配置 `registry.conf` / `file.conf`，创建 `seata_undo_log` 表
+2. 启动 `deploy/seata-bridge`，配置共享 token、callback host 白名单和事务组
+3. 为 bridge 数据源创建官方 `tcc_fence_log`，业务服务实现持久化的 TCC 回调
 4. 设置 `SEATA_ENABLED=true`、`seata.mode=distributed`
 
-> ⚠️ `distributed` 模式未检测到兼容 SDK 时会启动失败（不会静默降级到 `local`），避免核心业务在无强一致保障下继续运行。
+> `distributed` 模式无法连接 bridge/Seata Server 时会启动失败，不会静默降级到 `local`。这只是 fail-closed 保护，不代表业务 TCC 实现已经通过一致性认证。
 
 ### 相关代码位置
 

@@ -1,6 +1,11 @@
 include README.md
 include LICENSE
+include CHANGELOG.md
+include SECURITY.md
 include requirements.txt
+include requirements-ai.txt
+include requirements-langgraph.txt
+include requirements-mcp.txt
 include pyproject.toml
 
 graft spring

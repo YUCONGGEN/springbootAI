@@ -100,6 +100,18 @@ except ImportError:
     RabbitListener = None
     RabbitTemplate = None
 
+# Optional MCP annotations are dependency-safe until MCP is enabled.
+from spring.mcp.annotations import (
+    MCPCall,
+    MCPClient,
+    MCPPrompt,
+    MCPResource,
+    MCPServer,
+    MCPTool,
+)
+from .langchain import LangChainCall, LangChainClient
+from .langgraph import GraphEdge, GraphInvoke, GraphNode, GraphRoute, LangGraph
+
 __all__ = [
     "SpringBootApplication",
     "ComponentScan",
@@ -185,4 +197,20 @@ __all__ = [
     # 消息队列注解
     "RabbitListener",
     "RabbitTemplate",
+    # Model Context Protocol
+    "MCPCall",
+    "MCPClient",
+    "MCPPrompt",
+    "MCPResource",
+    "MCPServer",
+    "MCPTool",
+    # LangChain declarative execution
+    "LangChainCall",
+    "LangChainClient",
+    # LangGraph declarative workflow
+    "GraphEdge",
+    "GraphInvoke",
+    "GraphNode",
+    "GraphRoute",
+    "LangGraph",
 ]

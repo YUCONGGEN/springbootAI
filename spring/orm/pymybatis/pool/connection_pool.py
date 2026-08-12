@@ -576,7 +576,7 @@ class MySQLConnectionPool(ConnectionPool):
             except Exception as e:
                 # 如果连接localhost/127.0.0.1失败，尝试自动检测Docker容器IP
                 host = config.get('host', '')
-                if host in ('localhost', '127.0.0.1', '0.0.0.0'):
+                if host in ('localhost', '127.0.0.1', '0.0.0.0'):  # nosec B104 - comparison only
                     docker_ip = _get_docker_container_ip_by_port(config.get('port', 3306))
                     if docker_ip:
                         logger.info(f"使用Docker容器IP {docker_ip}:{config.get('port', 3306)} 连接数据库")

@@ -14,6 +14,7 @@ ORM DDL 自动建表/更新 (JPA hibernate.ddl-auto 风格)
 支持 MySQL/PostgreSQL/SQLite
 """
 
+import ast
 import logging
 import inspect
 import threading
@@ -496,8 +497,8 @@ class DdlAutoManager:
                         default = None
                     else:
                         try:
-                            default = eval(val_expr, {"__builtins__": {}}, {})
-                        except Exception:
+                            default = ast.literal_eval(val_expr)
+                        except (ValueError, SyntaxError):
                             default = None
                 fields[fname] = default if default is not None else ""
         except Exception:
@@ -565,8 +566,8 @@ class DdlAutoManager:
     def _quote(self, identifier: str) -> str:
         """引用标识符（表名/列名）"""
         if self.dialect == 'mysql':
-            return f"`{identifier}`"
-        return f'"{identifier}"'
+            return f"`{str(identifier).replace('`', '``')}`"
+        return f'"{str(identifier).replace(chr(34), chr(34) * 2)}"'
 
     def _build_create_table_sql(self, et: EntityTable) -> str:
         """生成 CREATE TABLE 语句"""
@@ -1056,8 +1057,8 @@ class OptimisticLockExecutor:
 
     def _quote(self, identifier: str) -> str:
         if self.dialect == 'mysql':
-            return f"`{identifier}`"
-        return f'"{identifier}"'
+            return f"`{str(identifier).replace('`', '``')}`"
+        return f'"{str(identifier).replace(chr(34), chr(34) * 2)}"'
 
     def _find_pk(self, entity_class: Type) -> Optional[dict]:
         """返回主键列元数据。"""
@@ -1146,7 +1147,7 @@ class OptimisticLockExecutor:
         set_parts = [f"{self._quote(self._col_sql_name(f, col_map))} = ?" for f in set_fields]
         set_parts.append(f"{self._quote(version_col['name'])} = {self._quote(version_col['name'])} + 1")
         sql = (
-            f"UPDATE {self._quote(table_name)} SET {', '.join(set_parts)} "
+            f"UPDATE {self._quote(table_name)} SET {', '.join(set_parts)} "  # nosec B608 - quoted metadata
             f"WHERE {self._quote(pk_col['name'])} = ? AND {self._quote(version_col['name'])} = ?"
         )
         params = list(set_fields.values()) + [pk_value, old_version]

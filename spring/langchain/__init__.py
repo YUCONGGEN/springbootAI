@@ -84,8 +84,13 @@ from spring.langchain.indexes.index import IndexService
 from spring.langchain.tools.tools import ToolFactory, ToolRegistry
 from spring.langchain.utilities.utils import UtilityRegistry, safe_eval_arithmetic
 from spring.langchain.callbacks.handlers import CallbackRegistry
+from spring.langchain.annotations import (
+    LangChainCall,
+    LangChainClient,
+    bind_langchain_client,
+)
 
-__version__ = "1.0.0"
+__version__ = "2.1.0"
 
 __all__ = [
     # core
@@ -106,7 +111,12 @@ __all__ = [
     "OutputParserFactory", "DocumentLoaderRegistry", "RetrieverFactory",
     "VectorStoreFactory", "IndexService", "ToolFactory", "ToolRegistry",
     "UtilityRegistry", "CallbackRegistry",
+    # declarative execution
+    "LangChainCall", "LangChainClient", "bind_langchain_client",
     # 安全工具
     "safe_eval_arithmetic",
     "__version__",
 ]
+
+# LangGraph is intentionally kept in ``spring.langgraph`` so classic LangChain
+# imports remain stable.  See doc/LANGGRAPH_MODULE.md for the optional module.

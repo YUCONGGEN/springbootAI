@@ -7,7 +7,8 @@ param(
         'mixed', 'async', 'sync', 'gateway', 'echo', 'cpu',
         'validation', 'cache', 'csv', 'jpa', 'conditional',
         'data', 'datasource', 'txevent', 'config', 'i18n', 'actuator',
-        'swagger', 'websocket', 'messaging', 'custom', 'seata'
+        'swagger', 'websocket', 'messaging', 'ai', 'langchain',
+        'langgraph', 'mcp', 'custom', 'seata'
     )]
     [string]$Workload = 'mixed',
 

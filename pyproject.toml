@@ -12,15 +12,15 @@ build-backend = "setuptools.build_meta"
 [project]
 # 发行名 springbootAI（PyPI 包名，pip install springbootAI）；导入包名仍为 spring
 name = "springbootAI"
-version = "2.0.2"
-description = "Python版Spring Boot框架，集成PyMyBatis ORM"
+version = "2.1.0"
+description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
     { name = "YuConggen", email = "1516933915@qq.com" }
 ]
-keywords = ["spring", "springboot", "mybatis", "orm", "web", "framework", "python"]
+keywords = ["spring", "springboot", "mybatis", "orm", "web", "framework", "python", "ai", "langchain", "langgraph", "mcp"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -51,6 +51,7 @@ dependencies = [
     "pydantic==2.13.4",
     "requests==2.34.2",
     "httpx==0.28.1",
+    "defusedxml==0.7.1",
 ]
 
 [project.optional-dependencies]
@@ -142,6 +143,22 @@ langchain = [
 ]
 
 # ========================================
+# SpringBootAI LangGraph 妯″潡 - 鐙珛鐨勭姸鎬佸浘缂栨帓涓庡彲鎭㈠鎵ц
+# 瀹夎锛歱ip install springbootAI[langgraph]
+# 姣忔鍙戝竷閿佸畾鐗堟湰锛屼笌 langchain-core 1.x 鏍稿績鎺ュ彛鍏煎
+# ========================================
+langgraph = [
+    "langgraph==1.2.9",
+    "langgraph-checkpoint-sqlite==3.1.1",
+]
+
+# Model Context Protocol client/server integration (official Python SDK v2)
+# Install with: pip install springbootAI[mcp]
+mcp = [
+    "mcp==2.0.0",
+]
+
+# ========================================
 # 开发依赖
 # ========================================
 dev = [
@@ -167,6 +184,7 @@ full = [
     "prometheus-client==0.26.0",
     "loguru==0.7.3",
     "sqlglot==27.28.1",
+    "defusedxml==0.7.1",
     # HTTP 客户端
     "requests==2.34.2",
     "httpx==0.28.1",
@@ -194,6 +212,11 @@ full = [
     "langchain-google-vertexai>=2.0.0,<3",
     "langchain-deepseek>=0.1.0,<2",
     "langchain-zhipuai>=0.0.1,<2",
+    # LangGraph
+    "langgraph==1.2.9",
+    "langgraph-checkpoint-sqlite==3.1.1",
+    # Model Context Protocol client/server
+    "mcp==2.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -224,6 +247,9 @@ markers = [
 [project.urls]
 Homepage = "https://github.com/YUCONGGEN/springbootAI"
 Repository = "https://github.com/YUCONGGEN/springbootAI.git"
+Documentation = "https://github.com/YUCONGGEN/springbootAI#readme"
+Changelog = "https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md"
+Issues = "https://github.com/YUCONGGEN/springbootAI/issues"
 
 [project.scripts]
 springbootai = "spring.main:run_cli"

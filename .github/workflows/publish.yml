@@ -13,7 +13,7 @@ name: Publish
 #     workflow filename = publish.yml, environment 留空
 #   参见 https://docs.pypi.org/trusted-publishers/
 #
-# 版本：2.0.0（pyproject.toml 单一来源）
+# 版本：pyproject.toml 是单一来源，Release tag 必须严格等于 v<version>。
 # ====================================================================
 
 on:
@@ -54,6 +54,28 @@ jobs:
             echo "::error::Version not found in pyproject.toml"
             exit 1
           fi
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "::error::PyPI publishing must run from a git tag, not a branch"
+            exit 1
+          fi
+          if [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
+            echo "::error::Git tag must equal v$VERSION (current ref: ${GITHUB_REF_NAME})"
+            exit 1
+          fi
+
+      - name: Run release test and security gates
+        run: |
+          pip install -r requirements-lock.txt
+          pip install -r requirements-ai.txt
+          pip install -r requirements-langgraph.txt
+          pip install -r requirements-mcp.txt
+          pip install bandit==1.9.4 pip-audit==2.10.1
+          pytest tests/ tests_runtime/ -q --cov=spring --cov-report=term --cov-fail-under=60
+          bandit -r spring/ example_langchain/ example_langgraph/ example_mcp/ -ll -q
+          pip-audit -r requirements-lock.txt --timeout 60 --progress-spinner off
+          pip-audit -r requirements-ai.txt --timeout 60 --progress-spinner off
+          pip-audit -r requirements-langgraph.txt --timeout 60 --progress-spinner off
+          pip-audit -r requirements-mcp.txt --timeout 60 --progress-spinner off
 
       - name: Build sdist and wheel
         run: python -m build
@@ -61,14 +83,20 @@ jobs:
       - name: Verify distribution metadata
         run: python -m twine check dist/*
 
-      - name: Verify langchain module is packaged
+      - name: Verify AI integration modules are packaged
         run: |
-          echo "Checking if spring.langchain is included in the wheel..."
-          python -m zipfile -l dist/*.whl | grep "spring/langchain" || {
-            echo "::error::spring.langchain module not found in wheel!"
-            exit 1
-          }
-          echo "✅ spring.langchain module is included in the wheel"
+          for module in langchain langgraph mcp; do
+            python -m zipfile -l dist/*.whl | grep "spring/$module" || {
+              echo "::error::spring.$module module not found in wheel"
+              exit 1
+            }
+          done
+
+      - name: Verify wheel installs from a clean environment
+        run: |
+          python -m venv /tmp/springbootai-wheel-check
+          /tmp/springbootai-wheel-check/bin/python -m pip install dist/*.whl
+          /tmp/springbootai-wheel-check/bin/python -c "import spring, spring.ai, spring.langchain, spring.langgraph, spring.mcp"
 
       - name: Publish to PyPI
         # 通过 OIDC 向 PyPI 认证，无需 API token；上传 dist/* 到 springbootAI

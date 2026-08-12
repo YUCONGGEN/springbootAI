@@ -19,6 +19,7 @@ def http_manager(tmp_path):
         store_path=str(tmp_path / "seata-http.sqlite3"),
         recovery_grace_ms=0,
         recovery_interval_s=0,
+        callback_allowed_hosts=["orders.internal", "inventory.internal"],
     )
     yield manager
     manager.stop_recovery_worker()

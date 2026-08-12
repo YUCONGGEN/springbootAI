@@ -111,7 +111,7 @@ class SQLiteTransactionStore:
                 values = list(statuses)
                 placeholders = ",".join("?" for _ in values)
                 rows = connection.execute(
-                    f"SELECT * FROM springpy_global_transactions "
+                    f"SELECT * FROM springpy_global_transactions "  # nosec B608 - generated placeholders only
                     f"WHERE status IN ({placeholders}) ORDER BY created_at",
                     values,
                 ).fetchall()
@@ -133,12 +133,13 @@ class SQLiteTransactionStore:
         placeholders = ",".join("?" for _ in allowed)
         now = time.time()
         with self._connect() as connection:
-            cursor = connection.execute(
-                f"""
+            transition_sql = """
                 UPDATE springpy_global_transactions
                 SET status = ?, updated_at = ?
-                WHERE xid = ? AND status IN ({placeholders})
-                """,
+                WHERE xid = ? AND status IN (__STATUS_PLACEHOLDERS__)
+            """.replace("__STATUS_PLACEHOLDERS__", placeholders)  # nosec B608
+            cursor = connection.execute(
+                transition_sql,
                 [target_status, now, xid, *allowed],
             )
         return cursor.rowcount == 1
@@ -261,7 +262,7 @@ class SQLiteTransactionStore:
         placeholders = ",".join("?" for _ in active)
         with self._connect() as connection:
             transaction_count = connection.execute(
-                f"SELECT COUNT(*) FROM springpy_global_transactions WHERE status IN ({placeholders})",
+                f"SELECT COUNT(*) FROM springpy_global_transactions WHERE status IN ({placeholders})",  # nosec B608
                 active,
             ).fetchone()[0]
             branch_count = connection.execute(

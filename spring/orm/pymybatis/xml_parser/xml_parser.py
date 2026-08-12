@@ -11,6 +11,8 @@ PyMyBatis XML映射文件解析器
 import os
 import re
 from dataclasses import dataclass, field
+from defusedxml import ElementTree as DefusedET
+from defusedxml.common import DefusedXmlException
 from xml.etree import ElementTree as ET
 from typing import Dict, List, Optional
 
@@ -239,9 +241,7 @@ class XmlParser:
         try:
             with open(file_path, 'r', encoding='utf-8-sig') as xml_file:
                 xml_content = xml_file.read()
-            root = ET.fromstring(
-                self._normalize_comparison_operators(xml_content)
-            )
+            root = self._secure_fromstring(xml_content)
 
             # 解析namespace
             self.namespace = root.get('namespace', '')
@@ -254,7 +254,7 @@ class XmlParser:
             # 替换SQL片段引用
             self._replace_sql_fragments()
 
-        except ET.ParseError as e:
+        except (ET.ParseError, DefusedXmlException) as e:
             raise ValueError(f"XML解析错误: {e}")
 
     def parse_string(self, xml_string: str) -> None:
@@ -264,9 +264,10 @@ class XmlParser:
         Args:
             xml_string: XML字符串
         """
-        root = ET.fromstring(
-            self._normalize_comparison_operators(xml_string)
-        )
+        try:
+            root = self._secure_fromstring(xml_string)
+        except (ET.ParseError, DefusedXmlException) as e:
+            raise ValueError(f"XML parse error: {e}") from e
 
         # 解析namespace
         self.namespace = root.get('namespace', '')
@@ -278,6 +279,15 @@ class XmlParser:
         self._resolve_result_map_extends()
         # 替换SQL片段引用
         self._replace_sql_fragments()
+
+    @classmethod
+    def _secure_fromstring(cls, xml_content: str):
+        return DefusedET.fromstring(
+            cls._normalize_comparison_operators(xml_content),
+            forbid_dtd=True,
+            forbid_entities=True,
+            forbid_external=True,
+        )
 
     def _parse_element(self, element: ET.Element) -> None:
         """

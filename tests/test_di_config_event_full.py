@@ -151,7 +151,7 @@ class TestConfigurationError:
         monkeypatch.delenv("AI_ALLOW_FAKE", raising=False)
         loader = self._make_prod_loader(monkeypatch, {
             "default-provider": "openai",
-            "openai": {"api-key": "sk-prod-real-key-1234567890"},
+            "openai": {"api-key": "unit-test-placeholder"},
         })
         loader._validate_config()
         # 生产 profile 必须强制 AI_ALLOW_FAKE=false（防止后续 autoconfig 静默降级）

@@ -1,0 +1,3 @@
+# Official Model Context Protocol Python SDK.
+# Keep this file aligned with pyproject.toml [project.optional-dependencies].mcp.
+mcp==2.0.0

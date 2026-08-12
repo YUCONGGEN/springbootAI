@@ -7,6 +7,7 @@ import os
 import sqlite3
 import threading
 import time
+from typing import TypedDict
 
 from spring import create_app
 from spring.annotations import (
@@ -31,6 +32,7 @@ from spring.annotations import (
     Validated,
 )
 from spring.cloud.gateway import GatewayRouter
+from spring.ai import ChatClient, FakeChatModel
 from spring.config.binding import (
     ConfigurationPropertiesBinder,
     NestedConfigurationProperties,
@@ -50,6 +52,21 @@ from spring.data import (
 from spring.datasource import DS, Master, Slave, DynamicRoutingDataSource
 from spring.datasource.context import DataSourceContextHolder
 from spring.i18n import Locale, StaticMessageSource
+from spring.langchain import LangChainCall, LangChainClient, bind_langchain_client
+from spring.langchain.adapters import to_langchain_model
+from spring.langchain.chains import ChainService
+from spring.langgraph import GraphEdge, GraphInvoke, GraphNode, LangGraph
+from spring.mcp import (
+    MCPCall,
+    MCPClient,
+    MCPClientConnection,
+    MCPClientManager,
+    MCPClientProperties,
+    MCPServer,
+    MCPTool,
+    bind_mcp_client,
+    build_mcp_server,
+)
 from spring.orm import Column, Id, OptimisticLockExecutor, Transient, Version, entity
 from spring.tx import (
     TransactionPhase,
@@ -80,6 +97,84 @@ from spring.web.swagger import (
 _sync_lock = threading.Lock()
 _active_sync = 0
 _max_active_sync = 0
+
+
+_ai_client = ChatClient(FakeChatModel(prefix="AI:")).default_system(
+    "Deterministic load-test assistant"
+).build()
+
+
+@LangChainClient
+class BenchmarkLangChainAssistant:
+    @LangChainCall("Echo {text}")
+    def echo(self, text: str) -> str:
+        raise AssertionError("declarative LangChain method body must not execute")
+
+
+_langchain_assistant = bind_langchain_client(
+    BenchmarkLangChainAssistant(),
+    chain_service=ChainService(to_langchain_model(FakeChatModel(prefix="LC:"))),
+)
+
+
+class BenchmarkGraphState(TypedDict, total=False):
+    value: int
+
+
+@GraphEdge("increment", "double")
+@LangGraph(
+    state_schema=BenchmarkGraphState,
+    name="benchmark_graph",
+    timeout_seconds=2,
+    max_steps=4,
+    max_input_bytes=4096,
+)
+class BenchmarkGraph:
+    @GraphNode(entry=True)
+    def increment(self, state: BenchmarkGraphState):
+        return {"value": state["value"] + 1}
+
+    @GraphNode(end=True)
+    def double(self, state: BenchmarkGraphState):
+        return {"value": state["value"] * 2}
+
+    @GraphInvoke
+    def run(self, input_state: BenchmarkGraphState, thread_id: str):
+        raise AssertionError("declarative LangGraph method body must not execute")
+
+
+_benchmark_graph = BenchmarkGraph()
+
+
+@MCPServer(name="benchmark-mcp", transport="stdio", allowed_tools=["add"])
+class BenchmarkMCPServer:
+    @MCPTool(description="Add two benchmark integers")
+    def add(self, a: int, b: int) -> int:
+        return a + b
+
+
+_mcp_server = build_mcp_server(BenchmarkMCPServer())
+_mcp_connection = MCPClientConnection(
+    MCPClientProperties(
+        name="benchmark",
+        transport="stdio",
+        command="in-process",
+        allowed_tools=("add",),
+        timeout_seconds=3,
+    ),
+    server=_mcp_server.native_server,
+)
+_mcp_manager = MCPClientManager([_mcp_connection])
+
+
+@MCPClient("benchmark")
+class BenchmarkMCPClient:
+    @MCPCall("add")
+    def add(self, a: int, b: int) -> int:
+        raise AssertionError("declarative MCP method body must not execute")
+
+
+_mcp_client = bind_mcp_client(BenchmarkMCPClient(), _mcp_manager)
 
 
 class ValidationPayload:
@@ -713,6 +808,37 @@ class BenchmarkController:
             "fallback": any(message.startswith("Hello default") for message in resolved),
         }
 
+    @GetMapping("/ai")
+    def ai_endpoint(self, text: str = "ping"):
+        text = str(text)[:1024]
+        content = _ai_client.prompt().user(text).call().content()
+        return {"kind": "ai", "provider": "fake", "content": content, "valid": text in content}
+
+    @GetMapping("/langchain")
+    def langchain_endpoint(self, text: str = "ping"):
+        text = str(text)[:1024]
+        content = _langchain_assistant.echo(text)
+        return {"kind": "langchain", "provider": "fake", "content": content, "valid": text in content}
+
+    @GetMapping("/langgraph")
+    def langgraph_endpoint(self, value: int = 3):
+        value = min(max(value, 0), 1_000_000)
+        result = _benchmark_graph.run(
+            {"value": value},
+            thread_id=f"load-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}",
+        )
+        return {
+            "kind": "langgraph",
+            "value": result["value"],
+            "expected": (value + 1) * 2,
+            "valid": result["value"] == (value + 1) * 2,
+        }
+
+    @GetMapping("/mcp")
+    def mcp_endpoint(self, a: int = 2, b: int = 3):
+        result = _mcp_client.add(a, b)
+        return {"kind": "mcp", "result": result, "expected": a + b, "valid": result == a + b}
+
     @GetMapping("/upstream")
     async def upstream_endpoint(self):
         await asyncio.sleep(0.005)
@@ -736,6 +862,7 @@ class BenchmarkApplication:
 
 
 app = create_app(BenchmarkApplication)
+app.router.add_event_handler("shutdown", _mcp_manager.close_sync)
 benchmark_context = app.state.spring_application.application_context
 
 # 性能基准测试禁用 Actuator 鉴权（性能测试不验证安全行为，专注于框架路径执行）

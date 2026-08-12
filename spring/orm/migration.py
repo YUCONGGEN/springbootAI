@@ -67,7 +67,9 @@ class MigrationManager:
         self.pool = connection_pool
         self.migrations_dir = Path(migrations_dir)
         self.dialect = dialect.lower()
-        self.table_name = table_name
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", str(table_name)):
+            raise ValueError("migration table_name must be a simple SQL identifier")
+        self.table_name = str(table_name)
         self._ensure_version_table()
 
     def _ensure_version_table(self) -> None:
@@ -141,9 +143,9 @@ class MigrationManager:
             conn = pooled.connection
             cursor = conn.cursor()
             if self.dialect == 'mysql':
-                cursor.execute(f"SELECT version, description, script, checksum, installed_on, execution_time, success FROM `{self.table_name}` WHERE success = 1")
+                cursor.execute(f"SELECT version, description, script, checksum, installed_on, execution_time, success FROM `{self.table_name}` WHERE success = 1")  # nosec B608
             else:
-                cursor.execute(f'SELECT version, description, script, checksum, installed_on, execution_time, success FROM "{self.table_name}" WHERE success = 1')
+                cursor.execute(f'SELECT version, description, script, checksum, installed_on, execution_time, success FROM "{self.table_name}" WHERE success = 1')  # nosec B608
 
             applied = {}
             for row in cursor.fetchall():
@@ -260,14 +262,14 @@ class MigrationManager:
             # 记录迁移
             if self.dialect == 'mysql':
                 cursor.execute(
-                    f"INSERT INTO `{self.table_name}` (version, description, script, checksum, installed_on, execution_time, success) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    f"INSERT INTO `{self.table_name}` (version, description, script, checksum, installed_on, execution_time, success) VALUES (%s, %s, %s, %s, %s, %s, %s)",  # nosec B608
                     (version, description, script_name, checksum, int(time.time()), int(elapsed * 1000), 1)
                 )
             else:
                 ph = '?' if self.dialect == 'sqlite' else '%s'
                 table_ref = f'"{self.table_name}"'
                 cursor.execute(
-                    f'INSERT INTO {table_ref} (version, description, script, checksum, installed_on, execution_time, success) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})',
+                    f'INSERT INTO {table_ref} (version, description, script, checksum, installed_on, execution_time, success) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})',  # nosec B608
                     (version, description, script_name, checksum, int(time.time()), int(elapsed * 1000), 1)
                 )
 
@@ -337,7 +339,7 @@ class MigrationManager:
                     else:
                         ph = '?' if self.dialect == 'sqlite' else '%s'
                         cursor.execute(
-                            f'INSERT INTO "{self.table_name}" (version, description, script, checksum, installed_on, execution_time, success) SELECT {ph},{ph},{ph},{ph},{ph},{ph},{ph} WHERE NOT EXISTS (SELECT 1 FROM "{self.table_name}" WHERE version = {ph})',
+                            f'INSERT INTO "{self.table_name}" (version, description, script, checksum, installed_on, execution_time, success) SELECT {ph},{ph},{ph},{ph},{ph},{ph},{ph} WHERE NOT EXISTS (SELECT 1 FROM "{self.table_name}" WHERE version = {ph})',  # nosec B608
                             (version, description, script, checksum, int(time.time()), 0, 1, version)
                         )
                     baseline_conn.commit()
@@ -400,9 +402,9 @@ class MigrationManager:
             conn = pooled.connection
             cursor = conn.cursor()
             if self.dialect == 'mysql':
-                cursor.execute(f"DELETE FROM `{self.table_name}` WHERE success = 0")
+                cursor.execute(f"DELETE FROM `{self.table_name}` WHERE success = 0")  # nosec B608
             else:
-                cursor.execute(f'DELETE FROM "{self.table_name}" WHERE success = 0')
+                cursor.execute(f'DELETE FROM "{self.table_name}" WHERE success = 0')  # nosec B608
             deleted = cursor.rowcount
             conn.commit()
             cursor.close()

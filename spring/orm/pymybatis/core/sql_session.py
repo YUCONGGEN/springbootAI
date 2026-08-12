@@ -643,7 +643,7 @@ class SqlSession:
         data = self.select(pagination_sql, params)
 
         # 计算总数（如果需要）
-        count_sql = f"SELECT COUNT(*) as total FROM ({resolved_sql}) t"
+        count_sql = f"SELECT COUNT(*) as total FROM ({resolved_sql}) t"  # nosec B608 - wraps already-resolved mapper SQL
         count_result = self.select_one(count_sql, params)
         if isinstance(count_result, dict):
             total = count_result.get('total', 0)

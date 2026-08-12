@@ -1,7 +1,7 @@
 # SpringBootAI LangChain 模块使用指南 —— 小白也能看懂
 
 > 把 [LangChain](https://github.com/langchain-ai/langchain) 全套能力（Chains / Agents / Memory / Retrievers / VectorStores / Parsers / Loaders）封装为 Spring 风格 Bean，配合 30+ 第三方模型提供商（OpenAI / Anthropic / Ollama / DeepSeek / ZhipuAI / Tongyi …）开箱即用。
-> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.0.0 / LangChain 模块 1.0.0
+> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.1.0 / LangChain 模块 2.1.0
 
 ---
 
@@ -1058,3 +1058,103 @@ A：可以，用 `SequentialChain` 把多个 Chain 串起来，前一个的输�
 ---
 
 > **相关文档**：[AI 模块使用指南](AI_MODULE.md) | [AI & LangChain 测试指南](AI_LANGCHAIN_TEST_GUIDE.md) | [新手入门指南](BEGINNER_GUIDE.md)
+
+## 注解式调用：把 Chain 和 Agent 写成普通方法
+
+当一个 Service 只有“接收参数，然后调用固定 Chain”的样板代码时，可以用注解缩短它。注解不是新的 AI 引擎，底层仍调用本文前面介绍的 `ChainService` 和 `AgentService`。
+
+### 最小 Chain 示例
+
+先完成 `configure_ai()` 和 `configure_langchain()`，让容器中存在 `lcChainService`。然后声明服务：
+
+```python
+from spring.langchain import LangChainCall, LangChainClient
+
+
+@LangChainClient
+class WritingAssistant:
+    @LangChainCall("Translate {text} to {language}. Return only the translation.")
+    def translate(self, text: str, language: str = "Chinese") -> str:
+        raise NotImplementedError
+
+
+assistant = WritingAssistant()
+print(assistant.translate("Hello"))
+```
+
+方法体是声明占位，调用时不会执行。框架会读取 `text`、`language`，再执行：
+
+```python
+lcChainService.run_llm_chain(prompt, text="Hello", language="Chinese")
+```
+
+不要在占位方法体中写业务副作用，因为它不会运行。真实业务预处理应放在调用注解方法之前，或写成图节点。
+
+### 对话、总结和 Agent
+
+```python
+@LangChainClient
+class Assistant:
+    @LangChainCall(mode="conversation", input_name="question")
+    def chat(self, question: str) -> str:
+        raise NotImplementedError
+
+    @LangChainCall(mode="summarize", input_name="paragraphs")
+    def summarize(self, paragraphs: list[str]) -> str:
+        raise NotImplementedError
+
+    @LangChainCall(
+        mode="agent",
+        input_name="task",
+        tools_bean="safeAgentTools",
+        agent_type="react",
+    )
+    def execute(self, task: str) -> str:
+        raise NotImplementedError
+```
+
+| mode | 底层调用 | 输入要求 |
+|---|---|---|
+| `chain` | `run_llm_chain` | 方法参数与提示词变量对应 |
+| `conversation` | `run_conversation` | `input_name` 指向一个字符串 |
+| `summarize` | `run_summarize` | `input_name` 指向字符串列表 |
+| `agent` | `run_agent` | 字符串任务，并显式指定 `tools_bean` |
+
+Agent 不接受调用者临时传工具。工具必须由容器预先注册，这能避免外部请求绕过工具白名单。危险工具仍要遵守 LangChain 模块原有的允许策略。
+
+### 异步 Web 路由
+
+```python
+@LangChainClient
+class Assistant:
+    @LangChainCall("Summarize this text: {text}")
+    async def summarize_one(self, text: str) -> str:
+        raise NotImplementedError
+
+
+@PostMapping("/summary")
+async def summary(body):
+    return await assistant.summarize_one(body["text"])
+```
+
+现有 LangChain classic 服务是同步的。异步注解会用工作线程执行同步 Chain，因此不会直接阻塞 Uvicorn 事件循环。线程不能中止已经发出的模型 HTTP 请求，所以仍必须配置 provider 连接超时、读取超时和有限重试。
+
+注解默认拒绝超过 65536 字节的输入，可用 `max_input_bytes` 调小。这个限制按序列化后的 UTF-8 字节计算，不能替代模型 token 限制。
+
+### 不使用全局 BeanRegistry
+
+单元测试或手动装配时可以显式注入：
+
+```python
+from spring.langchain import bind_langchain_client
+
+assistant = bind_langchain_client(
+    Assistant(),
+    chain_service=my_chain_service,
+    agent_service=my_agent_service,
+    tools=safe_tools,
+    memory=my_memory,
+)
+```
+
+完整示例见 [annotation_demo.py](../example_langchain/demo/annotation_demo.py)，行为测试见 [test_ai_declarative_annotations.py](../tests/test_ai_declarative_annotations.py)。

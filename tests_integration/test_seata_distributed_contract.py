@@ -82,6 +82,7 @@ def test_real_seata_tcc_commit_and_rollback_contract(tcc_callback_server):
         mode="distributed",
         bridge_url=os.getenv("SEATA_BRIDGE_URL", "http://127.0.0.1:18091"),
         bridge_token=os.getenv("SEATA_BRIDGE_TOKEN", "springpy-integration-secret"),
+        callback_allowed_hosts=[os.getenv("SEATA_CALLBACK_HOST", "host.docker.internal")],
     )
     callback_host = os.getenv("SEATA_CALLBACK_HOST", "host.docker.internal")
     callback_url = f"http://{callback_host}:{callback_port}/seata/branch"

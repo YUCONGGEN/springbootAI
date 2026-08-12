@@ -117,6 +117,7 @@ def test_distributed_manager_uses_bridge_and_fails_closed(monkeypatch):
         mode="distributed",
         bridge_url="http://127.0.0.1:18091",
         bridge_token="0123456789abcdef",
+        callback_allowed_hosts=["inventory"],
     )
     try:
         xid = manager.begin_transaction(timeout=5000, name="create-order")
@@ -160,6 +161,7 @@ def test_distributed_manager_rejects_process_local_branch_callbacks(monkeypatch)
         mode="distributed",
         bridge_url="http://127.0.0.1:18092",
         bridge_token="0123456789abcdef",
+        callback_allowed_hosts=["inventory"],
     )
     xid = manager.begin_transaction(name="unsafe-callback")
     try:

@@ -31,7 +31,12 @@ from spring.ai.etl import (
     CharacterTextSplitter, DocumentReader, TextDocument, TextReader,
     TextSplitter, TokenTextSplitter,
 )
-from spring.ai.tools import ToolDefinition, ToolRegistry
+from spring.ai.tools import (
+    CompositeToolRegistry,
+    ToolDefinition,
+    ToolExecutionPolicy,
+    ToolRegistry,
+)
 from spring.ai.providers import (
     FakeChatModel, FakeEmbeddingModel, OllamaChatModel, OllamaEmbeddingModel,
     OpenAICompatChatModel, OpenAIChatModel, OpenAIEmbeddingModel,
@@ -42,7 +47,7 @@ from spring.ai.resilience import (
 from spring.ai.observability import AIMetrics, ai_metrics
 from spring.ai.autoconfig import AIProperties, bind_ai_config, configure_ai
 
-__version__ = "1.3.0"
+__version__ = "2.1.0"
 
 __all__ = [
     # core
@@ -63,7 +68,7 @@ __all__ = [
     "CharacterTextSplitter", "DocumentReader", "TextDocument", "TextReader",
     "TextSplitter", "TokenTextSplitter",
     # tools
-    "ToolDefinition", "ToolRegistry",
+    "CompositeToolRegistry", "ToolDefinition", "ToolExecutionPolicy", "ToolRegistry",
     # providers
     "FakeChatModel", "FakeEmbeddingModel", "OllamaChatModel",
     "OllamaEmbeddingModel", "OpenAICompatChatModel", "OpenAIChatModel",

@@ -27,6 +27,7 @@ import os
 import tempfile
 from contextvars import ContextVar
 from typing import Dict, Any, Optional, List, Callable
+from urllib import parse as urlparse
 from urllib import request as urlrequest
 from spring.cloud.transaction_store import SQLiteTransactionStore
 from spring.cloud.seata_bridge import SeataBridgeClient, SeataBridgeError
@@ -65,6 +66,7 @@ class SeataTransactionManager:
         self.bridge_url = os.getenv("SEATA_BRIDGE_URL", "http://localhost:18091")
         self.bridge_token = os.getenv("SEATA_BRIDGE_TOKEN", "")
         self.bridge_timeout_s = 5.0
+        self.callback_allowed_hosts: tuple[str, ...] = ()
         self._bridge_client: Optional[SeataBridgeClient] = None
         self.mode = mode  # 'local', 'http', or 'distributed'
         self._transaction_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
@@ -104,6 +106,7 @@ class SeataTransactionManager:
         store_path: Optional[str] = None,
         recovery_grace_ms: int = 30000,
         recovery_interval_s: float = 30.0,
+        callback_allowed_hosts: Optional[List[str]] = None,
     ) -> None:
         """重新配置单例；初始化入口不能依赖第二次构造调用。"""
         client_config_changed = (
@@ -119,6 +122,16 @@ class SeataTransactionManager:
         self.bridge_url = bridge_url
         self.bridge_token = bridge_token
         self.bridge_timeout_s = float(bridge_timeout_s)
+        callback_hosts = (
+            callback_allowed_hosts.split(",")
+            if isinstance(callback_allowed_hosts, str)
+            else (callback_allowed_hosts or ())
+        )
+        self.callback_allowed_hosts = tuple(
+            str(host).strip().lower()
+            for host in callback_hosts
+            if str(host).strip()
+        )
         if client_config_changed:
             self._bridge_client = None
             self._seata_client_initialized = False
@@ -130,6 +143,23 @@ class SeataTransactionManager:
         self._recovery_grace_ms = max(0, int(recovery_grace_ms))
         self._recovery_interval_s = max(0.0, float(recovery_interval_s))
         self.set_mode(mode)
+
+    def _validate_callback_url(self, callback_url: str) -> str:
+        normalized = str(callback_url or "").strip().rstrip("/")
+        parsed = urlparse.urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+            raise ValueError("Seata callback_url must be an absolute HTTP(S) URL")
+        if parsed.username or parsed.password or parsed.fragment:
+            raise ValueError("Seata callback_url must not contain credentials or a fragment")
+        host = parsed.hostname.lower()
+        allowed = any(
+            host == pattern
+            or (pattern.startswith("*.") and host.endswith(pattern[1:]))
+            for pattern in self.callback_allowed_hosts
+        )
+        if not allowed:
+            raise ValueError(f"Seata callback host is not allow-listed: {host}")
+        return normalized
 
     def _ensure_transaction_store(self) -> SQLiteTransactionStore:
         if self._transaction_store is None:
@@ -337,6 +367,9 @@ class SeataTransactionManager:
         if not branch_id:
             branch_id = uuid.uuid4().hex[:16]
 
+        if callback_url:
+            callback_url = self._validate_callback_url(callback_url)
+
         if self.mode == 'http':
             transaction = self._ensure_transaction_store().get_transaction(xid)
             if transaction is None or transaction['status'] in {'COMMITTED', 'ROLLED_BACK'}:
@@ -422,12 +455,13 @@ class SeataTransactionManager:
         url = branch.get('callback_url')
         if url:
             try:
+                url = self._validate_callback_url(url)
                 full_url = f"{url.rstrip('/')}/{branch_id}/{action}"
                 req = urlrequest.Request(full_url, method='POST',
                                          data=json.dumps({'xid': branch['xid'], 'branchId': branch_id}).encode(),
                                          headers={'Content-Type': 'application/json'})
-                resp = urlrequest.urlopen(req, timeout=5)
-                return resp.status == 200
+                with urlrequest.urlopen(req, timeout=5) as resp:  # nosec B310 - URL is validated above
+                    return resp.status == 200
             except Exception as e:
                 logger.error(f"[Seata-HTTP] HTTP branch {action} failed for {branch_id[:16]}: {e}")
                 return False
@@ -866,6 +900,9 @@ def init_seata(config: dict) -> None:
         store_path=config.get('store_path') or config.get('store-path'),
         recovery_grace_ms=config.get('recovery_grace_ms', config.get('recovery-grace-ms', 30000)),
         recovery_interval_s=config.get('recovery_interval_s', config.get('recovery-interval-s', 30.0)),
+        callback_allowed_hosts=config.get(
+            'callback_allowed_hosts', config.get('callback-allowed-hosts', [])
+        ),
     )
     if mode == 'http' and config.get('recover_on_startup', True):
         recovery = seata_manager.recover_pending_transactions()

@@ -28,6 +28,7 @@ class LangChainAppConfig:
         from spring.config.config_loader import config_loader
         from spring.ai.autoconfig import configure_ai
         from spring.langchain.autoconfig import configure_langchain
+        from spring.langgraph.autoconfig import configure_langgraph
 
         registry = BeanRegistry()
         # 1. 先装配 spring.ai（提供 aiChatModel / aiEmbeddingModel）
@@ -43,8 +44,23 @@ class LangChainAppConfig:
             logger.error("spring.langchain 装配失败: %s", exc)
             lc_beans = {}
 
+        try:
+            lg_beans = configure_langgraph(registry=registry, config=config_loader)
+        except Exception as exc:
+            logger.error("spring.langgraph auto-configuration failed: %s", exc)
+            lg_config = config_loader.get_prefix_config("spring.langgraph") or {}
+            enabled = str(lg_config.get("enabled", False)).strip().lower() in {
+                "true", "1", "yes", "on"
+            }
+            if enabled:
+                # Explicitly enabled optional infrastructure must fail startup
+                # instead of leaving a partially configured application alive.
+                raise
+            lg_beans = {}
+
         self._ai_beans_count = len(ai_beans)
         self._lc_beans_count = len(lc_beans)
+        self._lg_beans_count = len(lg_beans)
         logger.info(
             "LangChainAppConfig 装配完成: ai beans=%d, langchain beans=%d",
             self._ai_beans_count, self._lc_beans_count)
@@ -52,4 +68,5 @@ class LangChainAppConfig:
     @property
     def status(self) -> dict:
         return {"ai_beans": self._ai_beans_count,
-                "lc_beans": self._lc_beans_count}
+                "lc_beans": self._lc_beans_count,
+                "langgraph_beans": self._lg_beans_count}

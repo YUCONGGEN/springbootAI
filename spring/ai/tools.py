@@ -7,8 +7,9 @@
 import inspect
 import json
 import threading
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, get_type_hints
 
 
 _PY_TO_JSON_TYPE = {
@@ -68,42 +69,45 @@ class ToolDefinition:
 
     def __init__(self, name: str, description: str, func: Callable,
                  parameters: Dict[str, Any], return_type: str = "string",
-                 dangerous: bool = False):
+                 dangerous: bool = False,
+                 input_schema: Optional[Dict[str, Any]] = None):
         self.name = name
         self.description = description
         self.func = func
         self.parameters = parameters
         self.return_type = return_type
         self.dangerous = dangerous
+        self.input_schema = deepcopy(input_schema) if input_schema is not None else None
 
     def to_schema(self) -> Dict[str, Any]:
         """生成 OpenAI 风格的 function schema"""
-        properties = {
-            name: {key: value for key, value in schema.items() if key != "__required"}
-            for name, schema in self.parameters.items()
-        }
+        if self.input_schema is not None:
+            parameters = deepcopy(self.input_schema)
+        else:
+            properties = {
+                name: {key: value for key, value in schema.items() if key != "__required"}
+                for name, schema in self.parameters.items()
+            }
+            parameters = {
+                "type": "object",
+                "properties": properties,
+                "required": [
+                    p for p, m in self.parameters.items()
+                    if m.get("__required", True)
+                ],
+            }
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": properties,
-                    "required": [
-                        p for p, m in self.parameters.items()
-                        if m.get("__required", True)
-                    ],
-                },
+                "parameters": parameters,
             },
         }
 
 
 class ToolRegistry:
     """工具注册表 - 管理所有可被 LLM 调用的工具"""
-
-    def __init__(self):
-        self._tools: Dict[str, ToolDefinition] = {}
 
     def __init__(self, policy: Optional[ToolExecutionPolicy] = None):
         self._tools: Dict[str, ToolDefinition] = {}
@@ -114,11 +118,18 @@ class ToolRegistry:
                  dangerous: bool = False) -> ToolDefinition:
         """注册工具，从签名自动推断参数 schema"""
         sig = inspect.signature(func)
+        try:
+            type_hints = get_type_hints(func)
+        except (NameError, TypeError):
+            type_hints = {}
         properties: Dict[str, Any] = {}
         for pname, param in sig.parameters.items():
             if pname in ("self", "cls"):
                 continue
-            py_type = param.annotation if param.annotation is not inspect.Parameter.empty else str
+            py_type = type_hints.get(
+                pname,
+                param.annotation if param.annotation is not inspect.Parameter.empty else str,
+            )
             json_type = _PY_TO_JSON_TYPE.get(py_type, "string")
             required = param.default is inspect.Parameter.empty
             prop = {"type": json_type, "__required": required}
@@ -127,13 +138,52 @@ class ToolRegistry:
         # 返回类型
         ret_type = "string"
         if sig.return_annotation is not inspect.Signature.empty:
-            ret_type = _PY_TO_JSON_TYPE.get(sig.return_annotation, "string")
+            ret_type = _PY_TO_JSON_TYPE.get(
+                type_hints.get("return", sig.return_annotation), "string"
+            )
 
         desc = description or (func.__doc__ or "").strip().split("\n")[0]
         tool = ToolDefinition(name=name, description=desc, func=func,
                               parameters=properties, return_type=ret_type,
                               dangerous=dangerous or bool(
                                   getattr(func, "__spring_tool_dangerous__", False)))
+        self._tools[name] = tool
+        return tool
+
+    def register_schema(self, name: str, func: Callable,
+                        input_schema: Dict[str, Any], description: str = "",
+                        return_type: str = "string",
+                        dangerous: bool = False) -> ToolDefinition:
+        """Register a tool while preserving its externally supplied schema."""
+        if not callable(func):
+            raise TypeError("tool func must be callable")
+        if not isinstance(input_schema, dict) or input_schema.get("type", "object") != "object":
+            raise ValueError("tool input_schema must be an object JSON Schema")
+        properties = input_schema.get("properties", {})
+        if not isinstance(properties, dict):
+            raise ValueError("tool input_schema.properties must be an object")
+        required = input_schema.get("required", [])
+        if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
+            raise ValueError("tool input_schema.required must be a list of strings")
+
+        parameter_metadata: Dict[str, Any] = {}
+        required_names = set(required)
+        for parameter_name, schema in properties.items():
+            if not isinstance(parameter_name, str) or not isinstance(schema, dict):
+                raise ValueError("tool input_schema properties must map strings to schemas")
+            metadata = deepcopy(schema)
+            metadata["__required"] = parameter_name in required_names
+            parameter_metadata[parameter_name] = metadata
+
+        tool = ToolDefinition(
+            name=name,
+            description=description,
+            func=func,
+            parameters=parameter_metadata,
+            return_type=return_type,
+            dangerous=dangerous,
+            input_schema=input_schema,
+        )
         self._tools[name] = tool
         return tool
 
@@ -194,3 +244,46 @@ class ToolRegistry:
 
     def __len__(self) -> int:
         return len(self._tools)
+
+
+class CompositeToolRegistry:
+    """Route tool operations to multiple registries without weakening policy.
+
+    Each child registry remains responsible for its own authorization, approval,
+    timeout and result-size checks. Duplicate names are rejected because silent
+    shadowing could redirect a model call to a less restrictive implementation.
+    """
+
+    def __init__(self, *registries: Any):
+        self._registries = [registry for registry in registries if registry is not None]
+        owners: Dict[str, Any] = {}
+        for registry in self._registries:
+            if not all(hasattr(registry, attr) for attr in ("names", "get", "schemas", "execute")):
+                raise TypeError("child registry does not implement the tool registry contract")
+            for name in registry.names():
+                if name in owners:
+                    raise ValueError(f"duplicate tool name across registries: {name}")
+                owners[name] = registry
+        self._owners = owners
+
+    def names(self) -> List[str]:
+        return list(self._owners)
+
+    def get(self, name: str) -> Optional[ToolDefinition]:
+        owner = self._owners.get(name)
+        return owner.get(name) if owner is not None else None
+
+    def schemas(self) -> List[Dict[str, Any]]:
+        schemas: List[Dict[str, Any]] = []
+        for registry in self._registries:
+            schemas.extend(registry.schemas())
+        return schemas
+
+    def execute(self, name: str, arguments: Dict[str, Any], context: Any = None) -> Any:
+        owner = self._owners.get(name)
+        if owner is None:
+            raise KeyError(f"tool is not registered: {name}")
+        return owner.execute(name, arguments, context)
+
+    def __len__(self) -> int:
+        return len(self._owners)

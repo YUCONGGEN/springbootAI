@@ -65,11 +65,13 @@ class PagingAndSortingRepository(Generic[T]):
 
     def _quote(self, identifier: str) -> str:
         if self.dialect == "mysql":
-            return f"`{identifier}`"
-        return f'"{identifier}"'
+            return f"`{str(identifier).replace('`', '``')}`"
+        return f'"{str(identifier).replace(chr(34), chr(34) * 2)}"'
 
     def _col_resolver(self, prop: str) -> str:
-        return self._col_map.get(prop, prop)
+        if prop not in self._col_map:
+            raise ValueError(f"unknown repository property: {prop}")
+        return self._quote(self._col_map[prop])
 
     def _column_list(self) -> str:
         return ", ".join(self._quote(c["name"]) for c in self._columns)
@@ -142,12 +144,12 @@ class PagingAndSortingRepository(Generic[T]):
         cols = ", ".join(self._quote(c["name"]) for c in non_auto)
         placeholders = ", ".join("?" for _ in non_auto)
         params = [self._get_field(entity, c["py_name"]) for c in non_auto]
-        sql = f"INSERT INTO {self._quote(self._table.table_name)} ({cols}) VALUES ({placeholders})"
+        sql = f"INSERT INTO {self._quote(self._table.table_name)} ({cols}) VALUES ({placeholders})"  # nosec B608
         self._execute(sql, params)
         # 自增主键回填
         if self._pk.get("auto_increment") and self._get_field(entity, self._pk["py_name"]) is None:
             last = self._fetchone(
-                f"SELECT {self._quote(self._pk['name'])} FROM "
+                f"SELECT {self._quote(self._pk['name'])} FROM "  # nosec B608 - quoted entity metadata
                 f"{self._quote(self._table.table_name)} ORDER BY "
                 f"{self._quote(self._pk['name'])} DESC LIMIT 1", []
             )
@@ -161,30 +163,30 @@ class PagingAndSortingRepository(Generic[T]):
         params = [self._get_field(entity, c["py_name"]) for c in non_pk]
         pk_val = self._get_field(entity, self._pk["py_name"])
         params.append(pk_val)
-        sql = (f"UPDATE {self._quote(self._table.table_name)} SET {set_parts} "
+        sql = (f"UPDATE {self._quote(self._table.table_name)} SET {set_parts} "  # nosec B608
                f"WHERE {self._quote(self._pk['name'])} = ?")
         self._execute(sql, params)
         return entity
 
     def find_by_id(self, id_: Any) -> Optional[T]:
-        sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)} "
+        sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)} "  # nosec B608
                f"WHERE {self._quote(self._pk['name'])} = ?")
         row = self._fetchone(sql, [id_])
         return self._row_to_entity(row) if row else None
 
     def exists_by_id(self, id_: Any) -> bool:
-        sql = (f"SELECT 1 FROM {self._quote(self._table.table_name)} "
+        sql = (f"SELECT 1 FROM {self._quote(self._table.table_name)} "  # nosec B608
                f"WHERE {self._quote(self._pk['name'])} = ? LIMIT 1")
         return self._fetchone(sql, [id_]) is not None
 
     def count(self, specification: Optional[Specification] = None) -> int:
         where, params = self._spec_where(specification)
-        sql = f"SELECT COUNT(*) FROM {self._quote(self._table.table_name)}{where}"
+        sql = f"SELECT COUNT(*) FROM {self._quote(self._table.table_name)}{where}"  # nosec B608
         row = self._fetchone(sql, params)
         return int(row[0]) if row else 0
 
     def delete_by_id(self, id_: Any) -> int:
-        sql = (f"DELETE FROM {self._quote(self._table.table_name)} "
+        sql = (f"DELETE FROM {self._quote(self._table.table_name)} "  # nosec B608
                f"WHERE {self._quote(self._pk['name'])} = ?")
         return self._execute(sql, [id_])
 
@@ -193,7 +195,7 @@ class PagingAndSortingRepository(Generic[T]):
 
     def delete_all(self, specification: Optional[Specification] = None) -> int:
         where, params = self._spec_where(specification)
-        sql = f"DELETE FROM {self._quote(self._table.table_name)}{where}"
+        sql = f"DELETE FROM {self._quote(self._table.table_name)}{where}"  # nosec B608
         return self._execute(sql, params)
 
     # ==================== 查询（排序/分页/动态） ====================
@@ -212,14 +214,14 @@ class PagingAndSortingRepository(Generic[T]):
         if pageable is not None:
             return self._find_page(pageable, where, params, specification)
         order = self._sort_sql(sort or Sort.unsorted())
-        sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)}"
+        sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)}"  # nosec B608
                f"{where}{order}")
         rows = self._execute(sql, params, fetch=True)
         return [self._row_to_entity(r) for r in rows]
 
     def find_one(self, specification: Specification) -> Optional[T]:
         where, params = self._spec_where(specification)
-        sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)}"
+        sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)}"  # nosec B608
                f"{where} LIMIT 1")
         row = self._fetchone(sql, params)
         return self._row_to_entity(row) if row else None
@@ -228,7 +230,7 @@ class PagingAndSortingRepository(Generic[T]):
                    specification: Optional[Specification] = None) -> Page:
         order = self._sort_sql(pageable.sort)
         # SQLite/MySQL/PostgreSQL 均支持 LIMIT/OFFSET
-        page_sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)}"
+        page_sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)}"  # nosec B608
                     f"{where}{order} LIMIT ? OFFSET ?")
         rows = self._execute(page_sql, params + [pageable.limit, pageable.offset], fetch=True)
         content = [self._row_to_entity(r) for r in rows]
@@ -245,7 +247,7 @@ class PagingAndSortingRepository(Generic[T]):
     def _sort_sql(self, sort: Sort) -> str:
         if not sort.is_sorted:
             return ""
-        return " ORDER BY " + sort.to_sql(lambda p: self._quote(self._col_resolver(p)))
+        return " ORDER BY " + sort.to_sql(self._col_resolver)
 
 
 # ==================== 注解（标记） ====================

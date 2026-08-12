@@ -4,6 +4,7 @@
 """
 import logging
 from typing import Dict, List, Optional, Any
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 # 可选导入Nacos
@@ -149,9 +150,13 @@ class NacosDiscoveryClient:
         if not server.startswith(("http://", "https://")):
             server = f"http://{server}"
         health_url = f"{server}/nacos/v1/console/health/liveness"
+        parsed = urlparse(health_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            logger.error("Nacos health URL must use HTTP(S): %s", health_url)
+            return False
 
         try:
-            with urlopen(health_url, timeout=timeout) as response:
+            with urlopen(health_url, timeout=timeout) as response:  # nosec B310 - validated above
                 return 200 <= response.status < 300
         except Exception as e:
             logger.debug(f"Nacos health check failed: {e}")

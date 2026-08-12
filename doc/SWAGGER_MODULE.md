@@ -1,6 +1,6 @@
 # SpringBootAI Swagger / OpenAPI 模块使用文档
 
-> 框架版本：SpringBootAI 2.0.0
+> 框架版本：SpringBootAI 2.1.0
 
 ---
 

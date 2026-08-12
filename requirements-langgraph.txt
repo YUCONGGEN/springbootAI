@@ -1,0 +1,4 @@
+# Optional SpringBootAI LangGraph module.
+# Keep this file in sync with [project.optional-dependencies].langgraph.
+langgraph==1.2.9
+langgraph-checkpoint-sqlite==3.1.1

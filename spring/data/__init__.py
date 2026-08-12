@@ -39,7 +39,7 @@ from spring.data.repository import (
     get_data_repository_entity,
 )
 
-__version__ = "1.0.0"
+__version__ = "2.1.0"
 
 __all__ = [
     # 分页/排序

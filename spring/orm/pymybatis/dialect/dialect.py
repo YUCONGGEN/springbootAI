@@ -135,7 +135,8 @@ class Dialect(ABC):
             带引号的标识符
         """
         quote = self.get_quote_char()
-        return f"{quote}{identifier}{quote}"
+        escaped = str(identifier).replace(quote, quote * 2)
+        return f"{quote}{escaped}{quote}"
 
 
 class MySQLDialect(Dialect):
@@ -155,7 +156,7 @@ class MySQLDialect(Dialect):
         values_str = ', '.join(
             f"({', '.join('%s' for _ in row)})" for row in values
         )
-        return f"INSERT INTO {self.quote_identifier(table_name)} ({columns_str}) VALUES {values_str}"
+        return f"INSERT INTO {self.quote_identifier(table_name)} ({columns_str}) VALUES {values_str}"  # nosec B608
 
     def get_batch_update_sql(self, table_name: str, columns: List[str], values: List[Tuple], pk_column: str) -> str:
         # MySQL批量更新使用CASE WHEN
@@ -170,7 +171,7 @@ class MySQLDialect(Dialect):
         pk_values = [row[0] for row in values]
         where_str = f"{pk_column} IN ({', '.join('%s' for _ in pk_values)})"
 
-        return f"UPDATE {self.quote_identifier(table_name)} SET {set_str} WHERE {where_str}"
+        return f"UPDATE {self.quote_identifier(table_name)} SET {set_str} WHERE {where_str}"  # nosec B608
 
     def get_identity_query(self) -> str:
         return "SELECT LAST_INSERT_ID()"
@@ -216,7 +217,7 @@ class PostgreSQLDialect(Dialect):
         values_str = ', '.join(
             f"({', '.join('%s' for _ in row)})" for row in values
         )
-        return f"INSERT INTO {self.quote_identifier(table_name)} ({columns_str}) VALUES {values_str}"
+        return f"INSERT INTO {self.quote_identifier(table_name)} ({columns_str}) VALUES {values_str}"  # nosec B608
 
     def get_batch_update_sql(self, table_name: str, columns: List[str], values: List[Tuple], pk_column: str) -> str:
         # PostgreSQL批量更新使用FROM子句
@@ -232,12 +233,13 @@ class PostgreSQLDialect(Dialect):
             f"({', '.join('%s' for _ in row)})" for row in values
         )
 
-        return f"""
-            UPDATE {self.quote_identifier(table_name)}
-            SET {set_str}
-            FROM (VALUES {values_str}) AS updates({', '.join(self.quote_identifier(c) for c in columns_with_pk)})
-            WHERE {self.quote_identifier(table_name)}.{self.quote_identifier(pk_column)} = updates.{self.quote_identifier(pk_column)}
-        """
+        return (
+            f"UPDATE {self.quote_identifier(table_name)} SET {set_str} "  # nosec B608
+            f"FROM (VALUES {values_str}) AS updates("
+            f"{', '.join(self.quote_identifier(c) for c in columns_with_pk)}) "
+            f"WHERE {self.quote_identifier(table_name)}."
+            f"{self.quote_identifier(pk_column)} = updates.{self.quote_identifier(pk_column)}"
+        )
 
     def get_identity_query(self) -> str:
         return "SELECT LASTVAL()"
@@ -283,7 +285,7 @@ class SQLiteDialect(Dialect):
         values_str = ', '.join(
             f"({', '.join('?' for _ in row)})" for row in values
         )
-        return f"INSERT INTO {self.quote_identifier(table_name)} ({columns_str}) VALUES {values_str}"
+        return f"INSERT INTO {self.quote_identifier(table_name)} ({columns_str}) VALUES {values_str}"  # nosec B608
 
     def get_batch_update_sql(self, table_name: str, columns: List[str], values: List[Tuple], pk_column: str) -> str:
         # SQLite批量更新使用CASE WHEN
@@ -298,7 +300,7 @@ class SQLiteDialect(Dialect):
         pk_values = [row[0] for row in values]
         where_str = f"{pk_column} IN ({', '.join('?' for _ in pk_values)})"
 
-        return f"UPDATE {self.quote_identifier(table_name)} SET {set_str} WHERE {where_str}"
+        return f"UPDATE {self.quote_identifier(table_name)} SET {set_str} WHERE {where_str}"  # nosec B608
 
     def get_identity_query(self) -> str:
         return "SELECT LAST_INSERT_ROWID()"
@@ -336,13 +338,10 @@ class OracleDialect(Dialect):
     def get_pagination_sql(self, sql: str, offset: int, limit: int) -> str:
         # Oracle使用ROWNUM进行分页
         offset_val = offset + 1
-        return f"""
-            SELECT * FROM (
-                SELECT t.*, ROWNUM rn FROM (
-                    {sql}
-                ) t WHERE ROWNUM <= {offset + limit}
-            ) WHERE rn >= {offset_val}
-        """
+        return (
+            f"SELECT * FROM (SELECT t.*, ROWNUM rn FROM ({sql}) t "  # nosec B608
+            f"WHERE ROWNUM <= {offset + limit}) WHERE rn >= {offset_val}"
+        )
 
     def get_insert_returning_sql(self, sql: str, key_column: str) -> str:
         return f"{sql} RETURNING {self.quote_identifier(key_column)} INTO :id"
@@ -355,7 +354,7 @@ class OracleDialect(Dialect):
             row_values = []
             for j, _ in enumerate(row):
                 row_values.append(f":{i * len(row) + j + 1}")
-            values_parts.append(f"SELECT {', '.join(row_values)} FROM DUAL")
+            values_parts.append(f"SELECT {', '.join(row_values)} FROM DUAL")  # nosec B608
 
         values_str = ' UNION ALL '.join(values_parts)
         return f"INSERT INTO {self.quote_identifier(table_name)} ({columns_str}) {values_str}"
@@ -375,7 +374,8 @@ class OracleDialect(Dialect):
             values_parts.append(f"({', '.join(row_values)})")
 
         values_str = ' UNION ALL '.join(
-            f"SELECT {', '.join(values_parts[i])} FROM DUAL" for i in range(len(values_parts))
+            f"SELECT {', '.join(values_parts[i])} FROM DUAL"  # nosec B608
+            for i in range(len(values_parts))
         )
 
         # 构建SET子句
@@ -384,12 +384,12 @@ class OracleDialect(Dialect):
             set_parts.append(f"{self.quote_identifier(col)} = source.{self.quote_identifier(col)}")
         set_str = ', '.join(set_parts)
 
-        return f"""
-            MERGE INTO {self.quote_identifier(table_name)} target
-            USING (SELECT {', '.join(self.quote_identifier(c) for c in columns_with_pk)} FROM ({values_str})) source
-            ON (target.{self.quote_identifier(pk_column)} = source.{self.quote_identifier(pk_column)})
-            WHEN MATCHED THEN UPDATE SET {set_str}
-        """
+        return (
+            f"MERGE INTO {self.quote_identifier(table_name)} target "  # nosec B608
+            f"USING (SELECT {', '.join(self.quote_identifier(c) for c in columns_with_pk)} "
+            f"FROM ({values_str})) source ON (target.{self.quote_identifier(pk_column)} = "
+            f"source.{self.quote_identifier(pk_column)}) WHEN MATCHED THEN UPDATE SET {set_str}"
+        )
 
     def get_identity_query(self) -> str:
         return "SELECT SEQ_CURRVAL FROM DUAL"

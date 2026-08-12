@@ -80,6 +80,11 @@ class RedisSecondLevelCache:
         self._redis = None
         self._pubsub = None
         self._pubsub_thread = None
+        if self.serialization == SerializationType.PICKLE:
+            raise ValueError(
+                "serialization='pickle' is disabled because Redis values can be "
+                "modified outside this process; use JSON serialization"
+            )
 
         # 本地缓存（用于减少Redis访问）
         # 修复：存储 (value, expire_ts) 元组，本地缓存有自己的 TTL，
@@ -121,9 +126,7 @@ class RedisSecondLevelCache:
         """序列化值"""
         if self.serialization == SerializationType.JSON:
             return json.dumps(value, ensure_ascii=False).encode('utf-8')
-        else:
-            import pickle
-            return pickle.dumps(value)
+        raise ValueError("only JSON cache serialization is supported")
 
     def _deserialize(self, value: bytes) -> Any:
         """反序列化值。
@@ -147,9 +150,7 @@ class RedisSecondLevelCache:
                     f"数据可能被篡改或序列化配置不一致: {exc}"
                 )
                 return None
-        else:
-            import pickle
-            return pickle.loads(value)
+        raise ValueError("only JSON cache serialization is supported")
 
     def _generate_key(self, table_name: str, params: Dict[str, Any]) -> str:
         """

@@ -146,8 +146,8 @@ pytest tests_integration/test_seata_distributed_contract.py -v
 只压测 TC 的 TM 通道（不启动基准应用）：
 
 ```powershell
-.scripts\run-load-test.ps1 -Profile smoke -Workload seata -TargetUrl http://127.0.0.1:18091 -SeataBridgeToken springpy-integration-secret -Rate 5 -Duration 20s
-.scripts\run-load-test.ps1 -Profile soak -Workload seata -TargetUrl http://127.0.0.1:18091 -SeataBridgeToken springpy-integration-secret -Rate 100 -Duration 9h -MaxVus 1000
+.\scripts\run-load-test.ps1 -Profile smoke -Workload seata -TargetUrl http://127.0.0.1:18091 -SeataBridgeToken springpy-integration-secret -Rate 5 -Duration 20s
+.\scripts\run-load-test.ps1 -Profile soak -Workload seata -TargetUrl http://127.0.0.1:18091 -SeataBridgeToken springpy-integration-secret -Rate 100 -Duration 9h -MaxVus 1000
 ```
 
 这个 workload 每次迭代创建一个真实全局事务并提交或回滚；它不注册业务 TCC 分支，因此不能代表订单、库存等业务最终一致性。业务压测应把 `custom` 指向真实业务接口，并让业务接口注册自己的 TCC 回调。
@@ -168,6 +168,14 @@ pytest tests_integration/test_seata_distributed_contract.py -v
 .\scripts\run-9h-soak-test.ps1 -Rate 200 -Workers 8 -MaxVus 2000
 ```
 
+同一个脚本支持任意 k6 时长。运行 24 小时全模块长稳压测：
+
+```powershell
+.\scripts\run-9h-soak-test.ps1 -Duration 24h -Rate 100 -Workers 4 -MaxVus 1000
+```
+
+该命令会先做 20 秒混合冒烟和测试切片装配检查，然后连续压测 24 小时。请保持 Docker Desktop 和当前 PowerShell 窗口运行；结果保存在 `tests_performance/results/`。第一次长测建议使用默认 100 RPS，确认 CPU、内存和 `dropped_iterations` 后再增加 `Rate`，否则压到负载机极限并不能代表服务容量。
+
 混合模型覆盖 Controller、Gateway、Bean Validation、缓存、CSV、JPA 乐观锁、条件注解、Spring Data 分页与 Specification、`@DS/@Master/@Slave`、事务事件阶段、嵌套配置绑定与校验、i18n、Actuator，以及真实 WebSocket 和消息注解链路。
 
 `SpringBootTest`、`WebMvcTest`、`DataJpaTest` 属于测试启动成本，不进入 9 小时请求热路径，使用独立装配基准：
@@ -179,3 +187,31 @@ pytest tests_integration/test_seata_distributed_contract.py -v
 新增请求路径也都支持独立压测：`data`、`datasource`、`txevent`、`config`、`i18n`、`actuator`、`swagger`、`websocket`、`messaging`，通过 `run-load-test.ps1 -Workload <名称>` 选择。
 
 `swagger` workload 会同时校验 `/openapi.json`、`/docs` 和 `/redoc`，并断言 OpenAPI 文档包含基准 Controller 的标签、`operationId`、响应描述和 Bearer 安全方案。
+
+## AI、LangChain、LangGraph 和 MCP 压测
+
+基准应用提供四条可以单独压测的路径。它们不是固定 JSON：每次请求都会进入相应框架的真实执行链。
+
+- `ai`：执行 Spring AI `ChatClient` 和 `FakeChatModel`。
+- `langchain`：执行 `@LangChainClient/@LangChainCall`、LangChain `LLMChain` 和 Spring 模型适配器。
+- `langgraph`：执行由 `@LangGraph/@GraphNode/@GraphInvoke` 编译的真实 LangGraph 工作流。
+- `mcp`：通过官方 MCP SDK 的进程内 Client/Server 会话调用 `@MCPTool`。
+
+默认使用 Fake 模型，完全不访问外网，也不会产生模型费用。它测量的是框架调度、注解代理、序列化、线程切换和协议开销，不代表 OpenAI、Ollama 等真实模型的吞吐量。真实模型受供应商配额、网络和 Token 数影响，应使用 `custom` workload 指向隔离测试环境，并设置费用上限。
+
+第一次运行先分别做 20 秒冒烟：
+
+```powershell
+.\scripts\run-load-test.ps1 -Profile smoke -Workload ai
+.\scripts\run-load-test.ps1 -Profile smoke -Workload langchain
+.\scripts\run-load-test.ps1 -Profile smoke -Workload langgraph
+.\scripts\run-load-test.ps1 -Profile smoke -Workload mcp
+```
+
+四个 workload 已加入 `mixed`，因此下面命令会连同 Web、数据库抽象、Swagger、WebSocket 等功能一起持续 9 小时：
+
+```powershell
+.\scripts\run-9h-soak-test.ps1 -Rate 100 -Workers 4 -MaxVus 1000
+```
+
+长测结束后重点检查四个 endpoint 标签的 p95、错误率、`dropped_iterations`，同时查看应用容器内存是否持续增长。MCP 压测会复用长生命周期会话，并在 worker 关闭时主动回收后台事件循环。

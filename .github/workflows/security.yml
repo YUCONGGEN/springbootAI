@@ -39,21 +39,26 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements-lock.txt
         pip install -r requirements-ai.txt
+        pip install -r requirements-langgraph.txt
+        pip install -r requirements-mcp.txt
         pip install bandit==1.9.4 pip-audit==2.10.1
 
     - name: pip-audit vulnerability scan (core + AI deps)
       run: |
         echo "Running pip-audit for core dependencies..."
-        pip-audit -r requirements-lock.txt
+        pip-audit -r requirements-lock.txt --timeout 60 --progress-spinner off
         echo "Running pip-audit for AI/LangChain dependencies..."
-        pip-audit -r requirements-ai.txt
+        pip-audit -r requirements-ai.txt --timeout 60 --progress-spinner off
+        pip-audit -r requirements-langgraph.txt --timeout 60 --progress-spinner off
+        pip-audit -r requirements-mcp.txt --timeout 60 --progress-spinner off
         echo "pip-audit scan completed"
 
     - name: Bandit security static analysis
       run: |
-        echo "Running Bandit on spring/ and example_langchain/ (core + langchain + examples)..."
-        bandit -r spring/ example_langchain/ -ll -f json -o bandit-report.json --exit-zero
-        echo "Bandit scan completed, report saved to bandit-report.json"
+        echo "Blocking every medium/high finding across the repository..."
+        bandit -r spring/ example_langchain/ example_langgraph/ example_mcp/ \
+          -ll -f json -o bandit-report.json
+        echo "Bandit medium/high gate passed"
 
     - name: Check for hardcoded secrets
       run: |
@@ -63,7 +68,7 @@ jobs:
         # grep -v 排除已知安全模式：枚举值、占位符、示例值、测试夹具。
         matches=$(grep -rnE --include="*.py" \
             "(password|passwd|secret|api[_-]?key|apikey|token|credential)[[:space:]]*=[[:space:]]*['\"][^'\"]{6,}['\"]" \
-            spring/ example_langchain/ \
+            spring/ example_langchain/ example_langgraph/ example_mcp/ \
             | grep -vE "(change-in-production|change-me|your-|placeholder|example|fake|dummy|insecure|xxxx|PASSWORD[[:space:]]*=[[:space:]]*'password')" \
             || true)
         if [ -n "$matches" ]; then

@@ -58,7 +58,8 @@ class SeataBridgeClient:
             method=method,
         )
         try:
-            with urlrequest.urlopen(req, timeout=self.timeout_s) as response:
+            # base_url is restricted to absolute HTTP(S) in __init__ and path is internal.
+            with urlrequest.urlopen(req, timeout=self.timeout_s) as response:  # nosec B310
                 raw = response.read(self._MAX_RESPONSE_BYTES + 1)
                 if len(raw) > self._MAX_RESPONSE_BYTES:
                     raise SeataBridgeError("Seata bridge response exceeded 1 MiB")

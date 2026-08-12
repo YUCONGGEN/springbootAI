@@ -356,7 +356,7 @@ class SpringApplication:
         server_config = config.get('server', {})
         
         port = kwargs.get('port', server_config.get('port', 8080))
-        host = kwargs.get('host', server_config.get('host', '0.0.0.0'))
+        host = kwargs.get('host', server_config.get('host', '0.0.0.0'))  # nosec B104 - server bind is operator controlled
 
         banner = BannerPrinter()
         banner.print_startup_info(port)
@@ -396,7 +396,7 @@ class SpringApplication:
         try:
             from spring.cloud import discovery
             ip = discovery_config.get('ip') or discovery_config.get('host')
-            if not ip or ip in {'0.0.0.0', '::'}:
+            if not ip or ip in {'0.0.0.0', '::'}:  # nosec B104 - comparison, not a socket bind
                 ip = '127.0.0.1'
                 try:
                     ip = socket.gethostbyname(socket.gethostname())
@@ -455,7 +455,7 @@ def run_cli():
     parser = argparse.ArgumentParser(description="SpringBoot-Python CLI")
     parser.add_argument('module', help='Application module path (e.g., myapp.Application)')
     parser.add_argument('--port', type=int, default=8080, help='Server port')
-    parser.add_argument('--host', default='0.0.0.0', help='Server host')
+    parser.add_argument('--host', default='0.0.0.0', help='Server host')  # nosec B104 - CLI server bind
     
     args = parser.parse_args()
     

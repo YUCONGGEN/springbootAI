@@ -743,7 +743,7 @@ class WebApplicationContext:
 
         self.fastapi_app.router.add_event_handler('shutdown', close_resources)
 
-    def run(self, host: str = "0.0.0.0", port: int = 8080, **kwargs) -> None:
+    def run(self, host: str = "0.0.0.0", port: int = 8080, **kwargs) -> None:  # nosec B104 - explicit server API
         # 优先使用 uvicorn，fallback 到其他方案
         try:
             import uvicorn

@@ -401,8 +401,100 @@ class DynamicSQLProcessor:
         safe_expr = self._translate_ognl_to_python(expression)
         tree = ast.parse(safe_expr, mode='eval')
         self._validate_ast(tree)
-        code = compile(tree, '<expression>', 'eval')
-        return eval(code, {'__builtins__': {}}, dict(params))
+        return self._evaluate_ast_node(tree.body, dict(params))
+
+    def _evaluate_ast_node(self, node: ast.AST, params: Dict[str, Any]) -> Any:
+        """Interpret the validated expression without executing Python code."""
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            if node.id not in params:
+                raise NameError(f"unknown expression parameter: {node.id}")
+            return params[node.id]
+        if isinstance(node, ast.Attribute):
+            value = self._evaluate_ast_node(node.value, params)
+            if isinstance(value, Mapping):
+                if node.attr not in value:
+                    raise KeyError(node.attr)
+                return value[node.attr]
+            namespace = getattr(value, "__dict__", {})
+            if node.attr not in namespace:
+                raise AttributeError(node.attr)
+            return namespace[node.attr]
+        if isinstance(node, ast.Subscript):
+            value = self._evaluate_ast_node(node.value, params)
+            key = self._evaluate_ast_node(node.slice, params)
+            return value[key]
+        if isinstance(node, ast.List):
+            return [self._evaluate_ast_node(item, params) for item in node.elts]
+        if isinstance(node, ast.Tuple):
+            return tuple(self._evaluate_ast_node(item, params) for item in node.elts)
+        if isinstance(node, ast.Dict):
+            return {
+                self._evaluate_ast_node(key, params): self._evaluate_ast_node(value, params)
+                for key, value in zip(node.keys, node.values)
+            }
+        if isinstance(node, ast.BoolOp):
+            if isinstance(node.op, ast.And):
+                result = True
+                for value in node.values:
+                    result = self._evaluate_ast_node(value, params)
+                    if not result:
+                        return result
+                return result
+            result = False
+            for value in node.values:
+                result = self._evaluate_ast_node(value, params)
+                if result:
+                    return result
+            return result
+        if isinstance(node, ast.UnaryOp):
+            value = self._evaluate_ast_node(node.operand, params)
+            if isinstance(node.op, ast.Not):
+                return not value
+            if isinstance(node.op, ast.USub):
+                return -value
+            if isinstance(node.op, ast.UAdd):
+                return +value
+        if isinstance(node, ast.BinOp):
+            left = self._evaluate_ast_node(node.left, params)
+            right = self._evaluate_ast_node(node.right, params)
+            operations = {
+                ast.Add: lambda: left + right,
+                ast.Sub: lambda: left - right,
+                ast.Mult: lambda: left * right,
+                ast.Div: lambda: left / right,
+                ast.FloorDiv: lambda: left // right,
+                ast.Mod: lambda: left % right,
+            }
+            operation = operations.get(type(node.op))
+            if operation is not None:
+                return operation()
+        if isinstance(node, ast.Compare):
+            left = self._evaluate_ast_node(node.left, params)
+            comparisons = {
+                ast.Eq: lambda a, b: a == b,
+                ast.NotEq: lambda a, b: a != b,
+                ast.Lt: lambda a, b: a < b,
+                ast.LtE: lambda a, b: a <= b,
+                ast.Gt: lambda a, b: a > b,
+                ast.GtE: lambda a, b: a >= b,
+                ast.In: lambda a, b: a in b,
+                ast.NotIn: lambda a, b: a not in b,
+                ast.Is: lambda a, b: a is b,
+                ast.IsNot: lambda a, b: a is not b,
+            }
+            for operator_node, comparator in zip(node.ops, node.comparators):
+                right = self._evaluate_ast_node(comparator, params)
+                operation = comparisons.get(type(operator_node))
+                if operation is None or not operation(left, right):
+                    return False
+                left = right
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == 'bool' and len(node.args) == 1 and not node.keywords:
+                return bool(self._evaluate_ast_node(node.args[0], params))
+        raise SecurityError(f"expression node is not supported: {ast.dump(node)}")
 
     def _translate_ognl_to_python(self, expression: str) -> str:
         """

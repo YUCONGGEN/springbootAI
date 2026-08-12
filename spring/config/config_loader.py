@@ -390,7 +390,10 @@ class ConfigLoader:
         # 服务器配置
         self._config.setdefault('server', {})
         self._config['server']['port'] = self._get_env_int('SERVER_PORT', self._config['server'].get('port', 8080))
-        self._config['server']['host'] = os.getenv('SERVER_HOST', self._config['server'].get('host', '0.0.0.0'))
+        default_server_host = '0.0.0.0'  # nosec B104 - framework server default
+        self._config['server']['host'] = os.getenv(
+            'SERVER_HOST', self._config['server'].get('host', default_server_host)
+        )
 
         self._config['server'].setdefault('cors', {})
         cors_config = self._config['server']['cors']
