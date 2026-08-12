@@ -4,8 +4,8 @@
 
 ## 1. 先理解两个版本
 
-- `pyproject.toml` 中的 `project.version` 是准备发布的新版本，例如 `2.1.0`。
-- Git tag 必须是同一个版本加 `v`，例如 `v2.1.0`。
+- `pyproject.toml` 中的 `project.version` 是准备发布的新版本，例如 `2.1.1`。
+- Git tag 必须是同一个版本加 `v`，例如 `v2.1.1`。
 - PyPI 上已经存在的版本不能覆盖。如果命令显示该版本已存在，必须修改版本号并重新测试，不能删除后重传。
 
 ## 2. 发布前本地验证
@@ -70,7 +70,7 @@ bandit -r spring example_langchain example_langgraph example_mcp -ll -q
 ```powershell
 python -m build
 python -m twine check dist\*
-python -m zipfile -l dist\springbootai-2.1.0-py3-none-any.whl
+python -m zipfile -l dist\springbootai-2.1.1-py3-none-any.whl
 ```
 
 确认 wheel 包含 `spring/langchain`、`spring/langgraph` 和 `spring/mcp`，并从新虚拟环境安装 wheel 后执行：
@@ -83,8 +83,8 @@ python -c "import spring, spring.ai, spring.langchain, spring.langgraph, spring.
 
 1. 检查 `git diff --check`、`git status` 和 CHANGELOG，确认没有密钥、数据库、日志、覆盖率文件或压测结果。
 2. 提交代码并推送 `master`，等待 CI 和 Security Scan 全绿。
-3. 创建并推送匹配版本的 tag：`git tag -a v2.1.0 -m "SpringBootAI 2.1.0"`、`git push origin v2.1.0`。
+3. 创建并推送匹配版本的 tag：`git tag -a v2.1.1 -m "SpringBootAI 2.1.1"`、`git push origin v2.1.1`。
 4. 在 GitHub 用这个 tag 创建 Release，发布工作流才会通过 Trusted Publishing 上传 PyPI。
-5. 上传后在全新环境运行 `pip install springbootAI==2.1.0` 和最小示例，检查 PyPI README 链接与代码块。
+5. 上传后在全新环境运行 `pip install springbootAI==2.1.1` 和最小示例，检查 PyPI README 链接与代码块。
 
 不要在本机手工保存 PyPI token。仓库发布工作流使用 OIDC Trusted Publishing，并拒绝从普通分支上传。

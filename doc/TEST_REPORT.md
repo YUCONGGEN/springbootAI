@@ -2,7 +2,7 @@
 
 **测试日期**: 2026-08-12（下文保留 2026-08-08 至 2026-08-10 的历史增量记录）
 **测试环境**: Windows + Python 3.11.9 + Docker Desktop 29.6.1；CI 配置覆盖 Python 3.10 / 3.11 / 3.12
-**框架版本**: SpringBootAI 2.1.0 / PyMyBatis 2.1.0 / SpringBootAI AI 2.1.0 / SpringBootAI Excel 2.1.0 / SpringBootAI Validation 2.1.0 / SpringBootAI CSV 2.1.0 / SpringBootAI Data 2.1.0 / SpringBootAI i18n 2.1.0 / SpringBootAI WebSocket 2.1.0 / SpringBootAI Swagger 2.1.0
+**框架版本**: SpringBootAI 2.1.1 / PyMyBatis 2.1.1 / SpringBootAI AI 2.1.1 / SpringBootAI Excel 2.1.1 / SpringBootAI Validation 2.1.1 / SpringBootAI CSV 2.1.1 / SpringBootAI Data 2.1.1 / SpringBootAI i18n 2.1.1 / SpringBootAI WebSocket 2.1.1 / SpringBootAI Swagger 2.1.1
 **测试结果**: **2333 passed、4 skipped、154 subtests passed、0 failed**；`spring` 行覆盖率 **67.58%**，高于 60% CI 门禁。真实 Docker 集成测试 **5 passed**：MySQL、Redis、RabbitMQ、Nacos、Seata TCC；Redis 和 Seata bridge 停机失败关闭测试各 1 个通过。
 
 ## 给新手：这份报告如何阅读和复现
@@ -30,7 +30,7 @@ python -X utf8 -m pytest tests_integration -q
 
 看到 `2333 passed` 表示本报告顶部这次全量回归通过；`skipped` 表示测试明确判断当前环境缺少可选依赖，不能当成“功能已验证”。要定位失败原因，用 `-x -vv` 让 pytest 在第一个失败处停止并显示详细日志。压测不属于这 2333 个单元/运行时用例，压测命令和 p95/p99 的解释见 [`tests_performance/README.md`](../tests_performance/README.md)。
 
-> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 2.1.0 / PyMyBatis 2.1.0）。
+> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 2.1.1 / PyMyBatis 2.1.1）。
 >
 > **2026-08-09 TOP5 注解模块增量**：补齐 Bean Validation / JPA @Version·@Transient / 条件装配 / 缓存增强 / CSV 注解 5 个模块的测试套件（共 166 用例），并修复 4 处生产代码缺陷（见第六节）。
 >
@@ -73,8 +73,8 @@ python -X utf8 -m pytest tests_integration -q
 | 组件 | 版本 | 状态 |
 |------|------|------|
 | Python | 3.9.6 | ✅ |
-| SpringBootAI | 2.1.0 | ✅ |
-| PyMyBatis（内嵌ORM） | 2.1.0 | ✅ |
+| SpringBootAI | 2.1.1 | ✅ |
+| PyMyBatis（内嵌ORM） | 2.1.1 | ✅ |
 | MySQL（Docker） | 8.0.46 | ✅ 运行中（端口 3306，springpy 库已就绪） |
 | Redis（Docker） | 7-alpine | ✅ 运行中（healthy，PONG） |
 | RabbitMQ（Docker） | 3-management-alpine | ✅ 运行中（healthy） |
@@ -773,7 +773,7 @@ python test_all_features.py
 
 ## 一、结论
 
-当前代码是 v2.1.0，核心功能、AI/LangChain/LangGraph/MCP 和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿不是 Seata AT；distributed 模式当前验证真实 Seata TC + TCC 回调，也不会自动代理 Python 数据源。支付、订单、库存等核心交易必须完成业务 TCC/Saga/可靠消息和故障恢复验证后再采用。
+当前代码是 v2.1.1，核心功能、AI/LangChain/LangGraph/MCP 和 Cloud 高级功能均有自动化测试。它可以作为企业内部系统、中后台 API 和 AI 集成的开发底座，但“测试通过”不等于所有生产场景都已验证。HTTP 补偿不是 Seata AT；distributed 模式当前验证真实 Seata TC + TCC 回调，也不会自动代理 Python 数据源。支付、订单、库存等核心交易必须完成业务 TCC/Saga/可靠消息和故障恢复验证后再采用。
 
 ## 二、本轮已完成
 

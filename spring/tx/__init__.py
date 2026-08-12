@@ -39,7 +39,7 @@ from .synchronization import (
 )
 from .events import TransactionalEventListener, TransactionalEventPublisher
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 __all__ = [
     "TransactionPhase",

@@ -7,21 +7,21 @@
 #
 # 安装方式（按需）：
 #   pip install -r requirements-ai.txt          # 全量
-#   pip install langchain-openai==1.4.1         # 仅 OpenAI 适配
+#   pip install langchain-openai==1.4.2         # 仅 OpenAI 适配
 #
 # 推荐 Python: 3.10+（CI 测试 3.10 / 3.11 / 3.12）
 # 所有固定版本均经过本仓库测试与依赖漏洞扫描
 # ========================================
 
 # LangChain 核心（1.x 架构，BaseChatModel / Embeddings / Runnable 接口）
-langchain-core==1.5.1
+langchain-core==1.5.4
 
 # LangChain classic（LLMChain / ConversationChain / initialize_agent 等经典 API）
 # langchain 1.x 把经典 Chain/Agent 迁到了 langchain-classic 包
 langchain-classic==1.0.8
 
 # OpenAI 兼容模型适配（OpenAI / Azure / DeepSeek / Moonshot）
-langchain-openai==1.4.1
+langchain-openai==1.4.2
 
 # 文档切分器（RecursiveCharacterTextSplitter / CharacterTextSplitter）
 langchain-text-splitters==1.1.2

@@ -198,7 +198,7 @@ jobs:
         RUN_FAILURE_INTEGRATION_TESTS=1 pytest \
           tests_integration/test_middleware_failure_modes.py::test_redis_outage_fails_closed \
           -v --tb=short
-        docker compose -f docker-compose.integration.yml start --wait redis
+        docker compose -f docker-compose.integration.yml up -d --wait redis
 
     - name: Verify Seata bridge outage fails closed
       run: |
@@ -206,7 +206,7 @@ jobs:
         RUN_FAILURE_INTEGRATION_TESTS=1 pytest \
           tests_integration/test_middleware_failure_modes.py::test_seata_bridge_outage_fails_closed \
           -v --tb=short
-        docker compose -f docker-compose.integration.yml start --wait seata-bridge
+        docker compose -f docker-compose.integration.yml up -d --wait seata-bridge
 
     - name: Collect service logs
       if: failure()

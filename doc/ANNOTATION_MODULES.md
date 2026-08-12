@@ -1,6 +1,6 @@
 # SpringBootAI 常用注解模块指南
 
-> 框架版本：SpringBootAI 2.1.0
+> 框架版本：SpringBootAI 2.1.1
 
 ---
 

@@ -2,6 +2,13 @@
 
 本项目从 `2.1.0` 开始按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录面向使用者的变化，并使用语义化版本号。
 
+## [2.1.1] - 2026-08-12
+
+### 修复
+
+- 锁定兼容的 `langchain-core==1.5.4` 与 `langchain-openai==1.4.2`，避免可选 AI 依赖解析冲突。
+- CI 中间件恢复命令改用 `docker compose up -d --wait <service>`，兼容不支持 `start --wait` 的 Compose 版本。
+
 ## [2.1.0] - 2026-08-12
 
 ### 新增
@@ -34,4 +41,5 @@
 - Seata `distributed` 提供真实 TC + TCC 协调，不是 Python AT 数据源代理，不会自动生成 `undo_log`。
 - 内存 LangGraph checkpointer 仅用于测试；多 worker 生产环境必须注入共享存储后端。
 
+[2.1.1]: https://github.com/YUCONGGEN/springbootAI/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/YUCONGGEN/springbootAI/compare/v2.0.2...v2.1.0
