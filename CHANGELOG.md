@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.1] - 2026-08-13
+
+### 修复
+
+- 修复 ORM `@Entity`/`@entity` 实体解析、DDL 字段推断和 MyBatis 连接池初始化。
+- 加强 SQL 注入检测、敏感数据脱敏、Mapper XML 解析和 Web 根路由映射。
+- 增加对应回归测试，确保实体描述符、容器参数和静态资源路由行为稳定。
+
 本项目从 `2.1.0` 开始按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 记录面向使用者的变化，并使用语义化版本号。
 
 ## [2.2.0] - 2026-08-12

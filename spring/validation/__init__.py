@@ -34,7 +34,7 @@ from .constraints import (
 from .validator import BeanValidator
 from .aop import BeanValidate, bean_validate_decorator
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 __all__ = [
     # 异常

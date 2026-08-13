@@ -480,37 +480,53 @@ class DdlAutoManager:
                 col_meta = self._get_field_meta(df)
                 columns.append(col_meta)
         else:
-            # 处理普通类：从 __init__ 方法中提取 self.xxx 字段
+            # 普通实体同时支持显式 self.xxx 赋值、类型注解和类级 Column 描述符。
+            # 只依赖源码中的 self.xxx 会漏掉循环赋值或动态赋值的实体。
             init_fields = self._extract_init_fields(cls)
-            # 同时检查类级别的类型注解（__init__ 的参数注解）
             init_hints = {}
             try:
                 init_hints = get_type_hints(cls.__init__)
             except Exception:
                 pass
-            cls_annotations = getattr(cls, '__annotations__', {})
-            for attr_name, default_val in init_fields.items():
+            try:
+                cls_annotations = get_type_hints(cls)
+            except Exception:
+                cls_annotations = getattr(cls, '__annotations__', {})
+
+            descriptor_fields = {}
+            for cls_base in reversed(cls.__mro__):
+                for attr_name, value in cls_base.__dict__.items():
+                    if isinstance(value, (Column, Transient)) or hasattr(value, '__column__'):
+                        descriptor_fields[attr_name] = value
+
+            field_names = dict(init_fields)
+            for attr_name in cls_annotations:
+                field_names.setdefault(attr_name, None)
+            for attr_name in descriptor_fields:
+                field_names.setdefault(attr_name, None)
+
+            for attr_name, default_val in field_names.items():
                 # @Transient 字段不持久化，跳过
                 if _is_transient_field(cls, attr_name):
                     continue
-                # 优先取 __init__ 注解，其次取类注解
                 py_type = init_hints.get(attr_name) or cls_annotations.get(attr_name)
                 # 解包 Optional[X]：Python 3.10 的 get_type_hints 会把带 None 默认值的
                 # 参数注解自动包装为 Optional[X]，3.11+ 不再包装。此处统一解包为承载类型，
                 # 否则 _get_sql_type 在 3.10 上识别失败回退到 TEXT，导致数值列被当字符串存储。
                 py_type = unwrap_optional_type(py_type)
+                descriptor = descriptor_fields.get(attr_name)
+                if py_type is None and isinstance(descriptor, Id):
+                    py_type = int
+                elif py_type is None and isinstance(descriptor, (CreateTime, UpdateTime)):
+                    py_type = str
+                elif py_type is None and isinstance(descriptor, Column) \
+                        and descriptor.default is not None:
+                    py_type = type(descriptor.default)
                 if py_type is None:
                     py_type = type(default_val) if default_val is not None and default_val != "" else str
-                # 检查Column注解
-                col_info = None
-                for cls_base in cls.__mro__:
-                    if attr_name in cls_base.__dict__:
-                        cval = cls_base.__dict__[attr_name]
-                        if isinstance(cval, Column):
-                            col_info = cval
-                        elif hasattr(cval, '__column__'):
-                            col_info = getattr(cval, '__column__')
-                        break
+                col_info = descriptor
+                if not isinstance(col_info, Column) and hasattr(col_info, '__column__'):
+                    col_info = getattr(col_info, '__column__')
                 col_meta = self._build_column_meta(attr_name, py_type, col_info)
                 columns.append(col_meta)
 
@@ -1030,12 +1046,12 @@ class DdlAutoManager:
 
 # ==================== 装饰器API（便捷使用） ====================
 
-def entity(table_name: str = "", indexes: List[Index] = None, comment: str = ""):
+def Entity(table_name: str = "", indexes: List[Index] = None, comment: str = ""):
     """
     @Entity 装饰器，标注一个类为JPA风格的实体类
     
     Usage:
-        @entity("sys_user")
+        @Entity("sys_user")
         class User:
             def __init__(self, id: int = None, username: str = "", email: str = ""):
                 self.id = id
@@ -1048,13 +1064,36 @@ def entity(table_name: str = "", indexes: List[Index] = None, comment: str = "")
         setattr(cls, '__table__', t)
         if not table_name:
             t.name = _camel_to_snake(cls.__name__)
+
+        # Descriptor-style entities do not need repetitive constructors.
+        # Keep an explicitly declared __init__ unchanged for compatibility.
+        if '__init__' not in cls.__dict__:
+            fields = {}
+            for cls_base in reversed(cls.__mro__):
+                for name, value in cls_base.__dict__.items():
+                    if isinstance(value, Column):
+                        fields[name] = value
+
+            def __init__(self, **values):
+                unknown = set(values) - set(fields)
+                if unknown:
+                    names = ', '.join(sorted(unknown))
+                    raise TypeError(f"Unexpected entity field(s): {names}")
+                for name, column in fields.items():
+                    setattr(self, name, values.get(name, column.default))
+
+            cls.__init__ = __init__
         return cls
     return decorator
 
 
+# Backward-compatible alias. New code should use the Spring-style @Entity name.
+entity = Entity
+
+
 def table(name: str = "", indexes: List[Index] = None, comment: str = ""):
     """@Table 装饰器，标注实体类对应的表（与@entity功能相同，别名）"""
-    return entity(name, indexes, comment)
+    return Entity(name, indexes, comment)
 
 
 # ==================== 全局集成 ====================
@@ -1106,12 +1145,6 @@ def init_ddl_auto(connection_pool, config: dict = None) -> Optional[DdlAutoManag
     
     # 执行DDL
     if manager._entities:
-        # 临时关闭DDL阻断
-        try:
-            if hasattr(connection_pool, 'config'):
-                connection_pool.config['security_block_ddl'] = False
-        except Exception:
-            pass
         manager.execute()
     
     _global_ddl_manager = manager

@@ -186,6 +186,28 @@ class TestSQLInjectionDetector:
         assert self.detector.is_blocked(safe) is False
         assert self.detector.is_safe(safe) is True
 
+    def test_entity_parameters_are_checked_by_leaf_value(self):
+        class UserParameter:
+            def __init__(self, username, metadata=None):
+                self.username = username
+                self.metadata = metadata or {}
+
+        safe = UserParameter("welder_01", {"roles": ["admin"]})
+        unsafe = UserParameter("' OR 1=1--")
+
+        assert self.detector.is_safe(safe) is True
+        assert self.detector.is_safe(unsafe) is False
+
+    def test_cyclic_entity_parameters_do_not_recurse_forever(self):
+        class Node:
+            pass
+
+        node = Node()
+        node.name = "safe"
+        node.parent = node
+
+        assert self.detector.is_safe(node) is True
+
     def test_batch_detection(self):
         """测试批量检测"""
         params = {
@@ -227,6 +249,28 @@ class TestSQLInjectionDetector:
 
         assert detector.detect("' OR 1=1--") == SQLInjectionLevel.NONE
         assert detector.is_blocked("'; DROP TABLE x;--") is False
+
+
+class TestSensitiveDataMasker:
+    def test_mask_list_preserves_entity_type_and_original(self):
+        from spring.orm.pymybatis.security.sensitive_data_masker import SensitiveDataMasker
+
+        class Account:
+            def __init__(self):
+                self.id = 1
+                self.username = "admin"
+                self.password = "secret"
+
+        account = Account()
+        masked = SensitiveDataMasker().mask_list([account])[0]
+
+        assert isinstance(masked, Account)
+        assert masked is not account
+        assert masked.id == 1
+        assert isinstance(masked.id, int)
+        assert masked.username == "admin"
+        assert masked.password == "******"
+        assert account.password == "secret"
 
 
 class TestJWTUtils:

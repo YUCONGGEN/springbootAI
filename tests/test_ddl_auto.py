@@ -8,6 +8,8 @@ import os
 import sys
 
 import pytest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -19,6 +21,23 @@ from spring.orm.ddl_auto import (
     column, id_column, init_ddl_auto, _camel_to_snake, _get_sql_type,
 )
 from spring.orm.pymybatis.pool import create_connection_pool
+
+
+def test_mybatis_configurer_uses_session_factory_connection_pool():
+    from spring.orm.mybatis_integration import MyBatisConfigurer
+
+    pool = object()
+    configurer = MyBatisConfigurer(config_loader=None)
+    configurer.sql_session_factory = SimpleNamespace(
+        connection_pool=pool,
+        configuration=SimpleNamespace(),
+    )
+    db_config = {"ddl-auto": {"mode": "update"}}
+
+    with patch("spring.orm.ddl_auto.init_ddl_auto") as init_ddl_auto:
+        configurer._init_ddl_auto(db_config)
+
+    init_ddl_auto.assert_called_once_with(pool, db_config)
 
 
 # ==================== 实体定义 ====================
@@ -292,6 +311,69 @@ class TestEntityParsingAndSql:
         assert getattr(Custom, '__entity__') is True
         assert Custom.__table__.name == 'custom_tab'
         assert Custom.__table__.comment == 'c'
+
+    def test_entity_is_exported_with_spring_style_name(self):
+        from spring.orm import Entity, entity as legacy_entity
+
+        assert Entity is entity
+        assert legacy_entity is Entity
+
+        @Entity("uppercase_entity")
+        class UppercaseEntity:
+            id = Id()
+
+        assert UppercaseEntity.__table__.name == "uppercase_entity"
+
+    def test_entity_class_descriptors_survive_dynamic_init(self, sqlite_pool):
+        from spring.orm import Entity
+
+        @Entity("descriptor_entity")
+        class DescriptorEntity:
+            id = Id()
+            welder_no = Column(nullable=False, length=40)
+            score = Column(nullable=True)
+
+            def __init__(self, id: int = None, welder_no: str = "", score: float = None):
+                for name, value in locals().copy().items():
+                    if name != "self":
+                        setattr(self, name, value)
+
+        ddl = DdlAutoManager(sqlite_pool, dialect="sqlite", mode="create")
+        ddl.register_entity(DescriptorEntity)
+        ddl.execute()
+
+        columns = ddl._get_existing_columns("descriptor_entity")
+        assert set(columns) == {"id", "welder_no", "score"}
+        parsed = ddl._parse_entity(DescriptorEntity)
+        metadata = {column["name"]: column for column in parsed.columns}
+        assert metadata["id"]["sql_type"] == "INTEGER"
+        assert metadata["score"]["sql_type"] == "REAL"
+
+    def test_entity_generates_keyword_constructor(self):
+        from spring.orm import Entity
+
+        @Entity("simple_entity")
+        class SimpleEntity:
+            id: int = Id()
+            name: str = Column(nullable=False)
+            enabled: bool = Column(nullable=False, default=True)
+
+        row = SimpleEntity(name="welder")
+
+        assert row.id is None
+        assert row.name == "welder"
+        assert row.enabled is True
+        with pytest.raises(TypeError, match="unknown"):
+            SimpleEntity(unknown="value")
+
+
+def test_init_ddl_auto_does_not_mutate_pool_connection_config(sqlite_pool):
+    before = dict(sqlite_pool.config)
+
+    manager = init_ddl_auto(sqlite_pool, {"driver": "sqlite", "ddl-auto": {"mode": "update"}})
+
+    assert manager is not None
+    assert sqlite_pool.config == before
 
     def test_table_alias_works_like_entity(self):
         """@table 是 @entity 的别名"""

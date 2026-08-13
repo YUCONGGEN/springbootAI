@@ -66,6 +66,20 @@ def test_xml_mapper_rejects_dtd_and_entities(xml):
         XmlParser().parse_string(xml)
 
 
+def test_xml_mapper_accepts_official_mybatis_dtd_without_resolving_it():
+    xml = '''<?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+      "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+    <mapper namespace="tests.SafeMapper">
+      <select id="findAll">SELECT 1</select>
+    </mapper>'''
+
+    parser = XmlParser()
+    parser.parse_string(xml)
+
+    assert parser.get_mapped_statement("tests.SafeMapper.findAll") is not None
+
+
 def test_seata_callback_url_is_fail_closed_and_allowlisted(tmp_path):
     manager = SeataTransactionManager()
     manager.stop_recovery_worker()

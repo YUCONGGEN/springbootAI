@@ -2,7 +2,7 @@
 PyMyBatis版本信息
 """
 
-__version__ = '2.2.0'
+__version__ = '2.2.1'
 __author__ = 'PyMyBatis Team'
 __email__ = 'dev@pymybatis.org'
 __license__ = 'MIT'

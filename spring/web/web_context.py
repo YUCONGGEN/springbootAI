@@ -270,10 +270,14 @@ class WebApplicationContext:
                 class_paths = class_path if isinstance(class_path, list) else [class_path]
                 methods = annotation.method or ['GET']
                 for raw_path in paths or ['']:
-                    path = raw_path or '/' + method.__name__
+                    path = raw_path or ''
                     prefix = class_paths[0] if class_paths else ''
                     if prefix:
-                        path = prefix.rstrip('/') + '/' + path.lstrip('/')
+                        path = prefix.rstrip('/')
+                        if raw_path:
+                            path += '/' + str(raw_path).lstrip('/')
+                    elif not path:
+                        path = '/'
                     endpoint = self._create_endpoint(controller_instance, method, path)
                     for http_method in methods:
                         self._add_route(http_method.lower(), path, endpoint, openapi_meta)
@@ -651,7 +655,6 @@ class WebApplicationContext:
         if self._static_dir and os.path.isdir(self._static_dir):
             from fastapi.staticfiles import StaticFiles
             from fastapi.responses import FileResponse
-            import os
             
             # 获取静态目录的绝对路径，用于路径安全验证
             self._static_dir_abs = os.path.realpath(self._static_dir)

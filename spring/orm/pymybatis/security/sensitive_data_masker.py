@@ -5,6 +5,7 @@ PyMyBatis敏感数据脱敏模块
 """
 
 import re
+from copy import copy
 from typing import Any, Dict, Optional, Callable
 from enum import Enum
 
@@ -159,6 +160,7 @@ class SensitiveDataMasker:
         if strategy is None:
             return value
 
+        original_value = value
         # 转换为字符串进行脱敏
         if not isinstance(value, str):
             value = str(value)
@@ -170,7 +172,7 @@ class SensitiveDataMasker:
         # 如果匹配失败，使用替换策略或返回原值
         if strategy.pattern.pattern == r'.+':
             return strategy.replacer(None)
-        return value
+        return original_value
 
     def mask_dict(self, data: Dict[str, Any], field_types: Optional[Dict[str, SensitiveDataType]] = None) -> Dict[str, Any]:
         """
@@ -227,7 +229,22 @@ class SensitiveDataMasker:
         if not self.enabled:
             return data_list
 
-        return [self.mask_dict(item, field_types) for item in data_list]
+        masked = []
+        for item in data_list:
+            if isinstance(item, dict):
+                masked.append(self.mask_dict(item, field_types))
+            elif hasattr(item, '__dict__'):
+                clone = copy(item)
+                attributes = {
+                    key: value for key, value in vars(item).items()
+                    if not key.startswith('_')
+                }
+                for key, value in self.mask_dict(attributes, field_types).items():
+                    setattr(clone, key, value)
+                masked.append(clone)
+            else:
+                masked.append(item)
+        return masked
 
     def mask_log(self, log_message: str) -> str:
         """

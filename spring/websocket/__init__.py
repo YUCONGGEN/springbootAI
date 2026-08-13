@@ -63,7 +63,7 @@ from .broker import (
 )
 from .router import WebSocketRouter, MessageEndpointDispatcher, install_websocket_routes
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 __all__ = [
     # 异常

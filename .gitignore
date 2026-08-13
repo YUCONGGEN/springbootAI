@@ -13,6 +13,9 @@ dist/
 *.db
 *.log
 logs/
+runtime/
+welding_app/
+welding_app/frontend/node_modules/
 .DS_Store
 .env
 .env.*

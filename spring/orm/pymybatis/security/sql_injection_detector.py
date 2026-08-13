@@ -11,6 +11,7 @@ PyMyBatis SQL注入检测模块
 
 import re
 import logging
+from collections.abc import Mapping, Sequence, Set as AbstractSet
 from typing import Optional, Any, Dict, Set
 from enum import Enum
 
@@ -458,7 +459,11 @@ class SQLInjectionDetector:
 
     def is_safe(self, value: Any) -> bool:
         """
-        判断值是否安全
+        判断值是否安全。
+
+        Mapper XML 支持通过 ``#{entity.field}`` 绑定实体对象，因此这里需要检查
+        容器中的叶子值，而不是检查对象的 ``repr``（其中通常包含内存地址）。
+        循环引用通过对象 id 集合截断。
 
         Args:
             value: 待检测的值
@@ -466,6 +471,40 @@ class SQLInjectionDetector:
         Returns:
             是否安全
         """
+        return self._is_safe_value(value, set())
+
+    def _is_safe_value(self, value: Any, visited: Set[int]) -> bool:
+        if value is None or isinstance(value, (str, bytes, int, float, bool)):
+            return not self.is_blocked(value)
+
+        if isinstance(value, Mapping):
+            object_id = id(value)
+            if object_id in visited:
+                return True
+            visited.add(object_id)
+            return all(self._is_safe_value(item, visited) for item in value.values())
+
+        if isinstance(value, (Sequence, AbstractSet)) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            object_id = id(value)
+            if object_id in visited:
+                return True
+            visited.add(object_id)
+            return all(self._is_safe_value(item, visited) for item in value)
+
+        attributes = getattr(value, '__dict__', None)
+        if isinstance(attributes, Mapping):
+            object_id = id(value)
+            if object_id in visited:
+                return True
+            visited.add(object_id)
+            return all(
+                self._is_safe_value(item, visited)
+                for key, item in attributes.items()
+                if not str(key).startswith('_')
+            )
+
         return not self.is_blocked(value)
 
     def sanitize(self, value: Any) -> Any:

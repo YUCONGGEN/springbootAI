@@ -47,7 +47,7 @@ from spring.ai.resilience import (
 from spring.ai.observability import AIMetrics, ai_metrics
 from spring.ai.autoconfig import AIProperties, bind_ai_config, configure_ai
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 __all__ = [
     # core

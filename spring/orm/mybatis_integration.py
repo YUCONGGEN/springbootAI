@@ -247,9 +247,9 @@ class MyBatisConfigurer:
         try:
             from spring.orm.ddl_auto import init_ddl_auto
             # 获取连接池
-            pool = None
+            pool = getattr(self.sql_session_factory, 'connection_pool', None)
             if hasattr(self.sql_session_factory, 'configuration'):
-                pool = getattr(self.sql_session_factory.configuration, 'pool', None)
+                pool = pool or getattr(self.sql_session_factory.configuration, 'pool', None)
             if pool is None and hasattr(self.sql_session_factory, '_pool'):
                 pool = self.sql_session_factory._pool
             if pool is not None:

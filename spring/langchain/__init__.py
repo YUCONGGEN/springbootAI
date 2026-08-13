@@ -90,7 +90,7 @@ from spring.langchain.annotations import (
     bind_langchain_client,
 )
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 __all__ = [
     # core

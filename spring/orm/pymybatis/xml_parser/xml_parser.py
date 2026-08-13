@@ -282,6 +282,19 @@ class XmlParser:
 
     @classmethod
     def _secure_fromstring(cls, xml_content: str):
+        # MyBatis mapper files conventionally contain this fixed public DTD.
+        # It is metadata only for this parser, so strip the exact allowlisted
+        # declaration without resolving the remote system identifier. Any
+        # other DTD or entity declaration remains forbidden by defusedxml.
+        xml_content = re.sub(
+            r'<!DOCTYPE\s+mapper\s+PUBLIC\s+'
+            r'["\']-//mybatis\.org//DTD Mapper 3\.0//EN["\']\s+'
+            r'["\']https?://mybatis\.org/dtd/mybatis-3-mapper\.dtd["\']\s*>',
+            '',
+            xml_content,
+            count=1,
+            flags=re.IGNORECASE,
+        )
         return DefusedET.fromstring(
             cls._normalize_comparison_operators(xml_content),
             forbid_dtd=True,
