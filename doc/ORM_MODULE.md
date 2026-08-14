@@ -1,6 +1,6 @@
 # SpringBootAI 数据库操作（ORM）—— 小白也能看懂的使用指南
 
-> 框架版本：SpringBootAI 2.2.0 / 内嵌 PyMyBatis 2.2.0
+> 框架版本：SpringBootAI 2.2.4 / 内嵌 PyMyBatis 2.2.4
 
 ---
 
@@ -459,6 +459,196 @@ CREATE INDEX idx_email ON sys_user(email);
 
 ---
 
+## 第三章补充：@Entity + @Table —— 对齐 Java JPA 分离风格（推荐）
+
+> **v2.2.2+ 新增**：`@Entity` 和 `@Table` 分离写法，对齐 Java JPA `@Entity` + `@Table`。
+
+### 为什么分离？
+
+Java JPA 中，`@Entity` 标记"这是一个实体类"，`@Table` 指定"对应哪张表"。之前本框架把两者合并在 `@entity("table_name")` 里。v2.2.2 起支持分离写法，更清晰、更接近 Java 习惯。
+
+### 三种声明写法（均向后兼容）
+
+#### 写法一：@Entity + @Table 分离（推荐）
+
+```python
+from spring.orm import Entity, Table, Column, Id, Index, CreateTime
+
+@Entity                                          # 标记为实体类
+@Table(                                          # 指定表信息
+    name="welding_admin_users",
+    indexes=[Index("idx_admin_username", ["username"], unique=True)],
+    comment="焊工智能系统管理员",
+)
+class AdminUser:
+    id: int = Id()                          # 主键，显式 Id
+    username: str = ""                      # 赋值 → Column(default="")
+    display_name: str = "系统管理员"         # 赋值 → Column(default="系统管理员")
+    enabled: bool = True                    # 赋值 → Column(default=True)
+    last_login_at: str                      # 无赋值 → Column() 无默认值
+    created_at: str = CreateTime()          # 显式 CreateTime，自动填充
+    _cache: dict = {}                       # 私有字段，跳过不持久化
+```
+
+#### 写法二：仅 @Entity 无括号（表名自动推导）
+
+```python
+@Entity
+class Product:
+    id: int = Id()
+    name: str = ""
+    price: float = 0.0
+    stock: int = 0
+    description: str               # 无赋值 → Column() 无默认值
+# 表名自动推导为 "product"（类名转 snake_case）
+```
+
+#### 写法三：一体化 @Entity("name", ...)（完全兼容）
+
+```python
+@Entity("sys_log", comment="系统日志")
+class SysLog:
+    id: int = Id()
+    module: str = Column(nullable=False, length=50)
+    message: str = Column(nullable=False, length=500)
+```
+
+### 装饰器执行顺序
+
+Python 装饰器从下往上执行，`@Table` 先设置表元数据，`@Entity` 检测到已有 `@Table` 则不覆盖：
+
+```
+@Entity          ← 外层，后执行：标记 __entity__，不覆盖已有 __table__
+@Table(...)      ← 内层，先执行：设置 __table__ 和 __entity__
+class User: ...
+```
+
+### @Table 也可单独使用
+
+`@Table` 单独使用时隐含 `@Entity` 语义，与 `@Entity("name")` 等效：
+
+```python
+@Table(name="sys_config", comment="系统配置")
+class SysConfig:
+    id: int = Id()
+    config_key: str = ""
+    config_value: str = ""
+```
+
+---
+
+## 第三章补充：字段自动推断 —— 类型注解即列定义
+
+> **v2.2.3+ 新增**：类型注解无需显式 `= Column(...)` 赋值，框架自动推断。
+
+### 对齐 Java JPA
+
+Java JPA 中，实体类的所有字段自动映射为数据库列，`@Column` 仅用于自定义属性。本框架 v2.2.3 起同样支持：**写了类型注解就是一列**，不需要每个字段都写 `= Column(...)`。
+
+### 推断规则
+
+| 写法 | 自动创建 | 说明 |
+|------|----------|------|
+| `name: str` | `Column()` | 无默认值，仅记录类型 |
+| `name: str = ""` | `Column(default="")` | 赋值即为默认值 |
+| `name: int = 0` | `Column(default=0)` | 同上 |
+| `name: bool = True` | `Column(default=True)` | 同上 |
+| `name: float = 0.0` | `Column(default=0.0)` | 同上 |
+| `name: str = Column(...)` | 保留原 Column | 不覆盖 |
+| `name: int = Id()` | 保留原 Id | 不覆盖 |
+| `name: str = CreateTime()` | 保留原 CreateTime | 不覆盖 |
+| `_xxx: dict = {}` | 跳过 | 以 `_` 开头的私有字段不持久化 |
+
+### 完整示例
+
+```python
+from spring.orm import Entity, Table, Column, Id, Index, CreateTime
+
+@Entity
+@Table(
+    name="welding_admin_users",
+    indexes=[Index("idx_admin_username", ["username"], unique=True)],
+    comment="焊工智能系统管理员",
+)
+class AdminUser:
+    # ── 显式描述符（保留不覆盖）──
+    id: int = Id()                              # 主键 + 自增
+    created_at: str = CreateTime()              # 插入时自动填充时间
+
+    # ── 有赋值 → 赋值作为 default ──
+    username: str = ""                          # Column(default="")
+    display_name: str = "系统管理员"             # Column(default="系统管理员")
+    role: str = "ROLE_ADMIN"                    # Column(default="ROLE_ADMIN")
+    enabled: bool = True                        # Column(default=True)
+
+    # ── 无赋值 → Column() 无默认值 ──
+    last_login_at: str                          # Column()
+
+    # ── 私有字段 → 跳过 ──
+    _cache: dict = {}                           # 不生成 DDL 列
+```
+
+### 自动生成的构造器
+
+框架扫描所有 `Column` 描述符，自动生成 `__init__`（若类未显式声明）：
+
+```python
+# 自动生成等价于：
+def __init__(self, **values):
+    # 未知字段报错
+    # 已知字段：传入值优先，否则用 Column.default
+    self.id = values.get("id", None)            # Id.default = None
+    self.username = values.get("username", "")  # Column.default = ""
+    self.display_name = values.get("display_name", "系统管理员")
+    self.role = values.get("role", "ROLE_ADMIN")
+    self.enabled = values.get("enabled", True)
+    self.last_login_at = values.get("last_login_at", None)
+    self.created_at = values.get("created_at", None)
+```
+
+```python
+# 使用：
+admin = AdminUser(username="admin", password_hash="xxx")
+print(admin.display_name)    # "系统管理员"（默认值）
+print(admin.enabled)         # True（默认值）
+print(admin.last_login_at)   # None（无默认值）
+```
+
+### 生成的 DDL（MySQL）
+
+```sql
+CREATE TABLE welding_admin_users (
+    id            BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    username      VARCHAR(255) DEFAULT '',
+    display_name  VARCHAR(255) DEFAULT '系统管理员',
+    role          VARCHAR(255) DEFAULT 'ROLE_ADMIN',
+    enabled       TINYINT(1) DEFAULT TRUE,
+    last_login_at VARCHAR(255),              -- 无 DEFAULT
+    created_at    DATETIME NOT NULL,
+    UNIQUE INDEX idx_admin_username (username)
+) COMMENT='焊工智能系统管理员';
+```
+
+> **注意**：`_cache` 不在 DDL 中——以 `_` 开头的私有字段自动跳过。
+
+### 混合写法
+
+自动推断与显式 `Column(...)` 可混用，显式描述符优先保留：
+
+```python
+@Entity("mixed_tab")
+class MixedUser:
+    id: int = Id()
+    username: str = Column(nullable=False, unique=True, length=50)  # 显式
+    nickname: str = ""                                                # 自动推断
+    age: int                                                          # 自动推断
+# username → VARCHAR(50) NOT NULL UNIQUE
+# nickname → VARCHAR(255) DEFAULT ''
+# age      → BIGINT
+```
+
+---
+
 ## 第三章补充：自动时间戳 —— `@CreateTime` / `@UpdateTime`
 
 > 场景：每张表几乎都有 `created_at`（创建时间）和 `updated_at`（更新时间）。
@@ -890,13 +1080,41 @@ def do_something(self):
 | `UpdateTime` / `@update_time_column` | "更新时间，插入/更新时自动填充" | 实体字段 |
 | `Transient` / `@transient_field` | "这个字段不存数据库" | 实体字段 |
 
-### @entity 注解参数
+### 实体声明注解
+
+| 注解 | 一句话 | 放哪里 | 版本 |
+|------|--------|--------|------|
+| `@Entity` | "这是一个实体类"（可无括号） | 实体类上 | v2.2.2+ |
+| `@Table(name=..., indexes=[...], comment=...)` | "对应哪张表、索引、注释" | 实体类上 | v2.2.2+ |
+| `@entity("table_name", indexes=[...], comment=...)` | 一体化写法（完全兼容） | 实体类上 | 全版本 |
+| `@table("table_name", ...)` | `@entity` 别名 | 实体类上 | 全版本 |
+
+### @Entity / @Table 参数
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| name | str | "" | 表名，为空时自动用类名转下划线 |
-| indexes | List[Index] | None | 索引列表 |
-| comment | str | "" | 表注释 |
+| `table_name` / `name` | str | "" | 表名，为空时自动用类名转下划线 |
+| `indexes` | List[Index] | None | 索引列表 |
+| `comment` | str | "" | 表注释 |
+
+### @Entity 三种写法对照
+
+| 写法 | 说明 | 对齐 Java |
+|------|------|-----------|
+| `@Entity` + `@Table(...)` | 分离风格（推荐） | `@Entity` + `@Table` |
+| `@Entity` 无括号 | 表名自动推导为 snake_case | `@Entity`（无 `@Table`） |
+| `@Entity("name", ...)` | 一体化风格（完全兼容） | 原有写法不变 |
+
+### 字段自动推断规则（v2.2.3+）
+
+| 写法 | 自动创建 | 说明 |
+|------|----------|------|
+| `name: str` | `Column()` | 无默认值，仅记录类型 |
+| `name: str = ""` | `Column(default="")` | 赋值即为默认值 |
+| `name: int = 0` | `Column(default=0)` | 同上 |
+| `name: str = Column(...)` | 保留原 Column | 不覆盖 |
+| `name: int = Id()` | 保留原 Id | 不覆盖 |
+| `_xxx: dict = {}` | 跳过 | 私有字段不持久化 |
 
 ---
 
