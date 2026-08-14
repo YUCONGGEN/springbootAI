@@ -20,7 +20,7 @@ import traceback
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Request, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 
 actuator_router = APIRouter()
 _application_context = None
@@ -144,6 +144,8 @@ def get_endpoint_directory() -> dict:
         "mappings": {"href": "/actuator/mappings", "methods": ["GET"]},
         "threaddump": {"href": "/actuator/threaddump", "methods": ["GET"]},
         "prometheus": {"href": "/actuator/prometheus", "methods": ["GET"]},
+        "sysmetrics": {"href": "/actuator/sysmetrics", "methods": ["GET"]},
+        "admin": {"href": "/actuator/admin", "methods": ["GET"]},
     }
     return {"_links": {k: v for k, v in endpoints.items()}}
 
@@ -416,3 +418,369 @@ def mappings_endpoint(_: None = Depends(_mappings_auth)):
 @actuator_router.get('/threaddump')
 def threaddump_endpoint(_: None = Depends(_threaddump_auth)):
     return JSONResponse(content=get_threaddump(), status_code=200)
+
+
+# ==================== /prometheus Prometheus 指标端点 ====================
+
+@actuator_router.get('/prometheus')
+def prometheus_endpoint():
+    """暴露 Prometheus 文本格式指标，供 Prometheus Server 抓取。
+
+    对齐 Spring Boot ``/actuator/prometheus``：
+    - 响应 Content-Type: ``text/plain; version=0.0.4; charset=utf-8``
+    - 返回 ``prometheus_client.generate_latest()`` 格式数据
+    """
+    try:
+        from spring.monitoring.prometheus import prometheus_metrics
+        data = prometheus_metrics.generate_metrics_data()
+        return PlainTextResponse(
+            content=data.decode('utf-8') if isinstance(data, bytes) else str(data),
+            media_type='text/plain; version=0.0.4; charset=utf-8',
+        )
+    except ImportError:
+        return PlainTextResponse(
+            content="# prometheus_client not installed\n",
+            media_type='text/plain; version=0.0.4; charset=utf-8',
+            status_code=503,
+        )
+    except Exception as e:
+        return PlainTextResponse(
+            content=f"# error: {e}\n",
+            media_type='text/plain; version=0.0.4; charset=utf-8',
+            status_code=500,
+        )
+
+
+# ==================== /sysmetrics 进程系统指标 ====================
+
+def get_sysmetrics() -> dict:
+    """返回进程级系统指标（内存/CPU/线程/文件描述符）。
+
+    使用 ``psutil`` 获取进程信息，对齐 Spring Boot ``/actuator/metrics/{name}``。
+    """
+    try:
+        import psutil
+        import os
+        process = psutil.Process(os.getpid())
+        mem = process.memory_info()
+        return {
+            "rss_mb": round(mem.rss / 1024 / 1024, 1),
+            "vms_mb": round(mem.vms / 1024 / 1024, 1),
+            "cpu_percent": process.cpu_percent(interval=0.1),
+            "num_threads": process.num_threads(),
+            "num_fds": process.num_fds() if hasattr(process, 'num_fds') else 0,
+            "create_time": process.create_time(),
+        }
+    except ImportError:
+        return {"error": "psutil not installed"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@actuator_router.get('/sysmetrics')
+def sysmetrics_endpoint():
+    """进程系统指标端点（供 Admin 面板 JS 调用）。"""
+    return JSONResponse(content=get_sysmetrics(), status_code=200)
+
+
+# ==================== /admin Spring Boot Admin 可视化面板 ====================
+
+def _build_admin_dashboard_html() -> str:
+    """构建 Spring Boot Admin 风格的可视化面板 HTML。
+
+    面板通过 JS fetch 异步调用各 Actuator 端点获取数据，
+    展示：健康状态、系统信息、内存、线程、日志级别、Prometheus 指标摘要。
+    """
+    return '''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpringBootAI Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               background: #1a1a2e; color: #e0e0e0; }
+        .header { background: #16213e; padding: 20px 30px; border-bottom: 2px solid #0f3460; }
+        .header h1 { font-size: 22px; color: #e94560; }
+        .header .subtitle { font-size: 13px; color: #888; margin-top: 4px; }
+        .container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px; }
+        .card { background: #16213e; border-radius: 8px; padding: 20px; border: 1px solid #0f3460; }
+        .card-full { grid-column: 1 / -1; }
+        .card h2 { font-size: 16px; color: #e94560; margin-bottom: 12px;
+                   border-bottom: 1px solid #0f3460; padding-bottom: 8px; }
+        .status-up { color: #00d68f; }
+        .status-down { color: #ff5252; }
+        .metric-row { display: flex; justify-content: space-between; padding: 6px 0;
+                      border-bottom: 1px solid #0f3460; font-size: 13px; }
+        .metric-label { color: #aaa; }
+        .metric-value { color: #e0e0e0; font-weight: 600; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 8px; color: #e94560; border-bottom: 1px solid #0f3460; }
+        td { padding: 6px 8px; border-bottom: 1px solid #0f3460; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+        .badge-up { background: #00d68f33; color: #00d68f; }
+        .badge-down { background: #ff525233; color: #ff5252; }
+        .badge-warn { background: #ffb54733; color: #ffb547; }
+        .log-level { cursor: pointer; }
+        .log-level:hover { background: #0f3460; }
+        .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+        .tab { padding: 6px 16px; border-radius: 4px 4px 0 0; cursor: pointer;
+               background: #0f3460; font-size: 13px; color: #aaa; }
+        .tab.active { background: #e94560; color: #fff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        pre { background: #0d1117; padding: 12px; border-radius: 6px; overflow-x: auto;
+              font-size: 12px; color: #c9d1d9; max-height: 400px; }
+        .refresh-btn { background: #0f3460; border: none; color: #e94560; padding: 6px 16px;
+                       border-radius: 4px; cursor: pointer; font-size: 12px; float: right; }
+        .refresh-btn:hover { background: #1a1a3e; }
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #0f3460;
+                   border-top: 2px solid #e94560; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>SpringBootAI Admin Dashboard</h1>
+        <div class="subtitle">Actuator 可视化面板 | Prometheus 指标 | 实时监控</div>
+        <button class="refresh-btn" onclick="loadAll()">刷新</button>
+    </div>
+    <div class="container">
+        <!-- 健康状态 -->
+        <div class="card">
+            <h2>健康状态</h2>
+            <div id="health"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <!-- 系统信息 -->
+        <div class="card">
+            <h2>系统信息</h2>
+            <div id="info"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <!-- 内存 & CPU -->
+        <div class="card">
+            <h2>内存 & CPU</h2>
+            <div id="metrics-system"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <!-- 线程概览 -->
+        <div class="card">
+            <h2>线程概览</h2>
+            <div id="threads-summary"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <!-- 日志级别管理 -->
+        <div class="card card-full">
+            <h2>日志级别管理（点击切换）</h2>
+            <div id="loggers"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <!-- Prometheus 指标 -->
+        <div class="card card-full">
+            <h2>Prometheus 指标</h2>
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab(this,'prom-raw')">原始数据</div>
+                <div class="tab" onclick="switchTab(this,'prom-summary')">指标摘要</div>
+            </div>
+            <div id="prom-summary" class="tab-content">
+                <table><thead><tr><th>指标名</th><th>类型</th><th>值</th></tr></thead>
+                <tbody id="prom-summary-body"></tbody></table>
+            </div>
+            <div id="prom-raw" class="tab-content active">
+                <pre id="prom-raw-text"><span class="spinner"></span> 加载中...</pre>
+            </div>
+        </div>
+        <!-- Bean 列表 -->
+        <div class="card card-full">
+            <h2>Bean 列表</h2>
+            <div id="beans"><span class="spinner"></span> 加载中...</div>
+        </div>
+    </div>
+    <script>
+    function fetchJSON(url) {
+        return fetch(url).then(r => r.ok ? r.json() : {error: r.status});
+    }
+    function loadHealth() {
+        fetchJSON('/actuator/health').then(d => {
+            var el = document.getElementById('health');
+            if (d.error) { el.innerHTML = '<span class="status-down">无法获取</span>'; return; }
+            var status = d.status || 'UNKNOWN';
+            var cls = status === 'UP' ? 'badge-up' : (status === 'DOWN' ? 'badge-down' : 'badge-warn');
+            var html = '<div class="metric-row"><span class="metric-label">状态</span>' +
+                '<span class="badge ' + cls + '">' + status + '</span></div>';
+            if (d.components) {
+                Object.keys(d.components).forEach(function(k) {
+                    var s = d.components[k].status || 'N/A';
+                    var c = s === 'UP' ? 'badge-up' : 'badge-down';
+                    html += '<div class="metric-row"><span class="metric-label">' + k +
+                        '</span><span class="badge ' + c + '">' + s + '</span></div>';
+                });
+            }
+            el.innerHTML = html;
+        });
+    }
+    function loadInfo() {
+        fetchJSON('/actuator/info').then(d => {
+            var el = document.getElementById('info');
+            if (d.error) { el.innerHTML = '无法获取'; return; }
+            var html = '';
+            if (d.app) {
+                html += '<div class="metric-row"><span class="metric-label">应用</span>' +
+                    '<span class="metric-value">' + (d.app.name || '-') + '</span></div>';
+                html += '<div class="metric-row"><span class="metric-label">版本</span>' +
+                    '<span class="metric-value">' + (d.app.version || '-') + '</span></div>';
+            }
+            if (d.python) {
+                html += '<div class="metric-row"><span class="metric-label">Python</span>' +
+                    '<span class="metric-value">' + d.python.version + '</span></div>';
+            }
+            if (d.os) {
+                html += '<div class="metric-row"><span class="metric-label">系统</span>' +
+                    '<span class="metric-value">' + d.os.name + '</span></div>';
+            }
+            el.innerHTML = html || '<span class="metric-label">无信息</span>';
+        });
+    }
+    function loadSystemMetrics() {
+        fetchJSON('/actuator/sysmetrics').then(d => {
+            var el = document.getElementById('metrics-system');
+            if (d.error) { el.innerHTML = '<span class="status-down">' + d.error + '</span>'; return; }
+            var html = '';
+            html += '<div class="metric-row"><span class="metric-label">RSS 内存</span>' +
+                '<span class="metric-value">' + d.rss_mb + ' MB</span></div>';
+            html += '<div class="metric-row"><span class="metric-label">虚拟内存</span>' +
+                '<span class="metric-value">' + d.vms_mb + ' MB</span></div>';
+            html += '<div class="metric-row"><span class="metric-label">CPU 使用率</span>' +
+                '<span class="metric-value">' + d.cpu_percent + '%</span></div>';
+            html += '<div class="metric-row"><span class="metric-label">线程数</span>' +
+                '<span class="metric-value">' + d.num_threads + '</span></div>';
+            html += '<div class="metric-row"><span class="metric-label">FD 数</span>' +
+                '<span class="metric-value">' + d.num_fds + '</span></div>';
+            el.innerHTML = html;
+        });
+    }
+    function loadThreads() {
+        fetchJSON('/actuator/threaddump').then(d => {
+            var el = document.getElementById('threads-summary');
+            if (d.error || !d.threads) { el.innerHTML = '无法获取'; return; }
+            var alive = d.threads.filter(function(t) { return t.threadState === 'RUNNABLE'; }).length;
+            var daemon = d.threads.filter(function(t) { return t.daemon; }).length;
+            var html = '<div class="metric-row"><span class="metric-label">总线程</span>' +
+                '<span class="metric-value">' + d.threads.length + '</span></div>';
+            html += '<div class="metric-row"><span class="metric-label">活动</span>' +
+                '<span class="metric-value">' + alive + '</span></div>';
+            html += '<div class="metric-row"><span class="metric-label">守护</span>' +
+                '<span class="metric-value">' + daemon + '</span></div>';
+            el.innerHTML = html;
+        });
+    }
+    function loadLoggers() {
+        fetchJSON('/actuator/loggers').then(d => {
+            var el = document.getElementById('loggers');
+            if (d.error || !d.loggers) { el.innerHTML = '无法获取'; return; }
+            var html = '<table><thead><tr><th>Logger</th><th>级别</th></tr></thead><tbody>';
+            var entries = Object.entries(d.loggers).sort(function(a, b) {
+                var order = ['ERROR','WARNING','INFO','DEBUG','NOTSET'];
+                return order.indexOf(a[1]) - order.indexOf(b[1]);
+            });
+            entries.forEach(function(e) {
+                var cls = e[1] === 'ERROR' ? 'badge-down' :
+                    e[1] === 'WARNING' ? 'badge-warn' : 'badge-up';
+                html += '<tr class="log-level" onclick="cycleLogLevel(\\''+e[0]+'\\')">' +
+                    '<td>' + e[0] + '</td><td><span class="badge ' + cls + '">' + e[1] + '</span></td></tr>';
+            });
+            html += '</tbody></table>';
+            el.innerHTML = html;
+        });
+    }
+    function cycleLogLevel(name) {
+        var levels = ['DEBUG','INFO','WARNING','ERROR'];
+        fetchJSON('/actuator/loggers/' + name).then(function(d) {
+            var current = d.effectiveLevel || 'INFO';
+            var idx = levels.indexOf(current);
+            var next = levels[(idx + 1) % levels.length];
+            fetch('/actuator/loggers/' + name, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({configuredLevel: next})
+            }).then(function() { loadLoggers(); });
+        });
+    }
+    function loadPrometheus() {
+        fetch('/actuator/prometheus').then(function(r) {
+            return r.ok ? r.text() : '# error: ' + r.status;
+        }).then(function(text) {
+            document.getElementById('prom-raw-text').textContent = text;
+            // 解析摘要
+            var lines = text.split('\\n');
+            var metrics = {};
+            lines.forEach(function(line) {
+                if (line.startsWith('# TYPE ')) {
+                    var parts = line.split(' ');
+                    if (parts.length >= 4) {
+                        metrics[parts[2]] = {type: parts[3], value: '-'};
+                    }
+                } else if (line && !line.startsWith('#')) {
+                    var spaceIdx = line.indexOf(' ');
+                    if (spaceIdx > 0) {
+                        var name = line.substring(0, spaceIdx).split('{')[0];
+                        var val = line.substring(spaceIdx + 1);
+                        if (metrics[name]) { metrics[name].value = val; }
+                    }
+                }
+            });
+            var html = '';
+            Object.entries(metrics).forEach(function(e) {
+                var typeCls = e[1].type === 'counter' ? 'badge-up' : 'badge-warn';
+                html += '<tr><td>' + e[0] + '</td><td><span class="badge ' + typeCls +
+                    '">' + e[1].type + '</span></td><td>' + e[1].value + '</td></tr>';
+            });
+            document.getElementById('prom-summary-body').innerHTML = html ||
+                '<tr><td colspan=3>无指标</td></tr>';
+        });
+    }
+    function loadBeans() {
+        fetchJSON('/actuator/beans').then(d => {
+            var el = document.getElementById('beans');
+            if (d.error || !d.contexts) { el.innerHTML = '无法获取'; return; }
+            var beans = d.contexts.application.beans;
+            var html = '<table><thead><tr><th>Bean 名</th><th>类型</th><th>Scope</th></tr></thead><tbody>';
+            Object.entries(beans).forEach(function(e) {
+                html += '<tr><td>' + e[0] + '</td><td>' + (e[1].type || '-') +
+                    '</td><td>' + (e[1].scope || '-') + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            el.innerHTML = html;
+        });
+    }
+    function switchTab(el, contentId) {
+        document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+        el.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+        document.getElementById(contentId).classList.add('active');
+    }
+    function loadAll() {
+        loadHealth(); loadInfo(); loadSystemMetrics(); loadThreads();
+        loadLoggers(); loadPrometheus(); loadBeans();
+    }
+    loadAll();
+    setInterval(loadAll, 30000);  // 30秒自动刷新
+    </script>
+</body>
+</html>'''
+
+
+@actuator_router.get('/admin', response_class=HTMLResponse)
+@actuator_router.get('/admin/', response_class=HTMLResponse)
+def admin_dashboard():
+    """Spring Boot Admin 风格可视化面板。
+
+    访问 ``/actuator/admin`` 即可打开 HTML 仪表盘，展示：
+    - 健康状态（含组件细分）
+    - 系统信息（应用名/版本/Python版本/OS）
+    - 内存 & CPU（进程 RSS、CPU 使用率、线程数）
+    - 线程概览（总线程/活动/守护线程数）
+    - 日志级别管理（点击表格行动态切换级别）
+    - Prometheus 指标（原始数据 + 摘要表格）
+    - Bean 列表（IoC 容器中所有 Bean）
+
+    面板每 30 秒自动刷新，也可手动点击"刷新"按钮。
+    """
+    return HTMLResponse(content=_build_admin_dashboard_html(), status_code=200)

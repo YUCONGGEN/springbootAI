@@ -1,6 +1,6 @@
 # WebSocket —— 像微信一样实时通信
 
-> 框架版本：SpringBootAI 2.2.4
+> 框架版本：SpringBootAI 2.2.5
 > 返回 [八大模块总览](EIGHT_MODULES.md)
 
 ---

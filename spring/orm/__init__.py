@@ -46,6 +46,7 @@ from spring.orm.mybatis_integration import (
 # 导入注解
 from spring.orm.pymybatis.annotations import (
     Select,
+    SelectPage,
     Insert,
     Update,
     Delete,
@@ -187,6 +188,7 @@ __all__ = [
     'init_mybatis',
     # 注解
     'Select',
+    'SelectPage',
     'Insert',
     'Update',
     'Delete',

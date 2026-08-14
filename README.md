@@ -555,8 +555,13 @@ Profile 用于 Bean 过滤和生产安全校验。多环境配置可使用以下
 | `/actuator/health/liveness` | 进程存活检查（用于 K8s livenessProbe） |
 | `/actuator/health/readiness` | 服务就绪检查（用于 K8s readinessProbe） |
 | `/actuator/info` | 应用名称、当前 Profile、框架和 Python 版本 |
+| `/actuator/admin` | **Spring Boot Admin 风格可视化面板**（浏览器打开即用，每 30 秒自动刷新） |
+| `/actuator/prometheus` | **Prometheus 文本格式指标**（供 Prometheus Server 抓取） |
+| `/actuator/sysmetrics` | **进程级系统指标**（RSS/CPU/线程/FD，供 Admin 面板 JS 调用） |
 
 `database.enabled: false` 时数据库状态为 `DISABLED`，不会创建 `test.db`。
+
+> 详见 [ACTUATOR_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ACTUATOR_MODULE.md) 第四章（Spring Boot Admin 面板）与第五章（Prometheus + Grafana 工业级监控）。
 
 > **⚠️ 新手常见错误**：
 > - ❌ 错误："我改了 YAML，重新请求接口怎么没生效？"

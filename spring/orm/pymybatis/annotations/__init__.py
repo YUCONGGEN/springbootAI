@@ -16,6 +16,7 @@ from .annotations import (
     Result,
     ResultMap,
     Select,
+    SelectPage,
     SelectProvider,
     Transactional,
     Update,
@@ -23,7 +24,7 @@ from .annotations import (
 )
 
 __all__ = [
-    'Select', 'Insert', 'Update', 'Delete',
+    'Select', 'SelectPage', 'Insert', 'Update', 'Delete',
     'SelectProvider', 'InsertProvider', 'UpdateProvider', 'DeleteProvider',
     'ResultMap', 'Result',
     'Options', 'Param', 'CacheNamespace', 'DataSource', 'Transactional',

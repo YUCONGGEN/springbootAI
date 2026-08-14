@@ -1,6 +1,6 @@
 # Spring Data Repository —— 不用手写SQL的分页查询
 
-> 框架版本：SpringBootAI 2.2.4
+> 框架版本：SpringBootAI 2.2.5
 > 返回 [八大模块总览](EIGHT_MODULES.md)
 
 ---

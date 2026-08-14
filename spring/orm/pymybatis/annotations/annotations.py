@@ -55,6 +55,67 @@ def Select(value: str, result_map: Optional[str] = None,
     return decorator
 
 
+class SelectPageAnnotation:
+    """
+    分页查询注解数据对象
+
+    用于标注Mapper方法，自动执行分页查询（COUNT + LIMIT/OFFSET）。
+    方法参数中名为 ``page_num`` 和 ``page_size`` 的参数会自动提取为分页参数，
+    其余参数作为SQL绑定参数。
+    """
+
+    def __init__(self, value: str, count_sql: Optional[str] = None,
+                 result_map: Optional[str] = None,
+                 result_type: Optional[str] = None,
+                 fetch_size: Optional[int] = None,
+                 timeout: Optional[int] = None):
+        self.value = value
+        self.count_sql = count_sql
+        self.result_map = result_map
+        self.result_type = result_type
+        self.fetch_size = fetch_size
+        self.timeout = timeout
+
+
+def SelectPage(value: str, count_sql: Optional[str] = None,
+               result_map: Optional[str] = None,
+               result_type: Optional[str] = None,
+               fetch_size: Optional[int] = None,
+               timeout: Optional[int] = None) -> Callable:
+    """
+    分页查询注解装饰器
+
+    用于标注Mapper接口方法，自动执行分页查询。
+    框架会从方法参数中提取 ``page_num`` 和 ``page_size``（按参数名匹配），
+    其余参数作为SQL绑定参数。
+
+    Args:
+        value: 查询SQL语句（不含LIMIT/OFFSET，框架自动追加）
+        count_sql: 自定义COUNT语句，为空时框架自动包裹生成
+        result_map: 结果映射ID
+        result_type: 结果类型
+        fetch_size: 抓取大小
+        timeout: 超时时间（秒）
+
+    Returns:
+        装饰器函数
+
+    用法::
+
+        @SelectPage("SELECT id, name FROM users WHERE age > #{age}")
+        def find_page(self, age: int, page_num: int, page_size: int):
+            pass
+
+        # 返回: {"total": 100, "page_num": 1, "page_size": 10, "data": [...]}
+    """
+    def decorator(func: Callable) -> Callable:
+        annotation = SelectPageAnnotation(value, count_sql, result_map,
+                                          result_type, fetch_size, timeout)
+        setattr(func, 'select_page', annotation)
+        return func
+    return decorator
+
+
 class InsertAnnotation:
     """
     INSERT插入注解数据对象

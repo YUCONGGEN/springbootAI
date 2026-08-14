@@ -89,6 +89,7 @@ class MapperProxy:
         
         # 获取方法注解（通过装饰器附加的属性）
         select_annotation = getattr(wrapped_method, 'select', None)
+        select_page_annotation = getattr(wrapped_method, 'select_page', None)
         insert_annotation = getattr(wrapped_method, 'insert', None)
         update_annotation = getattr(wrapped_method, 'update', None)
         delete_annotation = getattr(wrapped_method, 'delete', None)
@@ -109,6 +110,29 @@ class MapperProxy:
         def execute():
             if options and options.flush_cache:
                 self.sql_session.sql_cache.clear()
+
+            # ── 分页查询 @SelectPage ──
+            if select_page_annotation:
+                page_num, page_size, sql_params = self._extract_pagination_params(
+                    method, params
+                )
+                result = self.sql_session.select_pagination(
+                    select_page_annotation.value,
+                    sql_params,
+                    page_num=page_num,
+                    page_size=page_size,
+                )
+                # 如果指定了 result_type，对 data 逐行转换
+                result_type = (
+                    select_page_annotation.result_type
+                    or self._result_type_from_return_annotation(method)
+                )
+                if result_type and result.get('data'):
+                    result['data'] = [
+                        self._apply_result_type(row, result_type)
+                        for row in result['data']
+                    ]
+                return result
 
             if select_annotation or select_provider:
                 provider_options = select_provider.options if select_provider else {}
@@ -359,6 +383,49 @@ class MapperProxy:
             or method_name.startswith('get_by_')
             or method_name == 'find_one'
         )
+
+    @staticmethod
+    def _extract_pagination_params(method, params: Dict[str, Any]):
+        """
+        从方法参数中提取分页参数 page_num / page_size。
+
+        按参数名匹配（支持 Param 别名），提取后从 SQL 参数字典中移除，
+        避免它们被当作 SQL 绑定参数。
+
+        Returns:
+            (page_num, page_size, sql_params)
+        """
+        page_num = 1
+        page_size = 10
+        sql_params = {}
+
+        try:
+            sig = inspect.signature(method)
+        except (ValueError, TypeError):
+            sig = None
+
+        # 构建 参数名 → Param别名 映射
+        param_names: Dict[str, str] = {}
+        if sig is not None:
+            for pname, p in sig.parameters.items():
+                if pname == 'self':
+                    continue
+                alias = MapperProxy._parameter_alias(p.annotation, pname)
+                param_names[pname] = alias
+
+        for key, value in params.items():
+            if key == 'self':
+                continue
+            # 检查原始参数名和别名是否为分页参数
+            matched_name = param_names.get(key, key)
+            if matched_name in ('page_num', 'pageNum', 'page'):
+                page_num = int(value) if value is not None else 1
+            elif matched_name in ('page_size', 'pageSize', 'size'):
+                page_size = int(value) if value is not None else 10
+            else:
+                sql_params[key] = value
+
+        return page_num, page_size, sql_params
 
     @staticmethod
     def _is_collection_type(annotation: Any) -> bool:

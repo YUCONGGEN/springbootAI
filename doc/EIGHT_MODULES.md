@@ -1,6 +1,6 @@
 # SpringBootAI 八大模块 —— 总览索引
 
-> 框架版本：SpringBootAI 2.2.4
+> 框架版本：SpringBootAI 2.2.5
 > 八大模块彼此独立，按需选用，不要为了"功能齐全"一次全部接入。
 
 ---
@@ -29,7 +29,7 @@ YAML 配置太长，想自动变成 Python 对象        → 五、配置绑定 
 | # | 模块 | 独立文档 | 一句话说明 |
 |---|------|----------|-----------|
 | 一 | Spring Data Repository | [REPOSITORY_MODULE.md](REPOSITORY_MODULE.md) | 不用手写SQL的分页查询 |
-| 二 | Actuator | [ACTUATOR_MODULE.md](ACTUATOR_MODULE.md) | 系统健康检查面板 |
+| 二 | Actuator | [ACTUATOR_MODULE.md](ACTUATOR_MODULE.md) | 系统健康检查面板 + Spring Boot Admin 可视化 + Prometheus 指标 |
 | 三 | 多数据源 | [DATASOURCE_MODULE.md](DATASOURCE_MODULE.md) | 读写分离 |
 | 四 | 事务事件 | [TX_EVENT_MODULE.md](TX_EVENT_MODULE.md) | 操作完成后自动发通知 |
 | 五 | 配置绑定 | [CONFIG_BINDING_MODULE.md](CONFIG_BINDING_MODULE.md) | 把YAML配置自动变成Python对象 |

@@ -1,6 +1,6 @@
 # SpringBootAI 数据库操作（ORM）—— 使用指南
 
-> 框架版本：SpringBootAI 2.2.4 / 内嵌 PyMyBatis 2.2.4
+> 框架版本：SpringBootAI 2.2.5 / 内嵌 PyMyBatis 2.2.5
 
 ---
 
@@ -481,6 +481,46 @@ def find(self, table: str, id: int):
 
 ### ② 怎么用
 
+#### 方式一：@SelectPage 注解（推荐）
+
+> **v2.2.5+ 新增**：Mapper 方法上加 `@SelectPage`，框架自动执行 COUNT + LIMIT/OFFSET。
+
+```python
+from spring.orm import Mapper, SelectPage
+
+@Mapper
+class UserMapper:
+    @SelectPage("SELECT id, name, age FROM users WHERE age > #{min_age}")
+    def find_page(self, min_age: int, page_num: int, page_size: int):
+        pass
+
+# 调用：框架自动提取 page_num / page_size，其余参数作为 SQL 绑定参数
+result = user_mapper.find_page(min_age=22, page_num=1, page_size=5)
+# 返回: {"total": 23, "page_num": 1, "page_size": 5, "data": [...]}
+```
+
+**参数说明：**
+
+| 参数名（支持别名） | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `page_num` / `pageNum` / `page` | int | 1 | 页码，从 1 开始 |
+| `page_size` / `pageSize` / `size` | int | 10 | 每页条数 |
+
+框架自动从方法参数中提取分页参数，**不需要手动传给 SQL**。其余参数作为 `#{}` 绑定参数。
+
+**自定义 COUNT 语句：**
+
+```python
+@SelectPage(
+    "SELECT id, name FROM users WHERE status = #{status}",
+    count_sql="SELECT COUNT(*) FROM users WHERE status = #{status}",
+)
+def find_active_page(self, status: str, page_num: int, page_size: int):
+    pass
+```
+
+#### 方式二：SqlSession 直接调用
+
 ```python
 # 普通分页（页码 + 每页数量）
 page = session.select_pagination(
@@ -756,6 +796,7 @@ def do_something(self):
 | `@MapperScan` | "去这个文件夹里找所有 Mapper" | 启动类上 |
 | `@Mapper` | "这个类是数据库操作员" | Mapper 类上 |
 | `@Select` | "这个方法用来查数据" | Mapper 方法上 |
+| `@SelectPage` | "这个方法用来分页查数据（自动 COUNT + LIMIT）" | Mapper 方法上 |
 | `@Insert` | "这个方法用来插数据" | Mapper 方法上 |
 | `@Update` | "这个方法用来改数据" | Mapper 方法上 |
 | `@Delete` | "这个方法用来删数据" | Mapper 方法上 |

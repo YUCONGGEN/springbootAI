@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.2.5] - 2026-08-14
+
+### 新增
+
+- **Spring Boot Admin 风格可视化面板**：访问 `/actuator/admin` 即可在浏览器查看整合后的 HTML 仪表盘，包含健康状态、系统信息、内存 & CPU、线程概览、日志级别管理（点击切换）、Prometheus 指标（原始数据 + 摘要表格）、Bean 列表七大区块。每 30 秒自动刷新，无需独立部署 Admin Server。
+- **Prometheus 指标暴露端点** `/actuator/prometheus`：以 Prometheus 文本格式（`text/plain; version=0.0.4`）暴露应用指标，供 Prometheus Server 抓取。支持多 worker 部署（`PROMETHEUS_MULTIPROC_DIR`），未安装 `prometheus_client` 时返回 503。
+- **进程系统指标端点** `/actuator/sysmetrics`：通过 `psutil` 采集进程级 RSS、虚拟内存、CPU 使用率、线程数、文件描述符数。
+- **ORM 分页查询注解 `@SelectPage`**：自动提取 `page_num`/`page_size` 参数并返回 `{total, page_num, page_size, data}` 结构，支持 `pageNum`/`page`/`pageSize`/`size` 等参数名变体，可自定义 COUNT 语句。
+
+### 文档
+
+- `doc/ACTUATOR_MODULE.md` 新增第四章（Spring Boot Admin 可视化面板）、第五章（Prometheus + Grafana 工业级监控，含三步接入流程与多 worker 注意事项）、第六章（自定义业务指标）。
+- `doc/ORM_MODULE.md` 第五章新增"方法 1：@SelectPage 注解（推荐）"小节。
+- `README.md` 4.8 健康检查表新增 `/actuator/admin`、`/actuator/prometheus`、`/actuator/sysmetrics` 三个端点。
+- `doc/EIGHT_MODULES.md` Actuator 模块说明补充"Spring Boot Admin 可视化 + Prometheus 指标"。
+
+### 测试
+
+- 新增 `tests/test_actuator_prometheus_admin.py`（9 项测试全部通过）：覆盖 Prometheus 端点格式、Admin 面板 HTML、sysmetrics 端点、端点目录。
+- 新增 `tests/test_select_page.py`：覆盖 `@SelectPage` 分页注解。
+
 ## [2.2.4] - 2026-08-13
 
 ### 完善

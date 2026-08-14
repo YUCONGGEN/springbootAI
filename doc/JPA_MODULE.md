@@ -1,6 +1,6 @@
 # SpringBootAI JPA 实体与仓库 —— 使用指南
 
-> 框架版本：SpringBootAI 2.2.4 / 内嵌 PyMyBatis 2.2.4
+> 框架版本：SpringBootAI 2.2.5 / 内嵌 PyMyBatis 2.2.5
 
 ---
 
