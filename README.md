@@ -348,7 +348,7 @@ python -c "from spring.orm.pymybatis import __version__; print(__version__)"
 
 ### 3.5 最小应用
 
-仓库中的 `example`、`example1`、`example5` 只用于源码参考和回归验证，不会打包进 `springbootAI`。安装后请按下面结构创建自己的应用包。**每个被扫描目录都必须包含 `__init__.py`，并从项目根目录启动。**
+仓库中的 `example_all`、`example_langchain`、`example_langgraph`、`example_mcp`、`test_cloud_app` 只用于源码参考和回归验证，不会打包进 `springbootAI`。安装后请按下面结构创建自己的应用包。**每个被扫描目录都必须包含 `__init__.py`，并从项目根目录启动。**
 
 创建包结构：
 
@@ -1521,7 +1521,7 @@ curl http://localhost:8080/actuator/health
 
 ## 15. 项目结构
 
-`example`、`example1`、`example5`、`example_langchain` 是仓库级示例，不属于 `springbootAI` 安装包。实际项目应创建自己的应用包。
+`example_all`、`example_langchain`、`example_langgraph`、`example_mcp`、`test_cloud_app` 是仓库级示例，不属于 `springbootAI` 安装包。实际项目应创建自己的应用包。
 
 推荐目录结构：
 
