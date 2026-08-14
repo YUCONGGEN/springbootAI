@@ -1,6 +1,29 @@
-# SpringBootAI 数据库操作（ORM）—— 小白也能看懂的使用指南
+# SpringBootAI 数据库操作（ORM）—— 使用指南
 
 > 框架版本：SpringBootAI 2.2.4 / 内嵌 PyMyBatis 2.2.4
+
+---
+
+## 目录
+
+- [用这个模块 vs 不用](#用这个模块-vs-不用这个模块)
+- [基本概念](#基本概念)
+- [使用前准备](#使用前准备)
+- [第一章：新手三步写 CRUD](#第一章新手三步写一个-crud)
+- [第二章：事务 @Transactional](#第二章事务要么都成功要么都失败)
+- [第三章：DDL 自动建表](#第三章ddl-自动建表)
+  - [3.1 配置与模式](#31-配置与模式)
+  - [3.2 实体声明：@Entity + @Table](#32-实体声明entity--table)
+  - [3.3 字段定义：显式 Column 与自动推断](#33-字段定义显式-column-与自动推断)
+  - [3.4 自动时间戳 @CreateTime / @UpdateTime](#34-自动时间戳createtime--updatetime)
+  - [3.5 类型映射表](#35-类型映射表)
+- [第四章：SQL 注入防护](#第四章sql-注入防护--为什么--比--安全)
+- [第五章：分页](#第五章分页--数据太多不能一次全取)
+- [第六章：XML Mapper](#第六章xml-mapper--sql-从-python-里独立出来)
+- [第七章：直接使用 Session](#第七章直接使用-session--完全自己控制)
+- [常见错误](#常见错误)
+- [注解参考](#注解参考)
+- [FAQ](#faq)
 
 ---
 
@@ -36,13 +59,9 @@ class UserMapper:
 
 ---
 
-## 第零章：数据库到底是个啥
+## 基本概念
 
-### 先搞懂三个基本概念
-
-回想一下 Excel：你打开一个 `.xlsx` 文件，里面有多个 **Sheet（工作表）**，每个 Sheet 里有 **行** 和 **列**。
-
-数据库也是一样的结构：
+### 数据库 = Excel
 
 | 生活比喻 | 数据库术语 | 说明 |
 |----------|-----------|------|
@@ -60,39 +79,44 @@ class UserMapper:
 
 这四个操作就是程序员常说的 **CRUD**（增删改查：Create、Read、Update、Delete）。
 
----
-
-### 什么是 ORM？——把数据库表变成 Python 类
+### 什么是 ORM？
 
 **ORM（对象关系映射）的作用是：你不用写 SQL 也能操作数据库，就像你用微信发消息，不用关心背后的网络协议。**
 
-具体来说，ORM 帮你做两件事：
+ORM 帮你做两件事：
 
-1. **把 Python 变量安全地塞进 SQL**——你不用自己拼字符串，防止 SQL 注入（后面会讲这是什么和为什么重要）
-2. **把数据库返回的行自动转成 Python 对象**——不用自己一行行解析
-
-打一个比方：
-
-- **不用 ORM**：你给数据库发消息，得用人家的语言（SQL），还得手动翻译回复
-- **用 ORM**：你跟一个翻译官（ORM）说 Python，翻译官帮你转成 SQL 发给数据库，再把数据库的回复翻译回 Python 对象
+1. **把 Python 变量安全地塞进 SQL**——防止 SQL 注入
+2. **把数据库返回的行自动转成 Python 对象**——不用手动解析
 
 **一句话总结：你写 Python 方法 + SQL 语句，ORM 帮你跑腿执行。它不替你设计表结构——你还是得会写 SQL。**
-
----
 
 ### 三种使用方式怎么选
 
 | 方式 | 适合谁 | 特点 |
 |------|--------|------|
 | **Mapper 注解 SQL** | 👶 新手 ✅ 推荐从这里开始 | SQL 直接写在 Python 方法上，一眼能看懂 |
-| **XML Mapper** | 🏗️ 从 Java MyBatis 迁移的开发者、SQL 很长很复杂 | SQL 和 Python 分开，支持动态拼 SQL |
+| **XML Mapper** | 🏗️ 从 Java MyBatis 迁移、SQL 很复杂 | SQL 和 Python 分开，支持动态拼 SQL |
 | **SqlSession** | 🔧 需要完全掌控执行过程 | 最灵活，也得自己多写代码 |
 
-> **建议**：如果你是新手，先用 Mapper 注解方式跑通 CRUD。等项目变大了、SQL 变复杂了，再学 XML 方式。
+> **建议**：新手先用 Mapper 注解方式跑通 CRUD。项目变大、SQL 变复杂了再学 XML 方式。
+
+### 一次数据库调用经过哪些层
+
+```
+HTTP 请求 → Controller → Service → Mapper → 连接池 → 数据库
+                         ↳ @Transactional 控制提交或回滚
+```
+
+把流程想象成快递：
+
+- **Controller** = 前台（收件、发件）
+- **Service** = 调度中心（决定要不要打包、出了问题要不要退回）
+- **Mapper** = 快递员（真正跑腿把 SQL 送到数据库）
+- **连接池** = 一队待命的快递员（不用每次都招新人）
 
 ---
 
-### 使用前准备
+## 使用前准备
 
 1. 在 `application.yml` 中开启 `database.enabled: true`
 2. 安装数据库驱动：
@@ -118,22 +142,6 @@ database:
 ```
 
 > SQLite 适合本地学习和测试。正式项目用 MySQL/PostgreSQL 时，记得改 `driver`、`host`、`port`、`username`、`password`。
-
----
-
-### 一次数据库调用经过哪些层
-
-```
-HTTP 请求 → Controller → Service → Mapper → 连接池 → 数据库
-                         ↳ @Transactional 控制提交或回滚
-```
-
-把这个流程想象成快递：
-
-- **Controller** = 前台（收件、发件）
-- **Service** = 调度中心（决定要不要打包、出了问题要不要退回）
-- **Mapper** = 快递员（真正跑腿把 SQL 送到数据库）
-- **连接池** = 一队待命的快递员（不用每次都招新人）
 
 ---
 
@@ -172,10 +180,7 @@ class User:
 ### 第二步：写 Mapper（数据访问层）
 
 > **@Mapper 是什么？** 告诉框架"这个类是数据库操作员，框架请帮我管理它"。  
-> **@Select 是什么？** 标注在方法上，意思是"这个方法用来查数据"。  
-> **@Insert 是什么？** 标注在方法上，意思是"这个方法用来插数据"。  
-> **@Update 是什么？** 标注在方法上，意思是"这个方法用来改数据"。  
-> **@Delete 是什么？** 标注在方法上，意思是"这个方法用来删数据"。
+> **@Select / @Insert / @Update / @Delete** 分别标注在方法上，表示"查/插/改/删"。
 
 ```python
 # demo/mapper/user_mapper.py
@@ -203,7 +208,7 @@ class UserMapper:
 
     @Update("UPDATE users SET name = #{name} WHERE id = #{id}")
     def update_name(self, id: int, name: str):
-        """修改用户名字 —— UPDATE 用户 SET 新名字 WHERE 条件是 id"""
+        """修改用户名字"""
         pass
 
     @Delete("DELETE FROM users WHERE id = #{id}")
@@ -262,7 +267,6 @@ class UserController:
         """GET /api/users/ → 返回所有用户列表"""
         users = self.user_service.list_all()
         return {"code": 0, "data": users}
-        # 输出示例: {"code": 0, "data": [{"id": 1, "name": "张三", ...}, ...]}
 
     @GetMapping("/{user_id}")
     def get_user(self, user_id: int):
@@ -325,7 +329,7 @@ database:
 
 ## 第二章：事务——"要么都成功，要么都失败"
 
-> **@Transactional 是什么？** 想象你要给朋友转账 100 元：你的账户减 100，朋友的账户加 100。如果减了你的钱之后系统突然崩溃，朋友没收到钱，你的钱就没了。事务就是保证"你的钱扣掉 **并且** 朋友的账加上"要么**两个操作都成功**，要么**两个操作都撤销**，绝不会出现扣了你的钱但朋友没收到的情况。
+> **@Transactional 是什么？** 想象你要给朋友转账 100 元：你的账户减 100，朋友的账户加 100。如果减了你的钱之后系统突然崩溃，朋友没收到钱，你的钱就没了。事务就是保证"你的钱扣掉 **并且** 朋友的账加上"要么**两个操作都成功**，要么**两个操作都撤销**。
 
 ### ① 是什么
 
@@ -367,15 +371,13 @@ class TransferService:
 
 ---
 
-## 第三章：DDL 自动建表 —— "自动建表就像你买了家具，师傅上门帮你装好"
+## 第三章：DDL 自动建表
 
-### ① 是什么
+> 你定义了 Python 实体类，不想手动写 `CREATE TABLE` SQL 语句。框架启动时，自动根据你的类帮你建表。
+>
+> **好比：你画了一张家具的设计图（Python 类），师傅（@Entity）到了现场照着图帮你把家具组装好（建表）。**
 
-你定义了 Python 实体类，不想手动写 `CREATE TABLE` SQL 语句。框架启动时，自动根据你的类帮你建表。
-
-**好比：你画了一张家具的设计图（Python 类），师傅（@entity）到了现场照着图帮你把家具组装好（建表）。**
-
-### ② 怎么用
+### 3.1 配置与模式
 
 **配置：**
 
@@ -397,39 +399,13 @@ database:
 | `create` | 每次重建 | 每次启动都删掉旧表、建新表。**数据会丢！** |
 | `create-drop` | 用完就删 | 启动时建表，关闭时删表。测试用 |
 
-**定义实体类：**
+**约定大于配置：**
 
-```python
-# app/entity/user.py
-from dataclasses import dataclass
-from spring.orm import entity, Index, Column, Id
+- 类中有 `id` 字段 → 自动设为主键 + 自增
+- 字段名自动驼峰转下划线（`userName` → `user_name`）
+- 类型自动映射到数据库类型（见 [3.5 类型映射表](#35-类型映射表)）
 
-
-# 普通类风格
-@entity("sys_user", indexes=[
-    Index("idx_username", ["username"], unique=True),  # username 不能重复
-    Index("idx_email", ["email"]),
-], comment="用户表")
-class User:
-    def __init__(self, id: int = None, username: str = "", email: str = "", age: int = 0):
-        self.id = id          # 字段名叫 id，自动变主键+自增
-        self.username = username  # 自动映射为 VARCHAR(255)
-        self.email = email
-        self.age = age        # 自动映射为 BIGINT
-
-
-# dataclass 风格
-@dataclass
-@entity("sys_role")
-class Role:
-    id: int = None         # 自动主键+自增
-    role_name: str = ""    # 驼峰名自动转下划线：role_name
-    role_code: str = ""
-```
-
-### ③ 运行结果
-
-启动后，框架自动生成并执行类似这样的 SQL：
+**运行结果示例：**
 
 ```sql
 CREATE TABLE sys_user (
@@ -442,34 +418,19 @@ CREATE UNIQUE INDEX idx_username ON sys_user(username);
 CREATE INDEX idx_email ON sys_user(email);
 ```
 
-**约定大于配置：**
-
-- 类中有 `id` 字段 → 自动设为主键 + 自增
-- 字段名自动驼峰转下划线（`userName` → `user_name`）
-- 类型自动映射到数据库类型
-
-| Python 类型 | MySQL | PostgreSQL | SQLite |
-|------------|-------|------------|--------|
-| `int` | BIGINT AUTO_INCREMENT | BIGSERIAL | INTEGER PRIMARY KEY AUTOINCREMENT |
-| `str` | VARCHAR(255) | VARCHAR(255) | TEXT |
-| `float` | DOUBLE | DOUBLE PRECISION | REAL |
-| `bool` | TINYINT(1) | BOOLEAN | INTEGER |
-| `bytes` | BLOB | BYTEA | BLOB |
-| `datetime` | DATETIME | TIMESTAMP | TEXT |
-
 ---
 
-## 第三章补充：@Entity + @Table —— 对齐 Java JPA 分离风格（推荐）
+### 3.2 实体声明：@Entity + @Table
 
-> **v2.2.2+ 新增**：`@Entity` 和 `@Table` 分离写法，对齐 Java JPA `@Entity` + `@Table`。
+> **v2.2.2+ 新增**：`@Entity` 和 `@Table` 分离写法，对齐 Java JPA。
 
-### 为什么分离？
+#### 为什么分离？
 
 Java JPA 中，`@Entity` 标记"这是一个实体类"，`@Table` 指定"对应哪张表"。之前本框架把两者合并在 `@entity("table_name")` 里。v2.2.2 起支持分离写法，更清晰、更接近 Java 习惯。
 
-### 三种声明写法（均向后兼容）
+#### 三种声明写法（均向后兼容）
 
-#### 写法一：@Entity + @Table 分离（推荐）
+**写法一：@Entity + @Table 分离（推荐）**
 
 ```python
 from spring.orm import Entity, Table, Column, Id, Index, CreateTime
@@ -490,7 +451,7 @@ class AdminUser:
     _cache: dict = {}                       # 私有字段，跳过不持久化
 ```
 
-#### 写法二：仅 @Entity 无括号（表名自动推导）
+**写法二：仅 @Entity 无括号（表名自动推导）**
 
 ```python
 @Entity
@@ -503,7 +464,7 @@ class Product:
 # 表名自动推导为 "product"（类名转 snake_case）
 ```
 
-#### 写法三：一体化 @Entity("name", ...)（完全兼容）
+**写法三：一体化 @Entity("name", ...)（完全兼容）**
 
 ```python
 @Entity("sys_log", comment="系统日志")
@@ -513,17 +474,23 @@ class SysLog:
     message: str = Column(nullable=False, length=500)
 ```
 
-### 装饰器执行顺序
+**写法四：传统 @entity / @table（全版本兼容）**
 
-Python 装饰器从下往上执行，`@Table` 先设置表元数据，`@Entity` 检测到已有 `@Table` 则不覆盖：
+```python
+@entity("sys_user", indexes=[Index("idx_username", ["username"], unique=True)], comment="用户表")
+class User:
+    id: int = None
+    username: str = ""
+    email: str = ""
+    age: int = 0
 
+@table("sys_role")  # @entity 别名
+class Role:
+    id: int = None
+    role_name: str = ""
 ```
-@Entity          ← 外层，后执行：标记 __entity__，不覆盖已有 __table__
-@Table(...)      ← 内层，先执行：设置 __table__ 和 __entity__
-class User: ...
-```
 
-### @Table 也可单独使用
+#### @Table 单独使用
 
 `@Table` 单独使用时隐含 `@Entity` 语义，与 `@Entity("name")` 等效：
 
@@ -535,17 +502,53 @@ class SysConfig:
     config_value: str = ""
 ```
 
+#### 装饰器执行顺序
+
+Python 装饰器从下往上执行，`@Table` 先设置表元数据，`@Entity` 检测到已有 `@Table` 则不覆盖：
+
+```
+@Entity          ← 外层，后执行：标记 __entity__，不覆盖已有 __table__
+@Table(...)      ← 内层，先执行：设置 __table__ 和 __entity__
+class User: ...
+```
+
+#### 声明写法对照表
+
+| 写法 | 说明 | 对齐 Java | 版本 |
+|------|------|-----------|------|
+| `@Entity` + `@Table(...)` | 分离风格（推荐） | `@Entity` + `@Table` | v2.2.2+ |
+| `@Entity` 无括号 | 表名自动推导为 snake_case | `@Entity`（无 `@Table`） | v2.2.2+ |
+| `@Entity("name", ...)` | 一体化风格 | — | v2.2.2+ |
+| `@entity("name", ...)` | 传统写法（兼容） | — | 全版本 |
+| `@table("name", ...)` | `@entity` 别名 | — | 全版本 |
+
+#### @Entity / @Table 参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `table_name` / `name` | str | "" | 表名，为空时自动用类名转下划线 |
+| `indexes` | List[Index] | None | 索引列表 |
+| `comment` | str | "" | 表注释 |
+
+#### Index 参数说明
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `name` | str | — | 索引名，DDL 生成 `CREATE INDEX name` |
+| `columns` | List[str] | — | 索引列，可多列如 `["col1", "col2"]` |
+| `unique` | bool | False | 唯一约束，DDL 生成 `UNIQUE INDEX` |
+
 ---
 
-## 第三章补充：字段自动推断 —— 类型注解即列定义
+### 3.3 字段定义：显式 Column 与自动推断
 
 > **v2.2.3+ 新增**：类型注解无需显式 `= Column(...)` 赋值，框架自动推断。
 
-### 对齐 Java JPA
+#### 对齐 Java JPA
 
 Java JPA 中，实体类的所有字段自动映射为数据库列，`@Column` 仅用于自定义属性。本框架 v2.2.3 起同样支持：**写了类型注解就是一列**，不需要每个字段都写 `= Column(...)`。
 
-### 推断规则
+#### 推断规则
 
 | 写法 | 自动创建 | 说明 |
 |------|----------|------|
@@ -559,7 +562,7 @@ Java JPA 中，实体类的所有字段自动映射为数据库列，`@Column` �
 | `name: str = CreateTime()` | 保留原 CreateTime | 不覆盖 |
 | `_xxx: dict = {}` | 跳过 | 以 `_` 开头的私有字段不持久化 |
 
-### 完整示例
+#### 完整示例
 
 ```python
 from spring.orm import Entity, Table, Column, Id, Index, CreateTime
@@ -588,7 +591,7 @@ class AdminUser:
     _cache: dict = {}                           # 不生成 DDL 列
 ```
 
-### 自动生成的构造器
+#### 自动生成的构造器
 
 框架扫描所有 `Column` 描述符，自动生成 `__init__`（若类未显式声明）：
 
@@ -614,7 +617,7 @@ print(admin.enabled)         # True（默认值）
 print(admin.last_login_at)   # None（无默认值）
 ```
 
-### 生成的 DDL（MySQL）
+#### 生成的 DDL（MySQL）
 
 ```sql
 CREATE TABLE welding_admin_users (
@@ -631,7 +634,7 @@ CREATE TABLE welding_admin_users (
 
 > **注意**：`_cache` 不在 DDL 中——以 `_` 开头的私有字段自动跳过。
 
-### 混合写法
+#### 混合写法
 
 自动推断与显式 `Column(...)` 可混用，显式描述符优先保留：
 
@@ -647,21 +650,35 @@ class MixedUser:
 # age      → BIGINT
 ```
 
+#### 传统写法（显式 __init__）
+
+v2.2.2 之前的写法仍然支持，适合不需要自动推断的场景：
+
+```python
+@entity("sys_user")
+class User:
+    def __init__(self, id: int = None, username: str = "", email: str = "", age: int = 0):
+        self.id = id          # 自动主键+自增
+        self.username = username
+        self.email = email
+        self.age = age        # 自动映射为 BIGINT
+```
+
 ---
 
-## 第三章补充：自动时间戳 —— `@CreateTime` / `@UpdateTime`
+### 3.4 自动时间戳：@CreateTime / @UpdateTime
 
-> 场景：每张表几乎都有 `created_at`（创建时间）和 `updated_at`（更新时间）。
+> 每张表几乎都有 `created_at`（创建时间）和 `updated_at`（更新时间）。
 > 手动每次插入、更新都写 `datetime.now()` 很烦，用这两个注解可以**自动填充**。
 
-### ① 是什么
+#### ① 是什么
 
 - `@CreateTime`：标记**创建时间**字段，**插入时**自动写入当前时间。
 - `@UpdateTime`：标记**更新时间**字段，**插入时**写入、**更新时**自动刷新为当前时间。
 
 对齐 JPA/Hibernate 的 `@CreationTimestamp` / `@UpdateTimestamp`。
 
-### ② 怎么用（两种写法任选一种）
+#### ② 怎么用（两种写法任选一种）
 
 ```python
 from spring.orm import entity, Id, CreateTime, UpdateTime, AuditTimeExecutor
@@ -693,7 +710,7 @@ class User:
     def utime(self): ...
 ```
 
-### ③ 自动建表也会适配
+#### ③ 自动建表也会适配
 
 框架生成的 DDL 会自动给这些列加**数据库默认值**，即使代码漏填，数据库也会兜底写入当前时间：
 
@@ -703,7 +720,7 @@ class User:
 | PostgreSQL | `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP` |
 | SQLite | `created_at TEXT DEFAULT (datetime('now','localtime'))` |
 
-### ④ 运行时自动填充（`AuditTimeExecutor`）
+#### ④ 运行时自动填充（AuditTimeExecutor）
 
 DDL 兜底只对"不填就插入"有效。若你的插入/更新 SQL 里**显式**写了这些列，可用执行器在调用前自动填好时间：
 
@@ -723,6 +740,19 @@ user_mapper.update(user)              # 执行 UPDATE
 - `fill_on_insert`：`created_at` 与 `updated_at` 都写入当前时间；若字段已有值则**保留**。
 - `fill_on_update`：只刷新 `updated_at`，`created_at` 保持不变。
 - 也可手动构造 `AuditTimeExecutor(now="2026-08-12 10:00:00")` 注入固定时间，用于测试。
+
+---
+
+### 3.5 类型映射表
+
+| Python 类型 | MySQL | PostgreSQL | SQLite |
+|------------|-------|------------|--------|
+| `int` | BIGINT AUTO_INCREMENT | BIGSERIAL | INTEGER PRIMARY KEY AUTOINCREMENT |
+| `str` | VARCHAR(255) | VARCHAR(255) | TEXT |
+| `float` | DOUBLE | DOUBLE PRECISION | REAL |
+| `bool` | TINYINT(1) | BOOLEAN | INTEGER |
+| `bytes` | BLOB | BYTEA | BLOB |
+| `datetime` | DATETIME | TIMESTAMP | TEXT |
 
 ---
 
@@ -901,9 +931,7 @@ finally:
 
 ---
 
-## 第〇章：新手常见错误
-
-> 刚学 ORM 最容易踩的坑都在这里了。
+## 常见错误
 
 ### 错误 1："ORM 就是不用写 SQL"
 
@@ -911,15 +939,11 @@ finally:
 
 ✅ **实际情况**：PyMyBatis 的 Mapper 注解就是让你写 SQL 的！它只帮你做参数绑定和结果映射。SQL 写错了，谁也救不了。**你不会写 SQL 就用不了 MyBatis。**
 
----
-
 ### 错误 2："SQL 里写 `${}` 和 `#{}` 都一样"
 
 ❌ **错误想法**：反正都是替换参数。
 
 ✅ **实际情况**：`#{name}` 是安全参数化，框架用 `?` 占位符替换，防 SQL 注入。`${name}` 是直接把字符串拼到 SQL 里，黑客可以在输入框里写恶意 SQL 偷走整张表。**永远优先用 `#{}`。**
-
----
 
 ### 错误 3："Mapper 方法里可以写代码逻辑"
 
@@ -927,15 +951,11 @@ finally:
 
 ✅ **实际情况**：Mapper 方法体必须保持 `pass`（或 `...`），运行时**框架会替换掉整个方法**。你在里面写的任何代码都不会被执行。业务逻辑写在 Service 层。
 
----
-
 ### 错误 4："连接池越大越快"
 
 ❌ **错误想法**：`max_size` 设大一点性能更好。
 
 ✅ **实际情况**：数据库能同时处理的连接是有限的，连接池太大反而浪费资源。一般 `max_size` 设 5~20 就够。多 worker 模式下，总连接数 = `workers × max_size`，比如 4 个 worker × `max_size: 5` = 20 个连接。
-
----
 
 ### 错误 5："`ddl-auto=update` 生产环境也能用"
 
@@ -943,23 +963,17 @@ finally:
 
 ✅ **实际情况**：生产环境应该用 `validate`（只检查不改）+ 手动迁移脚本，并且开启 `block_ddl: true`。自动改表结构在生产环境可能锁表、丢数据。
 
----
-
 ### 错误 6："分页就是用 LIMIT/OFFSET"
 
 ❌ **错误想法**：分页就是 SQL 里加 `LIMIT 20 OFFSET 1000`。
 
 ✅ **实际情况**：大偏移量时（翻到第 50 页），OFFSET 会让数据库扫描并丢弃前面所有行，非常慢。这时候用**游标分页**（`select_cursor`），每次基于上一页最后一条的 ID 往后取，不管多少页都一样快。
 
----
-
 ### 错误 7："`@Transactional` 放 Controller 上也能用"
 
 ❌ **错误想法**：事务注解放哪里都行。
 
 ✅ **实际情况**：`@Transactional` 应该放在 **Service 层**。Service 是事务边界的正确位置——一个业务操作可能涉及多个 Mapper 调用，它们应该在同一个事务里要么全成功、要么全失败。
-
----
 
 ### 错误 8："事务里捕获异常不抛出去"
 
@@ -989,56 +1003,54 @@ def do_something(self):
 
 ---
 
-## 常见 SQL 错误排查
+### SQL 错误排查
 
-### 错误 1：Mapper 找不到
+**错误 1：Mapper 找不到**
 
-**现象**：启动时报 `Mapper xxx 未注册` 或调用 Mapper 方法时返回 `None`。
+现象：启动时报 `Mapper xxx 未注册` 或调用 Mapper 方法时返回 `None`。
 
-**排查步骤**：
+排查步骤：
 1. 检查 `@MapperScan` 的 `base_packages` 路径是否正确
 2. 检查 Mapper 所在的目录有没有 `__init__.py` 文件
 3. 检查 Mapper 类上有没有 `@Mapper` 注解
 4. 检查 `application.yml` 中 `database.enabled` 是不是 `true`
 
-### 错误 2：SQL 参数未绑定
+**错误 2：SQL 参数未绑定**
 
-**现象**：执行时报 `找不到参数 xxx 的值`。
+现象：执行时报 `找不到参数 xxx 的值`。
 
-**排查步骤**：
+排查步骤：
 1. SQL 中的 `#{name}` 和方法参数名是否完全一致（区分大小写）
 2. 不要把 `self` 算成一个 SQL 参数
 3. 如果参数名和 `#{...}` 里的名字不一样，用 `Param` 做别名
 
-### 错误 3：SQLite 正常、MySQL 失败
+**错误 3：SQLite 正常、MySQL 失败**
 
-**现象**：开发时用 SQLite 一切正常，部署到 MySQL 就报错。
+现象：开发时用 SQLite 一切正常，部署到 MySQL 就报错。
 
-**原因**：SQLite 和 MySQL 的 SQL 语法、主键策略、数据类型都有差异。
+原因：SQLite 和 MySQL 的 SQL 语法、主键策略、数据类型都有差异。
 
-**解决**：在真实的 MySQL 上重新运行同一套测试。
+解决：在真实的 MySQL 上重新运行同一套测试。
 
-### 错误 4：XML 动态 SQL 不生效
+**错误 4：XML 动态 SQL 不生效**
 
-**现象**：`<if test="...">` 里的条件永远不成立。
+现象：`<if test="...">` 里的条件永远不成立。
 
-**排查**：
+排查：
 1. 检查 `test` 表达式里的变量名和方法参数名是否一致
 2. OGNL 里写 `null` 表示空，不是 Python 的 `None`
 3. `<where>` 会自动去掉第一个多余的 `AND`/`OR`
 
-### 错误 5：启动成功后访问接口报"数据库未连接"
+**错误 5：启动成功后访问接口报"数据库未连接"**
 
-**现象**：启动日志正常，但一调接口就报错。
+现象：启动日志正常，但一调接口就报错。
 
-**排查**：
+排查：
 1. 检查数据库文件路径（SQLite 相对路径以启动目录为准）
 2. 检查 MySQL/PostgreSQL 服务是否在运行
 3. 检查用户名密码和端口是否正确
 
----
-
-## 错误速查表
+### 错误速查表
 
 | 错误 | 原因 | 处理 |
 |------|------|------|
@@ -1069,7 +1081,18 @@ def do_something(self):
 | `Param` | "SQL 里的参数名和 Python 参数名不一样，对个账" | 方法参数类型标注里 |
 | `@MapperTransactional` | "这个 Mapper 里的操作要么全成功要么全失败" | Mapper 类或方法 |
 
-### 实体字段注解（DDL 自动建表）
+### 实体声明注解
+
+| 注解 | 一句话 | 放哪里 | 版本 |
+|------|--------|--------|------|
+| `@Entity` | "这是一个实体类"（可无括号） | 实体类上 | v2.2.2+ |
+| `@Table(name=..., indexes=[...], comment=...)` | "对应哪张表、索引、注释" | 实体类上 | v2.2.2+ |
+| `@entity("table_name", indexes=[...], comment=...)` | 一体化写法（完全兼容） | 实体类上 | 全版本 |
+| `@table("table_name", ...)` | `@entity` 别名 | 实体类上 | 全版本 |
+
+> 详细写法对照见 [3.2 实体声明](#32-实体声明entity--table)。
+
+### 实体字段注解
 
 | 注解 | 一句话 | 放哪里 |
 |------|--------|--------|
@@ -1080,41 +1103,7 @@ def do_something(self):
 | `UpdateTime` / `@update_time_column` | "更新时间，插入/更新时自动填充" | 实体字段 |
 | `Transient` / `@transient_field` | "这个字段不存数据库" | 实体字段 |
 
-### 实体声明注解
-
-| 注解 | 一句话 | 放哪里 | 版本 |
-|------|--------|--------|------|
-| `@Entity` | "这是一个实体类"（可无括号） | 实体类上 | v2.2.2+ |
-| `@Table(name=..., indexes=[...], comment=...)` | "对应哪张表、索引、注释" | 实体类上 | v2.2.2+ |
-| `@entity("table_name", indexes=[...], comment=...)` | 一体化写法（完全兼容） | 实体类上 | 全版本 |
-| `@table("table_name", ...)` | `@entity` 别名 | 实体类上 | 全版本 |
-
-### @Entity / @Table 参数
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `table_name` / `name` | str | "" | 表名，为空时自动用类名转下划线 |
-| `indexes` | List[Index] | None | 索引列表 |
-| `comment` | str | "" | 表注释 |
-
-### @Entity 三种写法对照
-
-| 写法 | 说明 | 对齐 Java |
-|------|------|-----------|
-| `@Entity` + `@Table(...)` | 分离风格（推荐） | `@Entity` + `@Table` |
-| `@Entity` 无括号 | 表名自动推导为 snake_case | `@Entity`（无 `@Table`） |
-| `@Entity("name", ...)` | 一体化风格（完全兼容） | 原有写法不变 |
-
-### 字段自动推断规则（v2.2.3+）
-
-| 写法 | 自动创建 | 说明 |
-|------|----------|------|
-| `name: str` | `Column()` | 无默认值，仅记录类型 |
-| `name: str = ""` | `Column(default="")` | 赋值即为默认值 |
-| `name: int = 0` | `Column(default=0)` | 同上 |
-| `name: str = Column(...)` | 保留原 Column | 不覆盖 |
-| `name: int = Id()` | 保留原 Id | 不覆盖 |
-| `_xxx: dict = {}` | 跳过 | 私有字段不持久化 |
+> 字段自动推断规则见 [3.3 字段定义](#33-字段定义显式-column-与自动推断)。
 
 ---
 
