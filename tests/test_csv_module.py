@@ -73,7 +73,7 @@ class TestAnnotations:
         assert getattr(Demo.secret, "__csv_ignore__", False) is True
 
     def test_csv_file_decorator_attaches_meta(self):
-        @csv_file("用户列表", delimiter=";", encoding="gbk")
+        @CsvFile("用户列表", delimiter=";", encoding="gbk")
         class Demo:
             pass
 
@@ -102,7 +102,7 @@ class TestAnnotations:
 
 class TestParseColumns:
     def test_explicit_properties_sorted_by_order(self):
-        @csv_file("demo")
+        @CsvFile("demo")
         class Demo:
             age = CsvProperty("年龄", order=3)
             id = CsvProperty("ID", order=1)
@@ -258,7 +258,7 @@ class TestConverters:
 
 class TestCsvReader:
     def test_read_with_header_match(self):
-        @csv_file("users")
+        @CsvFile("users")
         class User:
             id = CsvProperty("ID", order=1)
             name = CsvProperty("姓名", order=2)
@@ -273,7 +273,7 @@ class TestCsvReader:
         assert rows[1].id == 2 and rows[1].name == "Jerry"
 
     def test_read_no_header_position_match(self):
-        @csv_file("users", has_header=False)
+        @CsvFile("users", has_header=False)
         class User:
             id = CsvProperty(order=1)
             name = CsvProperty(order=2)
@@ -286,7 +286,7 @@ class TestCsvReader:
         assert rows[0].id == 1 and rows[1].name == "Jerry"
 
     def test_read_skips_empty_rows(self):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             id = CsvProperty("ID", order=1)
 
@@ -298,7 +298,7 @@ class TestCsvReader:
         assert [r.id for r in rows] == [1, 2]
 
     def test_read_custom_delimiter(self):
-        @csv_file("u", delimiter="|")
+        @CsvFile("u", delimiter="|")
         class U:
             id = CsvProperty("ID", order=1)
             name = CsvProperty("N", order=2)
@@ -311,7 +311,7 @@ class TestCsvReader:
         assert rows[0].id == 1 and rows[0].name == "Tom"
 
     def test_read_type_conversion_int_float_bool(self):
-        @csv_file("m")
+        @CsvFile("m")
         class M:
             id = CsvProperty("ID", order=1)
             score = CsvProperty("Score", order=2)
@@ -326,7 +326,7 @@ class TestCsvReader:
         assert rows[1].active is False
 
     def test_read_big_number_as_decimal(self):
-        @csv_file("m")
+        @CsvFile("m")
         class M:
             amount = CsvProperty("金额", order=1)
 
@@ -339,7 +339,7 @@ class TestCsvReader:
         assert rows[0].amount == Decimal(big)
 
     def test_read_date_format(self):
-        @csv_file("m")
+        @CsvFile("m")
         class M:
             ts = CsvProperty("时间", order=1, date_format="%Y-%m-%d")
 
@@ -358,7 +358,7 @@ class TestCsvReader:
             def from_excel(self, cell_value):
                 return str(cell_value).split(";") if cell_value else []
 
-        @csv_file("m")
+        @CsvFile("m")
         class M:
             tags = CsvProperty("Tags", order=1, converter=TagsConverter())
 
@@ -374,7 +374,7 @@ class TestCsvReader:
             EasyCsv.read(io.StringIO("x\n")).doRead()
 
     def test_read_from_file_path(self, tmp_path):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             id = CsvProperty("ID", order=1)
 
@@ -387,7 +387,7 @@ class TestCsvReader:
         assert [r.id for r in rows] == [1, 2]
 
     def test_read_conversion_error(self):
-        @csv_file("m")
+        @CsvFile("m")
         class M:
             id = CsvProperty("ID", order=1)
 
@@ -402,7 +402,7 @@ class TestCsvReader:
             def from_excel(self, cell_value):
                 return int(str(cell_value).strip())
 
-        @csv_file("m2")
+        @CsvFile("m2")
         class M2:
             id = CsvProperty("ID", order=1, converter=StrictInt())
 
@@ -418,7 +418,7 @@ class TestCsvReader:
 
 class TestCsvWriter:
     def test_write_with_header_and_order(self):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             age = CsvProperty("年龄", order=3)
             id = CsvProperty("ID", order=1)
@@ -439,7 +439,7 @@ class TestCsvWriter:
         assert lines[2] == "2,Jerry,20"
 
     def test_write_no_header(self):
-        @csv_file("u", has_header=False)
+        @CsvFile("u", has_header=False)
         class U:
             id = CsvProperty(order=1)
             name = CsvProperty(order=2)
@@ -453,7 +453,7 @@ class TestCsvWriter:
         assert out.strip() == "1,Tom"
 
     def test_write_big_number_preserved(self):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             uid = CsvProperty("UID", order=1, big_number=True)
 
@@ -467,7 +467,7 @@ class TestCsvWriter:
         assert str(big) in out  # 原样字符串，未被科学计数/截断
 
     def test_write_date_format(self):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             ts = CsvProperty("时间", order=1, date_format="%Y-%m-%d")
 
@@ -479,7 +479,7 @@ class TestCsvWriter:
         assert "2026-08-09" in buf.getvalue()
 
     def test_write_dict_data(self):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             id = CsvProperty("ID", order=1)
             name = CsvProperty("姓名", order=2)
@@ -492,7 +492,7 @@ class TestCsvWriter:
         assert "1,Tom" in buf.getvalue()
 
     def test_write_custom_delimiter(self):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             id = CsvProperty("ID", order=1)
             name = CsvProperty("姓名", order=2)
@@ -507,7 +507,7 @@ class TestCsvWriter:
         assert "1;Tom" in out
 
     def test_write_none_and_bool(self):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             id = CsvProperty("ID", order=1)
             active = CsvProperty("Active", order=2)
@@ -526,7 +526,7 @@ class TestCsvWriter:
             EasyCsv.write(io.StringIO()).doWrite([{"a": 1}])
 
     def test_write_to_file_path(self, tmp_path):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             id = CsvProperty("ID", order=1)
 
@@ -543,7 +543,7 @@ class TestCsvWriter:
 
 class TestRoundTrip:
     def test_round_trip_full(self, tmp_path):
-        @csv_file("users", delimiter=",")
+        @CsvFile("users", delimiter=",")
         class User:
             id = CsvProperty("ID", order=1)
             name = CsvProperty("姓名", order=2)
@@ -575,7 +575,7 @@ class TestRoundTrip:
         assert back[0].remark is None
 
     def test_round_trip_no_header_position(self, tmp_path):
-        @csv_file("u", has_header=False)
+        @CsvFile("u", has_header=False)
         class U:
             a = CsvProperty(order=1, index=0)
             b = CsvProperty(order=2, index=1)
@@ -591,7 +591,7 @@ class TestRoundTrip:
         assert back[1].a == 2 and back[1].b == "y"
 
     def test_easycsv_fluent_chain_read(self):
-        @csv_file("u")
+        @CsvFile("u")
         class U:
             id = CsvProperty("ID", order=1)
 
@@ -605,3 +605,315 @@ class TestRoundTrip:
                 .encoding("utf-8")
                 .doRead())
         assert rows[0].id == 1
+
+
+# ==================== ORM 风格类型注解（对齐 @entity） ====================
+
+class TestOrmStyleAnnotations:
+    """ORM 风格：类型注解字段自动建列 + @csv_file 自动生成 __init__。"""
+
+    def test_auto_init_generated(self):
+        """@csv_file 自动生成 __init__，无需手写。"""
+        @CsvFile("测试")
+        class Demo:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+            age: int = 0
+
+        obj = Demo(id=1, name="张三", age=28)
+        assert obj.id == 1
+        assert obj.name == "张三"
+        assert obj.age == 28
+
+    def test_auto_init_default_values(self):
+        """未传参时使用类型注解声明的默认值。"""
+        @CsvFile("测试")
+        class Demo:
+            name: str = "默认名"
+            age: int = 18
+            score: float = 0.0
+
+        obj = Demo()
+        assert obj.name == "默认名"
+        assert obj.age == 18
+        assert obj.score == 0.0
+
+    def test_auto_init_rejects_unknown_fields(self):
+        """自动生成的 __init__ 拒绝未知字段。"""
+        @CsvFile("测试")
+        class Demo:
+            name: str = ""
+
+        with pytest.raises(TypeError, match="Unexpected field"):
+            Demo(unknown_field=1)
+
+    def test_existing_init_preserved(self):
+        """类已有 __init__ 时不被覆盖。"""
+        @CsvFile("测试")
+        class Demo:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+
+            def __init__(self, custom_id=None):
+                self.id = custom_id
+                self.name = "固定值"
+
+        obj = Demo(custom_id=99)
+        assert obj.id == 99
+        assert obj.name == "固定值"
+        with pytest.raises(TypeError):
+            Demo(id=1)
+
+    def test_auto_columns_from_annotations(self):
+        """类型注解字段自动建列（无 CsvProperty 也自动映射）。"""
+        @CsvFile("测试")
+        class Demo:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""          # 自动建列
+            age: int = 0            # 自动建列
+            score: float = 0.0      # 自动建列
+
+        cols = parse_csv_columns(Demo)
+        attr_names = [c.attr_name for c in cols]
+        assert attr_names == ["id", "name", "age", "score"]
+
+        headers = [c.header for c in cols]
+        assert headers == ["ID", "Name", "Age", "Score"]
+
+    def test_type_inference_from_annotations(self):
+        """类级类型注解用于转换器自动选择（无 __init__ 时也能推断类型）。"""
+        @CsvFile("测试")
+        class Demo:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+            age: int = 0
+            score: float = 0.0
+            active: bool = True
+
+        cols = parse_csv_columns(Demo)
+        col_map = {c.attr_name: c for c in cols}
+        assert col_map["id"].py_type is int
+        assert col_map["name"].py_type is str
+        assert col_map["age"].py_type is int
+        assert col_map["score"].py_type is float
+        assert col_map["active"].py_type is bool
+
+    def test_ignore_field_in_orm_style(self):
+        """ORM 风格类中 CsvIgnore 字段被跳过。"""
+        @CsvFile("测试")
+        class Demo:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+            remark = CsvIgnore()
+
+        cols = parse_csv_columns(Demo)
+        attr_names = [c.attr_name for c in cols]
+        assert "remark" not in attr_names
+        assert attr_names == ["id", "name"]
+
+    def test_private_field_skipped(self):
+        """以 _ 开头的私有字段不参与导出。"""
+        @CsvFile("测试")
+        class Demo:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+            _cache: dict = {}
+
+        cols = parse_csv_columns(Demo)
+        assert all(not c.attr_name.startswith("_") for c in cols)
+        assert {c.attr_name for c in cols} == {"id", "name"}
+
+    def test_round_trip_orm_style(self, tmp_path):
+        """ORM 风格类的写入 + 读取 round-trip。"""
+        @CsvFile("用户列表")
+        class User:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+            age: int = 0
+            score: float = 0.0
+
+        data = [
+            User(id=1, name="张三", age=28, score=95.5),
+            User(id=2, name="李四", age=35, score=80.0),
+        ]
+        f = tmp_path / "orm_rt.csv"
+        write_csv(str(f), User, data)
+        rows = read_csv(str(f), User)
+
+        assert len(rows) == 2
+        assert rows[0].id == 1
+        assert rows[0].name == "张三"
+        assert rows[0].age == 28
+        assert rows[0].score == 95.5
+        assert rows[1].name == "李四"
+        assert rows[1].score == 80.0
+
+    def test_round_trip_with_ignore(self, tmp_path):
+        """ORM 风格 + CsvIgnore 的 round-trip（忽略字段不导出）。"""
+        @CsvFile("用户")
+        class User:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+            secret = CsvIgnore()
+
+        data = [
+            User(id=1, name="张三", secret="机密"),
+            User(id=2, name="李四", secret="秘密"),
+        ]
+        f = tmp_path / "orm_ignore.csv"
+        write_csv(str(f), User, data)
+        rows = read_csv(str(f), User)
+
+        assert len(rows) == 2
+        assert rows[0].id == 1
+        assert rows[0].name == "张三"
+        # secret 不在导出列中，读回为默认值 None
+        assert rows[0].secret is None
+
+    def test_no_init_no_decorator_still_works(self):
+        """无 @csv_file、无 __init__ 的纯注解类也能解析。"""
+        class Demo:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+
+        cols = parse_csv_columns(Demo)
+        assert {c.attr_name for c in cols} == {"id", "name"}
+        assert cols[0].py_type is int
+        assert cols[1].py_type is str
+
+    def test_inheritance_orm_style(self):
+        """ORM 风格支持继承（子类注解 + 父类注解合并）。"""
+        @CsvFile("基类")
+        class Base:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+
+        @CsvFile("子类")
+        class Child(Base):
+            age: int = 0
+            extra: str = "默认"
+
+        cols = parse_csv_columns(Child)
+        attr_names = [c.attr_name for c in cols]
+        assert "id" in attr_names
+        assert "name" in attr_names
+        assert "age" in attr_names
+        assert "extra" in attr_names
+
+    def test_backward_compat_csv_file_alias(self):
+        """旧名 @csv_file 仍可用（向后兼容别名）。"""
+        @csv_file("兼容测试")
+        class Demo:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
+
+        obj = Demo(id=1, name="x")
+        assert obj.id == 1
+        assert obj.name == "x"
+        meta = Demo.__csv_file__
+        assert isinstance(meta, CsvFile)
+        assert meta.file_name == "兼容测试"
+
+
+# ==================== 组合式注解（@Entity + @ExcelSheet + @CsvFile） ====================
+
+class TestCompositionalAnnotations:
+    """组合式：同一类上同时使用 ORM + Excel + CSV 注解。"""
+
+    def test_descriptors_not_replaced_by_orm(self):
+        """ORM _auto_infer_columns 不覆盖 CsvProperty/ExcelProperty 描述符。"""
+        from spring.orm import Entity, Id, Column
+
+        @Entity("users")
+        @CsvFile("users.csv")
+        class Demo:
+            id: int = Id()
+            name: str = Column("name", default="")
+            phone: str = CsvProperty("手机")
+
+        # CsvProperty 描述符未被替换为 Column
+        assert isinstance(Demo.__dict__["phone"], CsvProperty)
+        assert Demo.__dict__["phone"].value == "手机"
+        # Column 描述符保留
+        assert isinstance(Demo.__dict__["name"], Column)
+        # Id 描述符保留
+        assert type(Demo.__dict__["id"]).__name__ == "Id"
+
+    def test_auto_init_with_foreign_descriptors(self):
+        """组合式自动 __init__ 正确处理跨模块描述符的默认值。"""
+        from spring.orm import Entity, Id, Column
+        from spring.excel import ExcelSheet, ExcelProperty
+
+        @Entity("users")
+        @ExcelSheet("用户列表")
+        @CsvFile("users.csv")
+        class User:
+            id: int = Id()
+            name: str = Column("name", default="默认名")
+            age: int = 0
+            email: str = ExcelProperty("邮箱")
+            phone: str = CsvProperty("手机")
+
+        u = User()
+        assert u.id is None
+        assert u.name == "默认名"
+        assert u.age == 0
+        assert u.email is None
+        assert u.phone is None
+
+    def test_all_fields_in_csv(self):
+        """组合式类所有字段都出现在 CSV 列中。"""
+        from spring.orm import Entity, Id, Column
+        from spring.excel import ExcelSheet, ExcelProperty
+
+        @Entity("users")
+        @ExcelSheet("用户列表")
+        @CsvFile("users.csv")
+        class User:
+            id: int = Id()
+            name: str = Column("name")
+            age: int = 0
+            email: str = ExcelProperty("邮箱")
+            phone: str = CsvProperty("手机")
+
+        cols = parse_csv_columns(User)
+        attr_names = {c.attr_name for c in cols}
+        assert attr_names == {"id", "name", "age", "email", "phone"}
+
+        col_map = {c.attr_name: c for c in cols}
+        # phone 保留 CsvProperty 的表头
+        assert col_map["phone"].header == "手机"
+        # email 自动建列，表头按字段名
+        assert col_map["email"].header == "Email"
+
+    def test_csv_round_trip_compositional(self, tmp_path):
+        """组合式类的 CSV 写入 + 读取 round-trip。"""
+        from spring.orm import Entity, Id, Column
+        from spring.excel import ExcelSheet, ExcelProperty
+
+        @Entity("users")
+        @ExcelSheet("用户列表")
+        @CsvFile("users.csv")
+        class User:
+            id: int = Id()
+            name: str = Column("name", default="")
+            age: int = 0
+            email: str = ExcelProperty("邮箱")
+            phone: str = CsvProperty("手机")
+
+        data = [
+            User(id=1, name="张三", age=28, email="a@b.com", phone="138"),
+            User(id=2, name="李四", age=35, email="c@d.com", phone="139"),
+        ]
+        f = tmp_path / "comp.csv"
+        write_csv(str(f), User, data)
+        rows = read_csv(str(f), User)
+
+        assert len(rows) == 2
+        assert rows[0].id == 1
+        assert rows[0].name == "张三"
+        assert rows[0].age == 28
+        assert rows[0].email == "a@b.com"
+        assert rows[0].phone == "138"
+        assert rows[1].name == "李四"
+        assert rows[1].email == "c@d.com"

@@ -28,7 +28,7 @@ from spring.excel.annotations import (
 
 # ==================== 测试用实体 ====================
 
-@excel_sheet("用户列表", head_row_number=1)
+@ExcelSheet("用户列表", head_row_number=1)
 class DemoUser:
     id = ExcelProperty("ID", order=1, big_number=True)
     name = ExcelProperty("姓名", order=2, width=12)
@@ -209,7 +209,7 @@ class TestConverters:
             def from_excel(self, cell_value):
                 return str(cell_value).lower() if cell_value else cell_value
 
-        @excel_sheet("s")
+        @ExcelSheet("s")
         class C:
             name = ExcelProperty("名", order=1, converter=UpperConverter)
             def __init__(self, name=None):
@@ -359,7 +359,7 @@ class TestConfigAndDegrade:
         ws.append(["ann", "30", "1.5"])
         wb.save(str(f)); wb.close()
 
-        @excel_sheet(head_row_number=2)
+        @ExcelSheet(head_row_number=2)
         class C:
             name = ExcelProperty("姓名", order=1)
             age = ExcelProperty("年龄", order=2)
@@ -415,7 +415,7 @@ class TestConfigAndDegrade:
             return real_import(name, *args, **kwargs)
         monkeypatch.setattr(builtins, "__import__", fake_import)
 
-        @excel_sheet("ok")
+        @ExcelSheet("ok")
         class NoDep:
             name = ExcelProperty("姓名", order=1)
             def __init__(self, name=None):
@@ -440,7 +440,7 @@ class TestStyleAndFormat:
         wb.close()
 
     def test_num_format_applied(self, tmp_path):
-        @excel_sheet("s")
+        @ExcelSheet("s")
         class C:
             price = ExcelProperty("价格", order=1, num_format="#,##0.00")
             def __init__(self, price=None):
@@ -466,3 +466,330 @@ class TestStyleAndFormat:
         col_letter = ws.cell(row=1, column=2).column_letter
         assert ws.column_dimensions[col_letter].width == 12.0
         wb.close()
+
+
+# ==================== ORM 风格类型注解（对齐 @entity） ====================
+
+class TestOrmStyleAnnotations:
+    """ORM 风格：类型注解字段自动建列 + @excel_sheet 自动生成 __init__。"""
+
+    def test_auto_init_generated(self):
+        """@excel_sheet 自动生成 __init__，无需手写。"""
+        @ExcelSheet("测试")
+        class Demo:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
+            age: int = 0
+
+        obj = Demo(id=1, name="张三", age=28)
+        assert obj.id == 1
+        assert obj.name == "张三"
+        assert obj.age == 28
+
+    def test_auto_init_default_values(self):
+        """未传参时使用类型注解声明的默认值。"""
+        @ExcelSheet("测试")
+        class Demo:
+            name: str = "默认名"
+            age: int = 18
+            score: float = 0.0
+
+        obj = Demo()
+        assert obj.name == "默认名"
+        assert obj.age == 18
+        assert obj.score == 0.0
+
+    def test_auto_init_rejects_unknown_fields(self):
+        """自动生成的 __init__ 拒绝未知字段。"""
+        @ExcelSheet("测试")
+        class Demo:
+            name: str = ""
+
+        with pytest.raises(TypeError, match="Unexpected field"):
+            Demo(unknown_field=1)
+
+    def test_existing_init_preserved(self):
+        """类已有 __init__ 时不被覆盖。"""
+        @ExcelSheet("测试")
+        class Demo:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
+
+            def __init__(self, custom_id=None):
+                self.id = custom_id
+                self.name = "固定值"
+
+        obj = Demo(custom_id=99)
+        assert obj.id == 99
+        assert obj.name == "固定值"
+        # 不支持关键字 id=（因为 __init__ 参数是 custom_id）
+        with pytest.raises(TypeError):
+            Demo(id=1)
+
+    def test_auto_columns_from_annotations(self):
+        """类型注解字段自动建列（无 ExcelProperty 也自动映射）。"""
+        @ExcelSheet("测试")
+        class Demo:
+            id: int = ExcelProperty("工号", order=1)
+            name: str = ""          # 自动建列
+            age: int = 0            # 自动建列
+            salary: float = 0.0     # 自动建列
+
+        cols = parse_excel_columns(Demo)
+        attr_names = [c.attr_name for c in cols]
+        assert attr_names == ["id", "name", "age", "salary"]
+
+        # id 有显式表头，其余按字段名生成
+        headers = [c.header for c in cols]
+        assert headers == ["工号", "Name", "Age", "Salary"]
+
+    def test_type_inference_from_annotations(self):
+        """类级类型注解用于转换器自动选择（无 __init__ 时也能推断类型）。"""
+        @ExcelSheet("测试")
+        class Demo:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
+            age: int = 0
+            score: float = 0.0
+            active: bool = True
+
+        cols = parse_excel_columns(Demo)
+        col_map = {c.attr_name: c for c in cols}
+        assert col_map["id"].py_type is int
+        assert col_map["name"].py_type is str
+        assert col_map["age"].py_type is int
+        assert col_map["score"].py_type is float
+        assert col_map["active"].py_type is bool
+
+    def test_ignore_field_in_orm_style(self):
+        """ORM 风格类中 ExcelIgnore 字段被跳过。"""
+        @ExcelSheet("测试")
+        class Demo:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
+            remark = ExcelIgnore()      # 跳过
+
+        cols = parse_excel_columns(Demo)
+        attr_names = [c.attr_name for c in cols]
+        assert "remark" not in attr_names
+        assert attr_names == ["id", "name"]
+
+    def test_private_field_skipped(self):
+        """以 _ 开头的私有字段不参与导出。"""
+        @ExcelSheet("测试")
+        class Demo:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
+            _cache: dict = {}           # 私有，跳过
+
+        cols = parse_excel_columns(Demo)
+        assert all(not c.attr_name.startswith("_") for c in cols)
+        assert {c.attr_name for c in cols} == {"id", "name"}
+
+    def test_mixed_explicit_and_auto_order(self):
+        """显式 ExcelProperty 有 order，自动列按声明顺序排列。"""
+        @ExcelSheet("测试")
+        class Demo:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""          # 自动列，order 回退为声明顺序
+            age: int = 0
+
+        cols = parse_excel_columns(Demo)
+        # id: order=1(显式), name: order=decl_order=1(回退), age: order=decl_order=2(回退)
+        # 排序：index(None→inf) → order → decl_order
+        # id(1,decl=0) < name(1,decl=1) < age(2,decl=2)
+        assert [c.attr_name for c in cols] == ["id", "name", "age"]
+
+    def test_round_trip_orm_style(self, tmp_path):
+        """ORM 风格类的写入 + 读取 round-trip。"""
+        @ExcelSheet("员工列表")
+        class Employee:
+            id: int = ExcelProperty("工号", order=1, big_number=True)
+            name: str = ""
+            age: int = 0
+            salary: float = 0.0
+
+        data = [
+            Employee(id=1, name="张三", age=28, salary=9999.5),
+            Employee(id=2, name="李四", age=35, salary=12345.0),
+        ]
+        f = tmp_path / "orm_rt.xlsx"
+        EasyExcel.write(str(f), head=Employee).sheet("员工列表").doWrite(data)
+        rows = EasyExcel.read(str(f), head=Employee).doRead()
+
+        assert len(rows) == 2
+        assert rows[0].name == "张三"
+        assert rows[0].age == 28
+        assert rows[0].salary == 9999.5
+        assert rows[1].name == "李四"
+        assert rows[1].salary == 12345.0
+
+    def test_round_trip_with_ignore(self, tmp_path):
+        """ORM 风格 + ExcelIgnore 的 round-trip（忽略字段不导出）。"""
+        @ExcelSheet("员工")
+        class Employee:
+            id: int = ExcelProperty("工号", order=1)
+            name: str = ""
+            internal_note = ExcelIgnore()
+
+        data = [
+            Employee(id=1, name="张三", internal_note="机密"),
+            Employee(id=2, name="李四", internal_note="秘密"),
+        ]
+        f = tmp_path / "orm_ignore.xlsx"
+        write_excel(str(f), Employee, data)
+        rows = read_excel(str(f), Employee)
+
+        assert len(rows) == 2
+        assert rows[0].id == 1
+        assert rows[0].name == "张三"
+        # internal_note 不在导出列中，读回为默认值 None
+        assert rows[0].internal_note is None
+
+    def test_no_init_no_decorator_still_works(self, tmp_path):
+        """无 @excel_sheet、无 __init__ 的纯注解类也能解析（reader 用 object.__new__ 回退）。"""
+        class Demo:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
+
+        cols = parse_excel_columns(Demo)
+        assert {c.attr_name for c in cols} == {"id", "name"}
+        assert cols[0].py_type is int
+        assert cols[1].py_type is str
+
+    def test_inheritance_orm_style(self):
+        """ORM 风格支持继承（子类注解 + 父类注解合并）。"""
+        @ExcelSheet("基类")
+        class Base:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
+
+        @ExcelSheet("子类")
+        class Child(Base):
+            age: int = 0
+            extra: str = "默认"
+
+        cols = parse_excel_columns(Child)
+        attr_names = [c.attr_name for c in cols]
+        assert "id" in attr_names
+        assert "name" in attr_names
+        assert "age" in attr_names
+        assert "extra" in attr_names
+
+    def test_backward_compat_excel_sheet_alias(self):
+        """旧名 @excel_sheet 仍可用（向后兼容别名）。"""
+        @excel_sheet("兼容测试")
+        class Demo:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
+
+        obj = Demo(id=1, name="x")
+        assert obj.id == 1
+        assert obj.name == "x"
+        meta = Demo.__excel_sheet__
+        assert isinstance(meta, ExcelSheet)
+        assert meta.sheet_name == "兼容测试"
+
+
+# ==================== 组合式注解（@Entity + @ExcelSheet + @CsvFile） ====================
+
+class TestCompositionalAnnotations:
+    """组合式：同一类上同时使用 ORM + Excel + CSV 注解。"""
+
+    def test_descriptors_not_replaced_by_orm(self):
+        """ORM _auto_infer_columns 不覆盖 ExcelProperty/CsvProperty 描述符。"""
+        from spring.orm import Entity, Id, Column
+
+        @Entity("users")
+        @ExcelSheet("用户列表")
+        class Demo:
+            id: int = Id()
+            name: str = Column("name", default="")
+            email: str = ExcelProperty("邮箱")
+
+        # ExcelProperty 描述符未被替换为 Column
+        assert isinstance(Demo.__dict__["email"], ExcelProperty)
+        assert Demo.__dict__["email"].value == "邮箱"
+        # Column 描述符保留
+        assert isinstance(Demo.__dict__["name"], Column)
+        # Id 描述符保留
+        assert type(Demo.__dict__["id"]).__name__ == "Id"
+
+    def test_auto_init_with_foreign_descriptors(self):
+        """组合式自动 __init__ 正确处理跨模块描述符的默认值。"""
+        from spring.orm import Entity, Id, Column
+        from spring.csv import CsvFile, CsvProperty
+
+        @Entity("users")
+        @ExcelSheet("用户列表")
+        @CsvFile("users.csv")
+        class User:
+            id: int = Id()
+            name: str = Column("name", default="默认名")
+            age: int = 0
+            email: str = ExcelProperty("邮箱")
+            phone: str = CsvProperty("手机")
+
+        u = User()
+        assert u.id is None        # Id 的 default 属性为 None
+        assert u.name == "默认名"   # Column 的 default 属性
+        assert u.age == 0          # 普通默认值
+        assert u.email is None     # ExcelProperty 无 default → None
+        assert u.phone is None     # CsvProperty 无 default → None
+
+    def test_all_fields_in_excel(self):
+        """组合式类所有字段都出现在 Excel 列中。"""
+        from spring.orm import Entity, Id, Column
+        from spring.csv import CsvFile, CsvProperty
+
+        @Entity("users")
+        @ExcelSheet("用户列表")
+        @CsvFile("users.csv")
+        class User:
+            id: int = Id()
+            name: str = Column("name")
+            age: int = 0
+            email: str = ExcelProperty("邮箱")
+            phone: str = CsvProperty("手机")
+
+        cols = parse_excel_columns(User)
+        attr_names = {c.attr_name for c in cols}
+        assert attr_names == {"id", "name", "age", "email", "phone"}
+
+        # email 保留 ExcelProperty 的表头
+        col_map = {c.attr_name: c for c in cols}
+        assert col_map["email"].header == "邮箱"
+        # phone 自动建列，表头按字段名
+        assert col_map["phone"].header == "Phone"
+
+    def test_excel_round_trip_compositional(self, tmp_path):
+        """组合式类的 Excel 写入 + 读取 round-trip。"""
+        from spring.orm import Entity, Id, Column
+        from spring.csv import CsvFile, CsvProperty
+
+        @Entity("users")
+        @ExcelSheet("用户列表")
+        @CsvFile("users.csv")
+        class User:
+            id: int = Id()
+            name: str = Column("name", default="")
+            age: int = 0
+            email: str = ExcelProperty("邮箱")
+            phone: str = CsvProperty("手机")
+
+        data = [
+            User(id=1, name="张三", age=28, email="a@b.com", phone="138"),
+            User(id=2, name="李四", age=35, email="c@d.com", phone="139"),
+        ]
+        f = tmp_path / "comp.xlsx"
+        EasyExcel.write(str(f), head=User).sheet("用户列表").doWrite(data)
+        rows = EasyExcel.read(str(f), head=User).doRead()
+
+        assert len(rows) == 2
+        assert rows[0].id == 1
+        assert rows[0].name == "张三"
+        assert rows[0].age == 28
+        assert rows[0].email == "a@b.com"
+        assert rows[0].phone == "138"
+        assert rows[1].name == "李四"
+        assert rows[1].email == "c@d.com"

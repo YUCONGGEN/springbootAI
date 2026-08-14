@@ -36,9 +36,13 @@ def _collect_constraints(cls: Type) -> Dict[str, List[Constraint]]:
 
     镜像 ORM ``_parse_entity`` 与 Excel ``parse_excel_columns`` 的 MRO 遍历：
     自底向上（``reversed(cls.__mro__)``），子类约束覆盖父类同名字段。
-    支持两种声明形式：
+    支持四种声明形式：
       1. 类属性 ``Constraint`` 描述符（如 ``name = NotBlank()``）。
       2. 函数上的 ``__bean_constraint__`` 列表（``@NotBlank() def name(self): ...``）。
+      3. 描述符内联 ``constraints`` 属性（组合式）：如 ``Column(constraints=[NotBlank()])``、
+         ``ExcelProperty(constraints=[NotBlank()])``、``CsvProperty(constraints=[NotBlank()])``。
+      4. 函数上通过 ``@column`` / ``@ExcelProperty`` / ``@CsvProperty`` 装饰器挂载的描述符
+         本身所带的 ``constraints`` 列表（形式 2 + 形式 3 叠加）。
     """
     collected: Dict[str, List[Constraint]] = {}
 
@@ -54,14 +58,34 @@ def _collect_constraints(cls: Type) -> Dict[str, List[Constraint]]:
                 if not value.attr_name:
                     value.attr_name = attr_name
                 constraints.append(value)
-            # 形式2：函数装饰器上的 __bean_constraint__ 列表
-            elif hasattr(value, "__bean_constraint__"):
+            # 形式3：类属性是外模块描述符（Column/ExcelProperty/CsvProperty/Id/...），
+            #        通过 constraints=[] 参数内联约束
+            elif hasattr(value, "constraints") and isinstance(getattr(value, "constraints", None), list):
+                for c in value.constraints:
+                    if isinstance(c, Constraint):
+                        if not c.attr_name:
+                            c.attr_name = attr_name
+                        constraints.append(c)
+            # 形式2+4：函数装饰器
+            if hasattr(value, "__bean_constraint__"):
                 clist = getattr(value, "__bean_constraint__")
                 if isinstance(clist, list):
                     for c in clist:
                         if isinstance(c, Constraint) and not c.attr_name:
                             c.attr_name = attr_name
                         constraints.append(c)
+            # 形式4补充：函数装饰器形式的 @column/@ExcelProperty/@CsvProperty
+            # 把描述符挂在 __column__/__excel_property__/__csv_property__ 上
+            for tag in ("__column__", "__excel_property__", "__csv_property__"):
+                if hasattr(value, tag):
+                    desc = getattr(value, tag)
+                    desc_constraints = getattr(desc, "constraints", None)
+                    if isinstance(desc_constraints, list):
+                        for c in desc_constraints:
+                            if isinstance(c, Constraint):
+                                if not c.attr_name:
+                                    c.attr_name = attr_name
+                                constraints.append(c)
             if constraints:
                 # 子类覆盖父类同名字段（与 ORM/Excel 解析一致）
                 collected[attr_name] = constraints

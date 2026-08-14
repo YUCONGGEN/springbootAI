@@ -53,6 +53,8 @@ class ExcelProperty:
         head_style:   自定义表头样式名（见 style 模块）。默认 None（用默认表头样式）。
         content_style:自定义内容样式名。默认 None。
         ignore:       内部等价 @ExcelIgnore 的快捷开关。默认 False。
+        constraints:  **组合式**：Bean Validation 约束列表（``NotBlank`` / ``Size`` 等），
+                      同一字段同时具备 Excel 列映射 + 参数校验能力。
     """
 
     def __init__(
@@ -69,6 +71,7 @@ class ExcelProperty:
         head_style: Optional[str] = None,
         content_style: Optional[str] = None,
         ignore: bool = False,
+        constraints: list = None,
     ):
         self.value = value
         self.order = order
@@ -82,6 +85,8 @@ class ExcelProperty:
         self.head_style = head_style
         self.content_style = content_style
         self.ignore = ignore
+        # Bean Validation 约束列表（组合式注解通道）
+        self.constraints = constraints or []
         # 反射时回填
         self.attr_name: str = ""
 
@@ -130,7 +135,14 @@ class ExcelIgnore:
 # ==================== 类级注解 ====================
 
 class ExcelSheet:
-    """类级注解元数据：Excel 工作表配置（镜像 ORM ``Table``）。
+    """类级注解元数据 + 装饰器：Excel 工作表配置（镜像 ORM ``Table``）。
+
+    既可作为元数据类使用，也可直接作为类装饰器使用（镜像 ORM ``Table.__call__``）::
+
+        @ExcelSheet("用户列表", head_row_number=1)
+        class DemoData:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""
 
     属性说明（对齐 EasyExcel ``@ExcelProperty`` + sheet 配置）：
         sheet_name:      工作表名称。为空时用 "Sheet1"（写）或按索引读（读）。
@@ -157,6 +169,15 @@ class ExcelSheet:
         self.head_style = head_style
         self.content_style = content_style
 
+    def __call__(self, cls: type) -> type:
+        """装饰器形式：``@ExcelSheet("用户列表")``，将元数据挂载到类上。
+
+        镜像 ORM ``Table.__call__``：设置 ``__excel_sheet__`` 并自动生成 ``__init__``。
+        """
+        setattr(cls, "__excel_sheet__", self)
+        _auto_generate_init(cls)
+        return cls
+
 
 def excel_sheet(
     sheet_name: str = "",
@@ -165,10 +186,10 @@ def excel_sheet(
     auto_width: bool = True,
     head_style: Optional[str] = None,
     content_style: Optional[str] = None,
-) -> Callable[[type], type]:
-    """类级装饰器：标注实体类对应的 Excel 工作表配置（镜像 ORM ``@entity``）。
+) -> ExcelSheet:
+    """向后兼容别名，等价于 ``ExcelSheet(...)``。
 
-    用法::
+    用法（与 ``@ExcelSheet`` 完全等价）::
 
         @excel_sheet("用户列表", head_row_number=1)
         class DemoData:
@@ -177,7 +198,7 @@ def excel_sheet(
 
     不使用本装饰器时，读写引擎使用默认配置（sheet_name="Sheet1"，head_row_number=1）。
     """
-    meta = ExcelSheet(
+    return ExcelSheet(
         sheet_name=sheet_name,
         head_row_number=head_row_number,
         freeze_head=freeze_head,
@@ -186,11 +207,78 @@ def excel_sheet(
         content_style=content_style,
     )
 
-    def decorator(cls: type) -> type:
-        setattr(cls, "__excel_sheet__", meta)
-        return cls
 
-    return decorator
+# ==================== ORM 风格自动生成 __init__ ====================
+
+def _auto_generate_init(cls: type) -> None:
+    """为 ORM 风格实体类自动生成 ``__init__``（若类未显式声明）。
+
+    镜像 ORM ``_auto_generate_init``，扫描类级类型注解字段 + ``ExcelProperty`` 描述符，
+    生成关键字构造器。若类已显式声明 ``__init__`` 则跳过，保持兼容。
+
+    用法（``@excel_sheet`` 装饰器自动调用）::
+
+        @excel_sheet("用户列表")
+        class DemoData:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""          # 自动建列 + 自动生成 __init__
+            age: int = 0            # 自动建列 + 自动生成 __init__
+
+        DemoData(id=1, name="张三", age=28)  # 直接可用，无需手写 __init__
+    """
+    if '__init__' in cls.__dict__:
+        return
+
+    fields: dict = {}  # name -> default_value
+
+    # 扫描 __dict__ 收集 ExcelProperty/ExcelIgnore + 普通默认值
+    for cls_base in reversed(cls.__mro__):
+        for name, value in cls_base.__dict__.items():
+            if name.startswith('_'):
+                continue
+            if name in fields:
+                continue
+            if isinstance(value, ExcelProperty):
+                fields[name] = None
+            elif isinstance(value, ExcelIgnore):
+                fields[name] = None  # 忽略字段也可构造，仅不导出
+            elif hasattr(value, '__excel_property__'):
+                fields[name] = None
+            elif getattr(value, '__excel_ignore__', False):
+                continue
+            elif hasattr(value, '__set_name__') or hasattr(value, 'default'):
+                # 其他模块的描述符（如 ORM Column/Id、CSV CsvProperty/ExcelProperty），
+                # 取其 default 属性作为默认值，避免描述符对象本身被当作默认值
+                fields[name] = getattr(value, 'default', None)
+            elif callable(value) and not isinstance(value, (ExcelProperty, ExcelIgnore)):
+                continue
+            elif isinstance(value, (classmethod, staticmethod)):
+                continue
+            else:
+                fields[name] = value
+
+    # 扫描 __annotations__ 补全无默认值的类型注解字段
+    cls_annotations = {}
+    try:
+        from typing import get_type_hints as _gth
+        cls_annotations = _gth(cls)
+    except Exception:
+        cls_annotations = getattr(cls, '__annotations__', {})
+    for name in cls_annotations:
+        if name.startswith('_'):
+            continue
+        if name not in fields:
+            fields[name] = None
+
+    def __init__(self, **values):
+        unknown = set(values) - set(fields)
+        if unknown:
+            names = ', '.join(sorted(unknown))
+            raise TypeError(f"Unexpected field(s): {names}")
+        for fname, default in fields.items():
+            setattr(self, fname, values.get(fname, default))
+
+    cls.__init__ = __init__
 
 
 # ==================== 元数据解析（复用 ORM 反射范式） ====================
@@ -292,9 +380,19 @@ def parse_excel_columns(cls: type) -> List[ExcelColumnModel]:
     解析顺序（镜像 ORM ``_parse_entity`` 对 ``Column`` 的处理）：
     1. 遍历 ``cls.__mro__`` 的 ``__dict__``，收集 ``ExcelProperty`` 实例或带
        ``__excel_property__`` 的成员；遇到 ``ExcelIgnore`` / ``__excel_ignore__`` 则跳过。
-    2. 若类上没有任何 ``ExcelProperty`` 标记，回退到 ``__init__`` 参数列表，按字段名自动
-       生成表头（让未改造的纯 ``__init__`` 模型如 ``example_all/models/User.py`` 也能导出）。
-    3. 按 ``index`` -> ``order`` -> 声明顺序排序。
+    2. **ORM 风格**：扫描 ``__annotations__`` 类型注解字段（如 ``name: str = ""``），
+       对未显式标注 ``ExcelProperty`` 的字段自动建列（表头按字段名生成）。
+    3. 若以上均无结果，回退到 ``__init__`` 参数列表，按字段名自动生成表头
+       （让未改造的纯 ``__init__`` 模型如 ``example_all/models/User.py`` 也能导出）。
+    4. 按 ``index`` -> ``order`` -> 声明顺序排序。
+
+    ORM 风格用法（与 ``@entity`` 一致，无需手写 ``__init__``）::
+
+        @excel_sheet("用户列表")
+        class DemoData:
+            id: int = ExcelProperty("ID", order=1)
+            name: str = ""          # 自动建列
+            age: int = 0            # 自动建列
     """
     from .exceptions import ExcelPropertyError
 
@@ -337,7 +435,58 @@ def parse_excel_columns(cls: type) -> List[ExcelColumnModel]:
             # 子类覆盖父类
             seen[attr_name] = (prop, declaration_order[attr_name])
 
+    # ---- ORM 风格：扫描类型注解字段（如 name: str = ""），自动建列 ----
+    cls_annotations = {}
+    try:
+        from typing import get_type_hints as _gth
+        cls_annotations = _gth(cls)
+    except Exception:
+        cls_annotations = getattr(cls, '__annotations__', {})
+
+    for attr_name in cls_annotations:
+        if attr_name.startswith('_'):
+            continue
+        if attr_name in seen or attr_name in ignored:
+            continue
+        # 查找 MRO 中最近的类属性值
+        existing = None
+        for cls_base in cls.__mro__:
+            if attr_name in cls_base.__dict__:
+                existing = cls_base.__dict__[attr_name]
+                break
+        # 已有 ExcelProperty/ExcelIgnore 描述符，已在上面处理
+        if isinstance(existing, (ExcelProperty, ExcelIgnore)):
+            continue
+        if getattr(existing, '__excel_property__', None) is not None:
+            continue
+        if getattr(existing, '__excel_ignore__', False):
+            continue
+        # 识别 Bean Validation Constraint 描述符（仅标记，不跳过自动建列）
+        # 因为 name: str = NotBlank() 也应该自动建列，只是默认值为 None
+        is_constraint_only = (
+            isinstance(existing, type) is False and existing is not None
+            and hasattr(existing, 'constraint_name') and hasattr(existing, 'validate')
+        )
+        # 跳过普通函数/方法（但不跳过外模块描述符如 CsvProperty/Column）
+        if callable(existing) and not isinstance(existing, (ExcelProperty, ExcelIgnore)) \
+                and not hasattr(existing, '__set_name__') and not hasattr(existing, 'default') \
+                and not is_constraint_only:
+            continue
+        if isinstance(existing, (classmethod, staticmethod)):
+            continue
+        # 自动建列：用默认 ExcelProperty（表头按字段名生成）
+        prop = ExcelProperty()
+        prop.attr_name = attr_name
+        if attr_name not in declaration_order:
+            declaration_order[attr_name] = counter
+            counter += 1
+        seen[attr_name] = (prop, declaration_order[attr_name])
+
     init_hints = _resolve_init_hints(cls)
+    # 合并类级类型注解，用于无 __init__ 的 ORM 风格类的类型推断
+    for k, v in cls_annotations.items():
+        if k not in init_hints:
+            init_hints[k] = v
 
     columns = []
 

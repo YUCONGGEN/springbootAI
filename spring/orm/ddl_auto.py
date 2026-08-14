@@ -89,11 +89,25 @@ def _get_sql_type(py_type: Any, dialect: str, column_info: dict = None) -> str:
 
 
 class Column:
-    """列定义注解/描述符"""
+    """列定义注解/描述符。
+
+    支持组合式字段级注解：通过 ``constraints`` 参数内联挂载 Bean Validation
+    约束列表（``NotNull`` / ``NotBlank`` / ``Size`` 等），使同一字段同时具备
+    ORM 列定义 + 参数校验能力，无需额外的 Constraint 描述符（与类属性单值性兼容）。
+
+    用法::
+
+        class User:
+            name = Column("name", default="", nullable=False,
+                          constraints=[NotBlank(message="姓名不能为空"),
+                                       Size(max=50, message="姓名不超过 50 字")])
+            age  = Column("age", default=0,
+                          constraints=[Min(0, message="年龄不能为负"), Max(150)])
+    """
     def __init__(self, name: str = "", nullable: bool = True, unique: bool = False,
                  length: int = 0, primary_key: bool = False, auto_increment: bool = False,
                  default: Any = None, column_definition: str = "", comment: str = "",
-                 precision: int = 0, scale: int = 0):
+                 precision: int = 0, scale: int = 0, constraints: list = None):
         self.name = name
         self.nullable = nullable
         self.unique = unique
@@ -105,6 +119,8 @@ class Column:
         self.comment = comment
         self.precision = precision
         self.scale = scale
+        # Bean Validation 约束列表（组合式注解通道）
+        self.constraints = constraints or []
 
 
 class Id(Column):
@@ -1129,13 +1145,38 @@ def _auto_infer_columns(cls):
         # 已有 Transient 标记
         if isinstance(existing, Transient):
             continue
+        # 识别 Bean Validation Constraint 描述符（仅标记，不跳过自动建列）
+        # 因为 name: str = NotBlank() 也应该自动建列，只是 default=None
+        is_constraint_only = (
+            isinstance(existing, type) is False and existing is not None
+            and hasattr(existing, 'constraint_name') and hasattr(existing, 'validate')
+        )
+        # 已有其他模块描述符（ExcelProperty/CsvProperty 等），不覆盖
+        if hasattr(existing, '__set_name__') and not isinstance(existing, (Column, Transient)) \
+                and not is_constraint_only:
+            continue
 
         # 只有显式赋值才给默认值；无赋值则仅创建 Column() 记录类型
-        if existing is not None and not callable(existing) \
+        # Constraint 描述符视为无默认值（不要把 NotBlank 对象作为 default）
+        if not is_constraint_only and existing is not None and not callable(existing) \
                 and not isinstance(existing, (classmethod, staticmethod)):
             col = Column(default=existing)
         else:
             col = Column()
+
+        # 组合式：替换前把原描述符上的约束迁移到 Column.constraints
+        # （1）独立 Constraint 描述符：如 name: str = NotBlank() → NotBlank 是个 Constraint 实例
+        if is_constraint_only:
+            # 必须延迟 import 避免循环依赖
+            _Constraint_base = type(existing).__mro__
+            # 直接 isinstance 检查有循环依赖风险，通过 attr 特征 + 不是已有描述符方式判断
+            # 既然 is_constraint_only=True，existing 本身就是一个 Constraint 实例，直接加
+            col.constraints.append(existing)
+        # （2）其他描述符带 constraints 属性：如 ExcelProperty(constraints=[...])
+        elif hasattr(existing, 'constraints') and isinstance(getattr(existing, 'constraints', None), list):
+            for c in existing.constraints:
+                if hasattr(c, 'constraint_name') and hasattr(c, 'validate'):
+                    col.constraints.append(c)
 
         setattr(cls, attr_name, col)
 

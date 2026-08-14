@@ -52,6 +52,8 @@ class CsvProperty:
         big_number:  是否按字符串写入（CSV 本身即字符串，此标记用于强制把数值原样保留，
                      避免 long ID 被解析回 int 后再写时丢精度）。默认 False。
         ignore:      内部等价 @CsvIgnore 的快捷开关。默认 False。
+        constraints: **组合式**：Bean Validation 约束列表（``NotBlank`` / ``Size`` 等），
+                     同一字段同时具备 CSV 列映射 + 参数校验能力。
     """
 
     def __init__(
@@ -64,6 +66,7 @@ class CsvProperty:
         date_format: Optional[str] = None,
         big_number: bool = False,
         ignore: bool = False,
+        constraints: list = None,
     ):
         self.value = value
         self.order = order
@@ -73,6 +76,8 @@ class CsvProperty:
         self.date_format = date_format or format
         self.big_number = big_number
         self.ignore = ignore
+        # Bean Validation 约束列表（组合式注解通道）
+        self.constraints = constraints or []
         # 反射时回填
         self.attr_name: str = ""
 
@@ -121,7 +126,14 @@ class CsvIgnore:
 # ==================== 类级注解 ====================
 
 class CsvFile:
-    """类级注解元数据：CSV 文件配置（镜像 ORM ``Table`` / Excel ``ExcelSheet``）。
+    """类级注解元数据 + 装饰器：CSV 文件配置（镜像 ORM ``Table`` / Excel ``ExcelSheet``）。
+
+    既可作为元数据类使用，也可直接作为类装饰器使用（镜像 ORM ``Table.__call__``）::
+
+        @CsvFile("用户列表", delimiter=",", encoding="utf-8-sig")
+        class DemoData:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""
 
     属性说明：
         file_name:     文件名（仅元数据，读写时由调用方传路径）。
@@ -148,6 +160,15 @@ class CsvFile:
         self.quote_char = quote_char
         self.line_terminator = line_terminator
 
+    def __call__(self, cls: type) -> type:
+        """装饰器形式：``@CsvFile("用户列表")``，将元数据挂载到类上。
+
+        镜像 ORM ``Table.__call__``：设置 ``__csv_file__`` 并自动生成 ``__init__``。
+        """
+        setattr(cls, "__csv_file__", self)
+        _auto_generate_init(cls)
+        return cls
+
 
 def csv_file(
     file_name: str = "",
@@ -156,10 +177,10 @@ def csv_file(
     encoding: str = "utf-8-sig",
     quote_char: str = '"',
     line_terminator: str = "\r\n",
-) -> Callable[[type], type]:
-    """类级装饰器：标注实体类对应的 CSV 文件配置（镜像 ORM ``@entity`` / Excel ``@excel_sheet``）。
+) -> CsvFile:
+    """向后兼容别名，等价于 ``CsvFile(...)``。
 
-    用法::
+    用法（与 ``@CsvFile`` 完全等价）::
 
         @csv_file("用户列表", delimiter=",", encoding="utf-8-sig")
         class DemoData:
@@ -168,7 +189,7 @@ def csv_file(
 
     不使用本装饰器时，读写引擎使用默认配置（has_header=True，delimiter=","，utf-8-sig）。
     """
-    meta = CsvFile(
+    return CsvFile(
         file_name=file_name,
         has_header=has_header,
         delimiter=delimiter,
@@ -177,11 +198,78 @@ def csv_file(
         line_terminator=line_terminator,
     )
 
-    def decorator(cls: type) -> type:
-        setattr(cls, "__csv_file__", meta)
-        return cls
 
-    return decorator
+# ==================== ORM 风格自动生成 __init__ ====================
+
+def _auto_generate_init(cls: type) -> None:
+    """为 ORM 风格实体类自动生成 ``__init__``（若类未显式声明）。
+
+    镜像 ORM ``_auto_generate_init``，扫描类级类型注解字段 + ``CsvProperty`` 描述符，
+    生成关键字构造器。若类已显式声明 ``__init__`` 则跳过，保持兼容。
+
+    用法（``@csv_file`` 装饰器自动调用）::
+
+        @csv_file("用户列表")
+        class DemoData:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""          # 自动建列 + 自动生成 __init__
+            age: int = 0            # 自动建列 + 自动生成 __init__
+
+        DemoData(id=1, name="张三", age=28)  # 直接可用，无需手写 __init__
+    """
+    if '__init__' in cls.__dict__:
+        return
+
+    fields: dict = {}  # name -> default_value
+
+    # 扫描 __dict__ 收集 CsvProperty/CsvIgnore + 普通默认值
+    for cls_base in reversed(cls.__mro__):
+        for name, value in cls_base.__dict__.items():
+            if name.startswith('_'):
+                continue
+            if name in fields:
+                continue
+            if isinstance(value, CsvProperty):
+                fields[name] = None
+            elif isinstance(value, CsvIgnore):
+                fields[name] = None  # 忽略字段也可构造，仅不导出
+            elif hasattr(value, '__csv_property__'):
+                fields[name] = None
+            elif getattr(value, '__csv_ignore__', False):
+                continue
+            elif hasattr(value, '__set_name__') or hasattr(value, 'default'):
+                # 其他模块的描述符（如 ORM Column/Id、Excel ExcelProperty/CsvProperty），
+                # 取其 default 属性作为默认值，避免描述符对象本身被当作默认值
+                fields[name] = getattr(value, 'default', None)
+            elif callable(value) and not isinstance(value, (CsvProperty, CsvIgnore)):
+                continue
+            elif isinstance(value, (classmethod, staticmethod)):
+                continue
+            else:
+                fields[name] = value
+
+    # 扫描 __annotations__ 补全无默认值的类型注解字段
+    cls_annotations = {}
+    try:
+        from typing import get_type_hints as _gth
+        cls_annotations = _gth(cls)
+    except Exception:
+        cls_annotations = getattr(cls, '__annotations__', {})
+    for name in cls_annotations:
+        if name.startswith('_'):
+            continue
+        if name not in fields:
+            fields[name] = None
+
+    def __init__(self, **values):
+        unknown = set(values) - set(fields)
+        if unknown:
+            names = ', '.join(sorted(unknown))
+            raise TypeError(f"Unexpected field(s): {names}")
+        for fname, default in fields.items():
+            setattr(self, fname, values.get(fname, default))
+
+    cls.__init__ = __init__
 
 
 # ==================== 元数据解析（复用 ORM/Excel 反射范式） ====================
@@ -281,9 +369,19 @@ def parse_csv_columns(cls: type) -> List[CsvColumnModel]:
     解析顺序（镜像 ORM ``_parse_entity`` 对 ``Column`` 的处理）：
     1. 遍历 ``cls.__mro__`` 的 ``__dict__``，收集 ``CsvProperty`` 实例或带
        ``__csv_property__`` 的成员；遇到 ``CsvIgnore`` / ``__csv_ignore__`` 则跳过。
-    2. 若类上没有任何 ``CsvProperty`` 标记，回退到 ``__init__`` 参数列表，按字段名自动
-       生成表头（让未改造的纯 ``__init__`` 模型也能导入导出）。
-    3. 按 ``index`` -> ``order`` -> 声明顺序排序。
+    2. **ORM 风格**：扫描 ``__annotations__`` 类型注解字段（如 ``name: str = ""``），
+       对未显式标注 ``CsvProperty`` 的字段自动建列（表头按字段名生成）。
+    3. 若以上均无结果，回退到 ``__init__`` 参数列表，按字段名自动生成表头
+       （让未改造的纯 ``__init__`` 模型也能导入导出）。
+    4. 按 ``index`` -> ``order`` -> 声明顺序排序。
+
+    ORM 风格用法（与 ``@entity`` 一致，无需手写 ``__init__``）::
+
+        @csv_file("用户列表")
+        class DemoData:
+            id: int = CsvProperty("ID", order=1)
+            name: str = ""          # 自动建列
+            age: int = 0            # 自动建列
     """
     from .exceptions import CsvPropertyError
 
@@ -326,7 +424,58 @@ def parse_csv_columns(cls: type) -> List[CsvColumnModel]:
             # 子类覆盖父类
             seen[attr_name] = (prop, declaration_order[attr_name])
 
+    # ---- ORM 风格：扫描类型注解字段（如 name: str = ""），自动建列 ----
+    cls_annotations = {}
+    try:
+        from typing import get_type_hints as _gth
+        cls_annotations = _gth(cls)
+    except Exception:
+        cls_annotations = getattr(cls, '__annotations__', {})
+
+    for attr_name in cls_annotations:
+        if attr_name.startswith('_'):
+            continue
+        if attr_name in seen or attr_name in ignored:
+            continue
+        # 查找 MRO 中最近的类属性值
+        existing = None
+        for cls_base in cls.__mro__:
+            if attr_name in cls_base.__dict__:
+                existing = cls_base.__dict__[attr_name]
+                break
+        # 已有 CsvProperty/CsvIgnore 描述符，已在上面处理
+        if isinstance(existing, (CsvProperty, CsvIgnore)):
+            continue
+        if getattr(existing, '__csv_property__', None) is not None:
+            continue
+        if getattr(existing, '__csv_ignore__', False):
+            continue
+        # 识别 Bean Validation Constraint 描述符（仅标记，不跳过自动建列）
+        # 因为 name: str = NotBlank() 也应该自动建列，只是默认值为 None
+        is_constraint_only = (
+            isinstance(existing, type) is False and existing is not None
+            and hasattr(existing, 'constraint_name') and hasattr(existing, 'validate')
+        )
+        # 跳过普通函数/方法（但不跳过外模块描述符如 ExcelProperty/Column）
+        if callable(existing) and not isinstance(existing, (CsvProperty, CsvIgnore)) \
+                and not hasattr(existing, '__set_name__') and not hasattr(existing, 'default') \
+                and not is_constraint_only:
+            continue
+        if isinstance(existing, (classmethod, staticmethod)):
+            continue
+        # 自动建列：用默认 CsvProperty（表头按字段名生成）
+        prop = CsvProperty()
+        prop.attr_name = attr_name
+        if attr_name not in declaration_order:
+            declaration_order[attr_name] = counter
+            counter += 1
+        seen[attr_name] = (prop, declaration_order[attr_name])
+
     init_hints = _resolve_init_hints(cls)
+    # 合并类级类型注解，用于无 __init__ 的 ORM 风格类的类型推断
+    for k, v in cls_annotations.items():
+        if k not in init_hints:
+            init_hints[k] = v
 
     columns = []
 
