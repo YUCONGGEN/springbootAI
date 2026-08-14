@@ -9,9 +9,7 @@
 - [一、实体声明：@Entity + @Table](#一实体声明entity--table)
 - [二、字段定义：显式 Column 与自动推断](#二字段定义显式-column-与自动推断)
 - [三、自动时间戳：@CreateTime / @UpdateTime](#三自动时间戳createtime--updatetime)
-- [四、Spring Data Repository —— 不用手写SQL的分页查询](#四spring-data-repository--不用手写sql的分页查询)
-- [五、DataJpaTest —— 数据层测试切片](#五datajpatest--数据层测试切片)
-- [类型映射表](#类型映射表)
+- [相关模块](#相关模块)
 - [注解参考](#注解参考)
 
 ---
@@ -339,145 +337,13 @@ user_mapper.update(user)              # 执行 UPDATE
 
 ---
 
-## 四、Spring Data Repository —— 不用手写SQL的分页查询
+## 相关模块
 
-### 你遇到了什么问题？
-
-前端请求"第 1 页，每页 20 条，按创建时间倒序"。你要手写 `SELECT COUNT(*)`、`LIMIT`、`OFFSET`、`ORDER BY`……每个列表接口都写一遍，烦得要死还容易出错。
-
-### ① 是什么
-
-**把数据库查询变成翻书操作。** 你只需要告诉框架：第几页、每页几条、按什么排序，框架自动生成 SQL 并把结果装进对象里。就像你去图书馆借书，跟管理员说"我要第 3 排第 5 本"，不用自己翻。
-
-### ② 怎么用
-
-```python
-from spring.orm.ddl_auto import entity, Id, Column
-from spring.data import PagingAndSortingRepository, Pageable, Sort, Specification
-
-# 定义实体（数据库表对应的类）
-@entity("users")
-class User:
-    id = Id()
-    name = Column("user_name")
-    age = Column()
-    def __init__(self, id=None, name=None, age=None):
-        self.id = id; self.name = name; self.age = age
-
-# pool 是你的数据库连接池（和 ORM 共用）
-repo = PagingAndSortingRepository(pool, User, dialect="mysql")
-
-# --- 基础 CRUD ---
-repo.save(User(name="小明", age=20))
-repo.save_all([User(name="小红"), User(name="小刚")])
-
-user = repo.find_by_id(1)
-print(user)  # 输出: User(id=1, name="小明", age=20)
-
-all_users = repo.find_all()          # 查全部
-repo.exists_by_id(1)                 # 输出: True
-repo.count()                         # 输出: 3
-repo.delete_by_id(1)                 # 删一条
-repo.delete_all()                    # 删全部
-
-# --- 分页：第 0 页，每页 10 条 ---
-page = repo.find_all(Pageable.of(page=0, size=10))
-print(page.content)           # 当前页数据列表
-print(page.total_elements)    # 总条数，如 30
-print(page.total_pages)       # 总页数，如 3
-print(page.has_next())        # 还有下一页吗？True
-
-# --- 排序：按年龄降序 ---
-sorted_users = repo.find_all(sort=Sort.by("user_name").descending())
-# 结果：按 user_name 字段 Z→A 排列
-
-# --- 条件筛选：只查成年人 ---
-class AdultSpec(Specification):
-    def to_predicate(self, root, col_resolver):
-        return ("age >= ?", [18], "AND")  # 参数绑定防 SQL 注入
-
-adults = repo.find_all(specification=AdultSpec())
-# 结果：只返回 age >= 18 的用户
-
-# --- 分页 + 排序 + 筛选 三合一 ---
-page = repo.find_all(
-    Pageable.of(0, 10, Sort.by("age")),
-    specification=AdultSpec()
-)
-# 结果：第 0 页、每页 10 条、按年龄排序、而且只要成年人
-
-# --- 复合条件：成年 AND 名字包含"明" ---
-from spring.data import Specifications
-spec = Specifications.where(AdultSpec()).and_(NameSpec())
-```
-
-### ③ 运行结果
-
-你只需调用一个 `repo.find_all(Pageable.of(page=0, size=10))`，框架自动执行：
-- 一条 `SELECT COUNT(*)` 查总条数
-- 一条 `SELECT ... LIMIT 10 OFFSET 0` 查当前页数据
-- 返回封装好的 `Page` 对象，包含数据、总页数、总条数、是否有下一页
-
-### mini-FAQ
-
-**Q：页码从 0 还是从 1 开始？**
-从 0 开始。`Pageable.of(page=0, size=10)` 是第一页。`page=1` 是第二页。
-
-**Q：大数据量分页慢怎么办？**
-确保 `Sort.by()` 的字段在数据库中有索引。另外总条数查询（`SELECT COUNT(*)`）在大表上可能较慢。
-
-**Q：能像 Java Spring 那样写 `findByNameAndAge` 吗？**
-不支持方法名派生查询。需要用 `Specification` 手写条件。
-
----
-
-## 五、DataJpaTest —— 数据层测试切片
-
-### 你遇到了什么问题？
-
-每次跑测试都要启动整个应用——Web 层、数据库、缓存全部启动，慢得要死。你只想测数据库操作，为什么要等 Web 服务启动？
-
-### ① 是什么
-
-**测试时不启动整个应用，只测数据层。** 数据存在内存 SQLite 中，测试结束自动销毁，不污染真实数据库。
-
-### ② 怎么用
-
-```python
-from spring.test import DataJpaTest
-
-with DataJpaTest(entities=[User]) as jpa:
-    repo = jpa.repository_for(User)
-    repo.save(User(name="小明", age=20))
-    assert repo.count() == 1
-    # 数据存在内存 SQLite 中，测试结束自动销毁
-```
-
-### 三种测试切片对比
-
-| 切片 | 启动什么 | 不启动什么 | 适合测什么 |
-|---|---|---|---|
-| `SpringBootTest` | 全部 | 无 | 端到端集成测试 |
-| `WebMvcTest` | Controller + Mock 依赖 | Service / Repository | Controller 请求响应 |
-| `DataJpaTest` | 内存数据库 + Repository | Controller / Service | 数据库操作 |
-
-### mini-FAQ
-
-**Q：DataJpaTest 用的什么数据库？**
-内存 SQLite，和生产环境的 MySQL/PostgreSQL 行为可能有差异（日期函数、字符集等）。
-
----
-
-## 类型映射表
-
-| Python 类型 | MySQL | PostgreSQL | SQLite |
-|------------|-------|------------|--------|
-| `int` | BIGINT AUTO_INCREMENT | BIGSERIAL | INTEGER PRIMARY KEY AUTOINCREMENT |
-| `str` | VARCHAR(255) | VARCHAR(255) | TEXT |
-| `float` | DOUBLE | DOUBLE PRECISION | REAL |
-| `bool` | TINYINT(1) | BOOLEAN | INTEGER |
-| `bytes` | BLOB | BYTEA | BLOB |
-| `datetime` | DATETIME | TIMESTAMP | TEXT |
+| 模块 | 文档 | 说明 |
+|------|------|------|
+| Spring Data Repository | [REPOSITORY_MODULE.md](REPOSITORY_MODULE.md) | 分页、排序、条件查询（`PagingAndSortingRepository`） |
+| 测试切片 | [TEST_SLICE_MODULE.md](TEST_SLICE_MODULE.md) | `DataJpaTest` 数据层测试 |
+| ORM 完整指南 | [ORM_MODULE.md](ORM_MODULE.md) | Mapper 注解 / XML Mapper / DDL 配置 / 类型映射表 |
 
 ---
 
@@ -502,15 +368,6 @@ with DataJpaTest(entities=[User]) as jpa:
 | `CreateTime` / `@create_time_column` | "创建时间，插入时自动填充" | 实体字段 |
 | `UpdateTime` / `@update_time_column` | "更新时间，插入/更新时自动填充" | 实体字段 |
 | `Transient` / `@transient_field` | "这个字段不存数据库" | 实体字段 |
-
-### Repository 注解
-
-| 注解 | 一句话 | 放哪里 |
-|------|--------|--------|
-| `PagingAndSortingRepository` | "分页排序查询仓库" | 数据访问层 |
-| `Pageable` | "分页参数" | 方法参数 |
-| `Sort` | "排序参数" | 方法参数 |
-| `Specification` | "条件筛选" | 查询方法 |
 
 ### 字段自动推断规则（v2.2.3+）
 

@@ -125,7 +125,6 @@ curl http://127.0.0.1:8080/api/hello/Alice
 | ✅ Swagger 文档 | [SWAGGER_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SWAGGER_MODULE.md) | 随核心包 | `@Tag` / `@Operation` 注解驱动 API 文档 |
 | ✅ 安全 | [SECURITY.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SECURITY.md) | 随核心包 | JWT 生成校验 / 密码加密 / SQL 注入防护 / 访问控制 |
 | ✅ BeanUtils | [BEAN_UTILS.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEAN_UTILS.md) | 随核心包 | `copy_properties` / `clone` 属性复制工具 |
-| ✅ 八大模块总览 | [EIGHT_MODULES.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/EIGHT_MODULES.md) | 随核心包 | 索引页，链接到下方 8 个独立模块 |
 | ✅ ① Repository | [REPOSITORY_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/REPOSITORY_MODULE.md) | 随核心包 | 不用手写SQL的分页查询 |
 | ✅ ② Actuator | [ACTUATOR_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ACTUATOR_MODULE.md) | 随核心包 | 系统健康检查面板 |
 | ✅ ③ 多数据源 | [DATASOURCE_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/DATASOURCE_MODULE.md) | 随核心包 | 读写分离 |
