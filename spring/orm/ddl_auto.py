@@ -1091,8 +1091,8 @@ def _auto_infer_columns(cls):
     无需显式 ``= Column(...)`` 赋值。
 
     推断规则：
-      - ``name: str``               → ``Column(default=None)``
-      - ``name: str = ""``          → ``Column(default="")``
+      - ``name: str``               → ``Column()``（无默认值，仅记录类型）
+      - ``name: str = ""``          → ``Column(default="")``（赋值即为默认值）
       - ``name: int = 0``           → ``Column(default=0)``
       - ``name: str = Column(...)`` → 保留原 Column，不覆盖
       - ``name: int = Id()``        → 保留原 Id，不覆盖
@@ -1130,14 +1130,14 @@ def _auto_infer_columns(cls):
         if isinstance(existing, Transient):
             continue
 
-        # 推断默认值：非 None 的类属性值作为 Column default
-        default_val = None
+        # 只有显式赋值才给默认值；无赋值则仅创建 Column() 记录类型
         if existing is not None and not callable(existing) \
                 and not isinstance(existing, (classmethod, staticmethod)):
-            default_val = existing
+            col = Column(default=existing)
+        else:
+            col = Column()
 
-        # 创建 Column 描述符并挂到类上
-        setattr(cls, attr_name, Column(default=default_val))
+        setattr(cls, attr_name, col)
 
 
 def _auto_generate_init(cls):

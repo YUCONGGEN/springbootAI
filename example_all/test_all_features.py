@@ -310,6 +310,127 @@ def test_05_http_api():
     assert fail == 0, f"{fail} 个HTTP API失败"
 
 
+def test_06_entity_jpa_style():
+    """@Entity + @Table JPA 风格实体（v2.2.3）"""
+    print("\n" + "=" * 60)
+    print("测试6: @Entity + @Table JPA 风格实体")
+    print("=" * 60)
+
+    from example_all.models.EntityModels import AdminUser, Product, SysLog
+    from spring.orm.ddl_auto import DdlAutoManager
+    from spring.orm import Column, Id, CreateTime
+
+    ok = 0; fail = 0
+
+    # --- 1. AdminUser: @Entity + @Table 分离风格 ---
+    try:
+        assert AdminUser.__entity__ is True
+        assert AdminUser.__table__.name == "welding_admin_users"
+        assert AdminUser.__table__.comment == "焊工智能系统管理员"
+        assert len(AdminUser.__table__.indexes) == 1
+        assert AdminUser.__table__.indexes[0].name == "idx_admin_username"
+
+        # 字段自动推断验证
+        assert isinstance(AdminUser.__dict__["username"], Column)
+        assert AdminUser.__dict__["username"].default == ""
+        assert isinstance(AdminUser.__dict__["display_name"], Column)
+        assert AdminUser.__dict__["display_name"].default == "系统管理员"
+        assert isinstance(AdminUser.__dict__["enabled"], Column)
+        assert AdminUser.__dict__["enabled"].default is True
+        # 无赋值的字段 → Column() 无默认值
+        assert isinstance(AdminUser.__dict__["last_login_at"], Column)
+        assert AdminUser.__dict__["last_login_at"].default is None
+        # 显式描述符保留
+        assert isinstance(AdminUser.__dict__["id"], Id)
+        assert isinstance(AdminUser.__dict__["created_at"], CreateTime)
+        # 私有字段跳过
+        assert not isinstance(AdminUser.__dict__.get("_cache"), Column)
+
+        # 构造器验证
+        admin = AdminUser(username="admin", password_hash="bcrypt$xxx")
+        assert admin.username == "admin"
+        assert admin.display_name == "系统管理员"
+        assert admin.enabled is True
+        assert admin.last_login_at is None
+
+        print("  OK  AdminUser: @Entity + @Table 分离风格")
+        ok += 1
+    except Exception as e:
+        print(f"  FAIL AdminUser: {e}")
+        fail += 1
+
+    # --- 2. Product: @Entity 无括号，表名自动推导 ---
+    try:
+        assert Product.__entity__ is True
+        assert Product.__table__.name == "product"  # snake_case 自动推导
+
+        assert isinstance(Product.__dict__["name"], Column)
+        assert Product.__dict__["name"].default == ""
+        assert isinstance(Product.__dict__["price"], Column)
+        assert Product.__dict__["price"].default == 0.0
+        assert isinstance(Product.__dict__["stock"], Column)
+        assert Product.__dict__["stock"].default == 0
+        # 无赋值
+        assert isinstance(Product.__dict__["description"], Column)
+        assert Product.__dict__["description"].default is None
+
+        prod = Product(name="焊接控制器", price=2999.0)
+        assert prod.name == "焊接控制器"
+        assert prod.price == 2999.0
+        assert prod.stock == 0
+        assert prod.description is None
+
+        print("  OK  Product: @Entity 无括号，表名自动推导")
+        ok += 1
+    except Exception as e:
+        print(f"  FAIL Product: {e}")
+        fail += 1
+
+    # --- 3. SysLog: 一体化兼容写法 ---
+    try:
+        assert SysLog.__entity__ is True
+        assert SysLog.__table__.name == "sys_log"
+        assert SysLog.__table__.comment == "系统日志"
+
+        # 显式 Column 保留
+        assert isinstance(SysLog.__dict__["module"], Column)
+        assert SysLog.__dict__["module"].length == 50
+        assert SysLog.__dict__["module"].nullable is False
+
+        print("  OK  SysLog: @Entity 一体化兼容写法")
+        ok += 1
+    except Exception as e:
+        print(f"  FAIL SysLog: {e}")
+        fail += 1
+
+    # --- 4. DDL 生成验证 ---
+    try:
+        mgr = DdlAutoManager(connection_pool=None, dialect="mysql")
+        result = mgr._parse_entity(AdminUser)
+
+        col_names = [c["name"] for c in result.columns]
+        assert "id" in col_names
+        assert "username" in col_names
+        assert "created_at" in col_names
+        assert "_cache" not in col_names  # 私有字段不在 DDL 中
+
+        # 验证 SQL 类型
+        col_map = {c["name"]: c for c in result.columns}
+        assert col_map["id"]["sql_type"] == "BIGINT"
+        assert "VARCHAR" in col_map["username"]["sql_type"]
+        assert col_map["created_at"]["sql_type"] == "DATETIME"
+        assert col_map["enabled"]["sql_type"] == "TINYINT(1)"
+
+        print("  OK  DDL 生成: 列推断 + 私有字段跳过 + SQL 类型映射")
+        ok += 1
+    except Exception as e:
+        print(f"  FAIL DDL 生成: {e}")
+        fail += 1
+
+    print(f"\n  实体测试: {ok} 成功, {fail} 失败")
+    assert fail == 0, f"{fail} 个实体测试失败"
+
+
 # ==================== 主入口 ====================
 
 if __name__ == '__main__':
@@ -322,6 +443,7 @@ if __name__ == '__main__':
         ("注解组合 (4项)", test_03_annotations_combo),
         ("组件扫描 (26项)", test_04_component_scan),
         ("HTTP API端点 (36项)", test_05_http_api),
+        ("@Entity+@Table JPA实体 (4项)", test_06_entity_jpa_style),
     ]
 
     results = []

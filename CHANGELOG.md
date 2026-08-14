@@ -1,12 +1,20 @@
 # Changelog
 
+## [2.2.4] - 2026-08-13
+
+### 完善
+
+- 自动推断逻辑调整：无赋值的字段仅创建 `Column()` 记录类型，不设默认值；只有显式赋值才作为 `default`。
+- `_parse_entity` 跳过以 `_` 开头的私有字段，不生成 DDL 列。
+- 新增 `example_all/models/EntityModels.py` 实体示例和 `test_06_entity_jpa_style` 测试（4 项全通过）。
+
 ## [2.2.3] - 2026-08-13
 
 ### 新增
 
 - ORM 实体字段自动推断：类型注解无需显式 `= Column(...)` 赋值，对齐 Java JPA 字段自动映射。
-  - `name: str` → 自动创建 `Column(default=None)`
-  - `name: str = ""` → 自动创建 `Column(default="")`
+  - `name: str` → 自动创建 `Column()`（无默认值，仅记录类型）
+  - `name: str = ""` → 自动创建 `Column(default="")`（赋值即为默认值）
   - `name: int = 0` → 自动创建 `Column(default=0)`
   - 已有 `Column()`/`Id()`/`CreateTime()` 等描述符的字段保留不覆盖
   - 以 `_` 开头的私有字段自动跳过
