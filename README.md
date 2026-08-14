@@ -118,13 +118,22 @@ curl http://127.0.0.1:8080/api/hello/Alice
 | 📦 LangGraph | [LANGGRAPH_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGGRAPH_MODULE.md) | `pip install springbootAI[langgraph]` | 状态图 / 条件路由 / 人工中断 / 注解式工作流 |
 | 📦 MCP | [MCP_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/MCP_MODULE.md) | `pip install springbootAI[mcp]` | MCP Client / Server / Tool / Resource / Prompt / 注解调用 |
 | ✅ 内嵌 PyMyBatis ORM | [ORM_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 |
+| ✅ JPA 实体与仓库 | [JPA_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/JPA_MODULE.md) | 随核心包 | `@Entity` + `@Table` / 字段自动推断 / `@CreateTime` / Repository / DataJpaTest |
 | ✅ Cloud 微服务 | [CLOUD_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 分布式事务 |
 | 📦 Excel 读写 | [EXCEL_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/EXCEL_MODULE.md) | `pip install springbootAI[excel]` | `@ExcelProperty` / `@ExcelIgnore` 注解驱动读写 |
 | 📦 CSV 读写 | [CSV_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CSV_MODULE.md) | `pip install springbootAI[csv]` | `@CsvProperty` / `@CsvIgnore` 注解驱动读写 |
 | ✅ Swagger 文档 | [SWAGGER_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SWAGGER_MODULE.md) | 随核心包 | `@Tag` / `@Operation` 注解驱动 API 文档 |
-| ✅ 八大模块 | [EIGHT_MODULES.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/EIGHT_MODULES.md) | 随核心包 | 分页 / Actuator / 多数据源 / i18n / WebSocket 等 |
 | ✅ 安全 | [SECURITY.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SECURITY.md) | 随核心包 | JWT 生成校验 / 密码加密 / SQL 注入防护 / 访问控制 |
 | ✅ BeanUtils | [BEAN_UTILS.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEAN_UTILS.md) | 随核心包 | `copy_properties` / `clone` 属性复制工具 |
+| ✅ 八大模块总览 | [EIGHT_MODULES.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/EIGHT_MODULES.md) | 随核心包 | 索引页，链接到下方 8 个独立模块 |
+| ✅ ① Repository | [REPOSITORY_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/REPOSITORY_MODULE.md) | 随核心包 | 不用手写SQL的分页查询 |
+| ✅ ② Actuator | [ACTUATOR_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ACTUATOR_MODULE.md) | 随核心包 | 系统健康检查面板 |
+| ✅ ③ 多数据源 | [DATASOURCE_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/DATASOURCE_MODULE.md) | 随核心包 | 读写分离 |
+| ✅ ④ 事务事件 | [TX_EVENT_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/TX_EVENT_MODULE.md) | 随核心包 | 操作完成后自动发通知 |
+| ✅ ⑤ 配置绑定 | [CONFIG_BINDING_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CONFIG_BINDING_MODULE.md) | 随核心包 | 把YAML配置自动变成Python对象 |
+| ✅ ⑥ 测试切片 | [TEST_SLICE_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/TEST_SLICE_MODULE.md) | 随核心包 | 只测试你关心的部分 |
+| ✅ ⑦ i18n | [I18N_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/I18N_MODULE.md) | 随核心包 | 中英文自动切换 |
+| ✅ ⑧ WebSocket | [WEBSOCKET_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/WEBSOCKET_MODULE.md) | 随核心包 | 像微信一样实时通信 |
 | — AI 与 LangChain 测试 | [AI_LANGCHAIN_TEST_GUIDE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AI_LANGCHAIN_TEST_GUIDE.md) | — | AI 与 LangChain 测试说明 |
 | — 测试报告 | [TEST_REPORT.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/TEST_REPORT.md) | — | 全量测试用例与覆盖范围 |
 
