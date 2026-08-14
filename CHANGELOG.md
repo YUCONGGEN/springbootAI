@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.2.2] - 2026-08-13
+
+### 新增
+
+- ORM `@Entity` / `@Table` 注解对齐 Java JPA 分离风格，支持三种写法（均向后兼容）：
+
+  | 写法 | 说明 | 对齐 Java |
+  |------|------|-----------|
+  | `@Entity` + `@Table(...)` | 分离风格（推荐） | `@Entity` + `@Table` |
+  | `@Entity` 无括号 | 表名自动推导为 snake_case | `@Entity`（无 `@Table`） |
+  | `@Entity("name", ...)` | 一体化风格（完全兼容） | 原有写法不变 |
+
+- `Table` 类新增 `__call__`，可直接作为类装饰器使用（`@Table(name=..., indexes=[...], comment=...)`）。
+- `@Entity` 支持无括号形式（`@Entity`），检测到已有 `@Table` 时不覆盖表元数据。
+- 提取 `_auto_generate_init` 辅助函数，消除 `Entity` 与 `Table.__call__` 间的重复代码。
+
 ## [2.2.1] - 2026-08-13
 
 ### 修复

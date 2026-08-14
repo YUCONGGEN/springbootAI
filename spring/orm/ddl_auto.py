@@ -244,11 +244,46 @@ class Transient:
 
 
 class Table:
-    """表注解"""
+    """``@Table`` 表注解（对齐 JPA ``javax.persistence.Table``）。
+
+    既可作为元数据类使用（内部 ``EntityTable`` 解析），也可直接作为类装饰器使用。
+    作为装饰器时等价于 JPA 的 ``@Table``，与 ``@Entity`` 组合使用::
+
+        @Entity
+        @Table(name="sys_user", indexes=[Index("idx_name", ["name"])], comment="用户表")
+        class User:
+            id: int = Id()
+            name: str = Column(length=50)
+
+    也可单独使用（隐含 ``@Entity`` 语义，与 ``@Entity("sys_user")`` 等价）::
+
+        @Table(name="sys_user", comment="用户表")
+        class User:
+            id: int = Id()
+    """
     def __init__(self, name: str = "", indexes: List['Index'] = None, comment: str = ""):
         self.name = name
         self.indexes = indexes or []
         self.comment = comment
+
+    def __call__(self, cls):
+        """装饰器形式：将表元数据挂载到类上并标记为实体，返回类本身。
+
+        装饰器应用顺序（Python 底向上）::
+
+            @Entity          # 外层，后执行
+            @Table(...)      # 内层，先执行
+            class User: ...
+
+        ``@Table`` 先设置 ``__table__`` 与 ``__entity__``，随后 ``@Entity``
+        检测到已有 ``__table__`` 则不覆盖。
+        """
+        if not self.name:
+            self.name = _camel_to_snake(cls.__name__)
+        setattr(cls, '__table__', self)
+        setattr(cls, '__entity__', True)
+        _auto_generate_init(cls)
+        return cls
 
 
 class Index:
@@ -1046,43 +1081,86 @@ class DdlAutoManager:
 
 # ==================== 装饰器API（便捷使用） ====================
 
+def _auto_generate_init(cls):
+    """为描述符风格实体类自动生成 ``__init__``（若类未显式声明）。
+
+    扫描 MRO 中所有 ``Column`` 实例属性，生成关键字构造器。
+    若类已显式声明 ``__init__`` 则跳过，保持兼容。
+    """
+    if '__init__' in cls.__dict__:
+        return
+    fields = {}
+    for cls_base in reversed(cls.__mro__):
+        for name, value in cls_base.__dict__.items():
+            if isinstance(value, Column):
+                fields[name] = value
+
+    def __init__(self, **values):
+        unknown = set(values) - set(fields)
+        if unknown:
+            names = ', '.join(sorted(unknown))
+            raise TypeError(f"Unexpected entity field(s): {names}")
+        for name, column in fields.items():
+            setattr(self, name, values.get(name, column.default))
+
+    cls.__init__ = __init__
+
+
 def Entity(table_name: str = "", indexes: List[Index] = None, comment: str = ""):
-    """
-    @Entity 装饰器，标注一个类为JPA风格的实体类
-    
-    Usage:
-        @Entity("sys_user")
+    """``@Entity`` 装饰器，标注一个类为 JPA 风格的实体类。
+
+    三种用法（均向后兼容）：
+
+    1. **Java JPA 风格**（``@Entity`` + ``@Table`` 分离，推荐）::
+
+        @Entity
+        @Table(name="sys_user", indexes=[Index("idx_name", ["name"])], comment="用户表")
         class User:
-            def __init__(self, id: int = None, username: str = "", email: str = ""):
-                self.id = id
-                self.username = username
-                self.email = email
+            id: int = Id()
+            name: str = Column(length=50)
+
+    2. **简化风格**（仅 ``@Entity``，表名自动推导为类名 snake_case）::
+
+        @Entity
+        class User:
+            id: int = Id()
+            name: str = Column(length=50)
+        # 表名自动推导为 "user"
+
+    3. **一体化风格**（当前写法，完全兼容）::
+
+        @Entity("sys_user", indexes=[...], comment="用户表")
+        class User:
+            id: int = Id()
+            name: str = Column(length=50)
     """
-    t = Table(name=table_name, indexes=indexes, comment=comment)
+    # 支持 @Entity 无括号形式：直接接收类
+    if inspect.isclass(table_name):
+        cls = table_name
+        setattr(cls, '__entity__', True)
+        # 未显式指定表信息时，不覆盖已有 @Table 设置的 __table__
+        existing = getattr(cls, '__table__', None)
+        if not isinstance(existing, Table):
+            setattr(cls, '__table__', Table(name=_camel_to_snake(cls.__name__)))
+        _auto_generate_init(cls)
+        return cls
+
+    # @Entity("table_name", ...) 或 @Entity() 形式
+    has_explicit_meta = bool(table_name or indexes or comment)
+    t = Table(name=table_name, indexes=indexes, comment=comment) if has_explicit_meta else None
+
     def decorator(cls):
         setattr(cls, '__entity__', True)
-        setattr(cls, '__table__', t)
-        if not table_name:
-            t.name = _camel_to_snake(cls.__name__)
-
-        # Descriptor-style entities do not need repetitive constructors.
-        # Keep an explicitly declared __init__ unchanged for compatibility.
-        if '__init__' not in cls.__dict__:
-            fields = {}
-            for cls_base in reversed(cls.__mro__):
-                for name, value in cls_base.__dict__.items():
-                    if isinstance(value, Column):
-                        fields[name] = value
-
-            def __init__(self, **values):
-                unknown = set(values) - set(fields)
-                if unknown:
-                    names = ', '.join(sorted(unknown))
-                    raise TypeError(f"Unexpected entity field(s): {names}")
-                for name, column in fields.items():
-                    setattr(self, name, values.get(name, column.default))
-
-            cls.__init__ = __init__
+        if t is not None:
+            if not t.name:
+                t.name = _camel_to_snake(cls.__name__)
+            setattr(cls, '__table__', t)
+        else:
+            # 无显式表信息：不覆盖已有 @Table 设置
+            existing = getattr(cls, '__table__', None)
+            if not isinstance(existing, Table):
+                setattr(cls, '__table__', Table(name=_camel_to_snake(cls.__name__)))
+        _auto_generate_init(cls)
         return cls
     return decorator
 
