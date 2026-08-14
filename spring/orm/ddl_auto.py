@@ -544,6 +544,9 @@ class DdlAutoManager:
                 # @Transient 字段不持久化，跳过
                 if _is_transient_field(cls, attr_name):
                     continue
+                # 私有字段（以 _ 开头）不持久化，跳过
+                if attr_name.startswith('_'):
+                    continue
                 py_type = init_hints.get(attr_name) or cls_annotations.get(attr_name)
                 # 解包 Optional[X]：Python 3.10 的 get_type_hints 会把带 None 默认值的
                 # 参数注解自动包装为 Optional[X]，3.11+ 不再包装。此处统一解包为承载类型，
@@ -1081,12 +1084,72 @@ class DdlAutoManager:
 
 # ==================== 装饰器API（便捷使用） ====================
 
+def _auto_infer_columns(cls):
+    """扫描类型注解，为未显式赋 ``Column`` 描述符的字段自动创建 ``Column`` 实例。
+
+    对齐 Java JPA：实体类中所有非 ``@Transient`` 字段自动映射为数据库列，
+    无需显式 ``= Column(...)`` 赋值。
+
+    推断规则：
+      - ``name: str``               → ``Column(default=None)``
+      - ``name: str = ""``          → ``Column(default="")``
+      - ``name: int = 0``           → ``Column(default=0)``
+      - ``name: str = Column(...)`` → 保留原 Column，不覆盖
+      - ``name: int = Id()``        → 保留原 Id，不覆盖
+      - 以 ``_`` 开头的字段         → 跳过（私有/内部字段）
+      - ``@Transient`` 标记字段      → 跳过
+    """
+    # 收集 MRO 中所有类型注解
+    all_annotations = {}
+    for cls_base in reversed(cls.__mro__):
+        base_anns = getattr(cls_base, '__annotations__', {})
+        all_annotations.update(base_anns)
+
+    for attr_name in all_annotations:
+        # 跳过私有字段
+        if attr_name.startswith('_'):
+            continue
+        # 跳过 @Transient 字段
+        if _is_transient_field(cls, attr_name):
+            continue
+
+        # 查找 MRO 中最近的类属性值
+        existing = None
+        for cls_base in cls.__mro__:
+            if attr_name in cls_base.__dict__:
+                existing = cls_base.__dict__[attr_name]
+                break
+
+        # 已有 Column/Id/Version/CreateTime/UpdateTime 描述符，不覆盖
+        if isinstance(existing, Column):
+            continue
+        # 已有 @column 装饰器标记
+        if hasattr(existing, '__column__'):
+            continue
+        # 已有 Transient 标记
+        if isinstance(existing, Transient):
+            continue
+
+        # 推断默认值：非 None 的类属性值作为 Column default
+        default_val = None
+        if existing is not None and not callable(existing) \
+                and not isinstance(existing, (classmethod, staticmethod)):
+            default_val = existing
+
+        # 创建 Column 描述符并挂到类上
+        setattr(cls, attr_name, Column(default=default_val))
+
+
 def _auto_generate_init(cls):
     """为描述符风格实体类自动生成 ``__init__``（若类未显式声明）。
 
-    扫描 MRO 中所有 ``Column`` 实例属性，生成关键字构造器。
+    先调用 ``_auto_infer_columns`` 补全类型注解对应的 ``Column`` 描述符，
+    再扫描 MRO 中所有 ``Column`` 实例属性，生成关键字构造器。
     若类已显式声明 ``__init__`` 则跳过，保持兼容。
     """
+    # 无论是否有自定义 __init__，都先补全 Column 描述符（DDL 解析依赖）
+    _auto_infer_columns(cls)
+
     if '__init__' in cls.__dict__:
         return
     fields = {}

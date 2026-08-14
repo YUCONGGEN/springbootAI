@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.2.3] - 2026-08-13
+
+### 新增
+
+- ORM 实体字段自动推断：类型注解无需显式 `= Column(...)` 赋值，对齐 Java JPA 字段自动映射。
+  - `name: str` → 自动创建 `Column(default=None)`
+  - `name: str = ""` → 自动创建 `Column(default="")`
+  - `name: int = 0` → 自动创建 `Column(default=0)`
+  - 已有 `Column()`/`Id()`/`CreateTime()` 等描述符的字段保留不覆盖
+  - 以 `_` 开头的私有字段自动跳过
+
+  ```python
+  @Entity
+  @Table(name="sys_user", comment="用户表")
+  class User:
+      id: int = Id()
+      username: str = ""               # 自动推断 Column(default="")
+      display_name: str = "系统管理员"  # 自动推断 Column(default="系统管理员")
+      enabled: bool = True             # 自动推断 Column(default=True)
+      _cache: dict = {}                # 私有字段，跳过
+  ```
+
+- `_parse_entity` 跳过以 `_` 开头的私有字段，不生成 DDL 列。
+
 ## [2.2.2] - 2026-08-13
 
 ### 新增
