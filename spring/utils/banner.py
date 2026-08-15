@@ -1,4 +1,4 @@
-﻿from spring.utils.logger import SpringLogger
+from spring.utils.logger import SpringLogger
 
 
 def _default_version() -> str:
