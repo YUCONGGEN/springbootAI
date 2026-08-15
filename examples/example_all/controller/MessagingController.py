@@ -3,7 +3,7 @@
 - @RabbitListener, RabbitTemplate
 """
 from spring.annotations.core import RestController, RequestMapping, GetMapping, PostMapping, Autowired, Slf4j
-from spring.annotations.messaging import RabbitListener, rabbit_template
+from spring.annotations.messaging import RabbitListener
 from spring.web.result import Result
 from example_all.service.MessagingService import MessagingService
 

@@ -5,7 +5,7 @@ import json
 import base64
 import hashlib
 from spring.annotations.core import Service, Slf4j
-from spring.security import SecurityContextHolder, SecurityContext
+from spring.security import SecurityContextHolder
 
 
 @Slf4j

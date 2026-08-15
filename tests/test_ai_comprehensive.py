@@ -2,7 +2,6 @@
 AI 模块补充测试 - 覆盖工具策略、组合注册、韧性、记忆命名空间、
 RAG 注入防护、流式异常等未充分测试的路径。
 """
-import json
 import threading
 import time
 
@@ -315,7 +314,6 @@ class TestToolExecutionEdgeCases:
             reg.execute("fail", {})
 
     def test_execute_with_async_function(self):
-        import asyncio
         from spring.ai.tools import ToolRegistry
         reg = ToolRegistry()
 
@@ -604,7 +602,7 @@ class TestMessageChatMemoryAdvisor:
     def test_missing_conversation_id_no_injection(self):
         from spring.ai.advisors import MessageChatMemoryAdvisor
         from spring.ai.memory import InMemoryChatMemory
-        from spring.ai.core import AdvisorRequest, Message, MessageType
+        from spring.ai.core import AdvisorRequest, Message
         from spring.ai.providers import FakeChatModel
 
         memory = InMemoryChatMemory()
@@ -681,7 +679,7 @@ class TestMessageChatMemoryAdvisor:
 class TestQuestionAnswerAdvisor:
     def test_injection_hardening_enabled(self):
         from spring.ai.advisors import QuestionAnswerAdvisor
-        from spring.ai.core import AdvisorRequest, Message, MessageType
+        from spring.ai.core import AdvisorRequest, Message
         from spring.ai.vectorstore import SimpleInMemoryVectorStore
         from spring.ai.providers import FakeEmbeddingModel, FakeChatModel
 
@@ -799,7 +797,7 @@ class TestSimpleLoggerAdvisor:
 class TestInMemoryChatMemoryWindow:
     def test_sliding_window(self):
         from spring.ai.memory import InMemoryChatMemory
-        from spring.ai.core import Message, MessageType
+        from spring.ai.core import Message
 
         mem = InMemoryChatMemory(max_messages=3)
         for i in range(5):

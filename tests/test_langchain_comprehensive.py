@@ -3,7 +3,6 @@ LangChain 模块补充测试 - 覆盖工具工厂、索引服务、回调注册�
 检索器工厂、记忆类型、提示模板、解析器、加载器等未充分测试的路径。
 """
 import os
-import json
 import tempfile
 
 import pytest

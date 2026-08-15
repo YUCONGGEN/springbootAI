@@ -6,7 +6,7 @@ Service 全注解服务 — 测试所有 Service 层核心注解
 - @Transactional, @Cacheable, @Retryable
 """
 from spring.annotations.core import (
-    Service, Autowired, Qualifier, Value,
+    Service, Autowired,
     Slf4j, LogExecutionTime,
     PostConstruct, PreDestroy, Primary, Lazy,
     Transactional, Cacheable, Retryable,

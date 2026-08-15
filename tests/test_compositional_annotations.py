@@ -13,14 +13,8 @@
 """
 from __future__ import annotations
 
-import os
-import tempfile
-from typing import Optional
-
-import pytest
-
 from spring.orm.ddl_auto import (
-    Column, Entity, Id, Version, Transient, DdlAutoManager,
+    Column, Entity, Id, Version, DdlAutoManager,
     CreateTime, UpdateTime, column, id_column,
 )
 
@@ -33,14 +27,13 @@ from spring.excel.annotations import (
 )
 from spring.excel import EasyExcel
 from spring.csv.annotations import (
-    CsvFile, CsvProperty, CsvIgnore, parse_csv_columns,
+    CsvFile, CsvProperty, parse_csv_columns,
 )
-from spring.csv import EasyCsv, write_csv, read_csv
+from spring.csv import write_csv, read_csv
 from spring.validation.constraints import (
-    NotNull, NotBlank, NotEmpty, Size, Min, Max, Positive, Email, Pattern,
-    Constraint,
+    NotNull, NotBlank, Size, Min, Max, Positive, Email, Pattern,
 )
-from spring.validation.validator import BeanValidator, ConstraintViolation
+from spring.validation.validator import BeanValidator
 
 
 # ==================== 1. 组合式：四模块注解同用一类 ====================

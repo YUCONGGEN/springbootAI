@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 from spring.config.config_loader import config_loader
 from spring.context.registry import BeanRegistry
-from spring.langgraph.config import LangGraphProperties, bind_langgraph_config
+from spring.langgraph.config import bind_langgraph_config
 from spring.langgraph.runtime import LangGraphRuntime
 
 logger = logging.getLogger("Spring.LangGraph")

@@ -1,10 +1,7 @@
 """
 Cloud 微服务 — 测试 Nacos 服务发现、Feign 调用、负载均衡、Sentinel、分布式事务
 """
-from spring.annotations.core import Service, Autowired, Slf4j, PostConstruct
-from spring.annotations.cloud import (
-    EnableDiscoveryClient,
-)
+from spring.annotations.core import Service, Slf4j, PostConstruct
 
 
 @Slf4j

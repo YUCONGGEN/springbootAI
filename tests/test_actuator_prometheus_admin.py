@@ -3,7 +3,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from spring.web import actuator as actuator_module
-from spring.web.actuator import actuator_router, configure_actuator
+from spring.web.actuator import actuator_router
 
 
 @pytest.fixture

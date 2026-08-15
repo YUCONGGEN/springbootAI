@@ -5,7 +5,7 @@ Event/Listener 事件发布订阅服务
 """
 from typing import List
 from spring.annotations.core import (
-    Service, EventListener, ApplicationEvent, Autowired, Slf4j, PostConstruct,
+    Service, EventListener, ApplicationEvent, Slf4j, PostConstruct,
 )
 
 

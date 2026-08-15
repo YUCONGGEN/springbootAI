@@ -15,7 +15,6 @@ example_all 全量集成测试脚本
 """
 import sys
 import os
-import json
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))

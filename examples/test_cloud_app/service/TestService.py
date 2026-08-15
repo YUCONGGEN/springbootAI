@@ -1,4 +1,4 @@
-from spring.annotations.core import Service, Autowired, Qualifier, Transactional, Cacheable, Async, Retryable, Slf4j, PostConstruct, PreDestroy
+from spring.annotations.core import Service, Autowired, Transactional, Cacheable, Async, Retryable, Slf4j, PostConstruct, PreDestroy
 
 
 @Slf4j

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Any, AsyncIterator, Callable, Dict, Optional
 
-from spring.mcp.client import MCPDependencyError, require_mcp_sdk
+from spring.mcp.client import require_mcp_sdk
 from spring.mcp.config import MCPConfigurationError, MCPServerProperties
 
 logger = logging.getLogger("Spring.MCP.Server")

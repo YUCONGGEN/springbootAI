@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Literal, TypedDict
+from typing import TypedDict
 
 import pytest
 

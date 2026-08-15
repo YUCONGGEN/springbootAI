@@ -12,8 +12,7 @@ from spring.annotations.core import (
 )
 from spring.annotations.cloud import (
     EnableDiscoveryClient, NacosValue, RefreshScope,
-    EnableFeignClients, FeignClient,
-    LoadBalanced, SentinelResource, EnableGateway,
+    LoadBalanced, SentinelResource,
     GlobalTransactional,
 )
 from spring.web.result import Result

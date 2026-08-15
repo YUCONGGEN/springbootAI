@@ -8,8 +8,7 @@ Web全注解控制器 — 测试所有 Web 请求映射和参数绑定注解
 from spring.annotations.core import (
     RestController, Controller,
     RequestMapping, GetMapping, PostMapping, PutMapping, DeleteMapping,
-    RequestParam, PathVariable, RequestBody, RequestHeader, CookieValue,
-    CrossOrigin, Autowired, Qualifier, Slf4j, ResponseStatus,
+    CrossOrigin, Autowired, Slf4j, ResponseStatus,
 )
 from spring.web.result import Result
 from example_all.service.AllAnnotationService import AllAnnotationService

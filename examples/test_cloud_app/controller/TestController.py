@@ -1,7 +1,6 @@
 from spring.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping, PutMapping, DeleteMapping,
-    RequestParam, PathVariable, RequestBody, RequestHeader, CookieValue,
-    Autowired, Qualifier
+    Autowired,
 )
 from spring.web.result import Result
 

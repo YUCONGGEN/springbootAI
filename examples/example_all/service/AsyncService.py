@@ -2,7 +2,7 @@
 异步服务 — 测试 @Async 和 @AsyncResult
 """
 import time
-from spring.annotations.core import Service, Slf4j, Async, AsyncResult, PostConstruct
+from spring.annotations.core import Service, Slf4j, Async, PostConstruct
 
 
 @Slf4j

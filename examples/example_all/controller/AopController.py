@@ -5,7 +5,7 @@ AOP 注解控制器 — 测试企业级 AOP 注解
 """
 from spring.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping,
-    Autowired, Slf4j, RateLimit,
+    Autowired, Slf4j,
 )
 from spring.web.result import Result
 from spring.aop.comprehensive_aop import (

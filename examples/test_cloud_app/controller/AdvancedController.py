@@ -4,8 +4,6 @@ from spring.annotations.core import (
     GetMapping,
     PostMapping,
     Autowired,
-    RateLimit,
-    Validate,
 )
 from spring.web.result import Result
 from spring.aop.comprehensive_aop import (

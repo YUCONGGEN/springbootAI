@@ -7,7 +7,6 @@ from spring.annotations.core import (
     GetMapping,
     PostMapping,
     RequestMapping,
-    RequestParam,
     Autowired,
     Slf4j,
 )
