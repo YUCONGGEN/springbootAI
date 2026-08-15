@@ -1,4 +1,4 @@
-# GitHub 与 PyPI 发布检查清单
+﻿# GitHub 与 PyPI 发布检查清单
 
 这份清单用于发布 SpringBootAI。第一次发布时从上到下执行，不要跳过失败项。
 
@@ -63,7 +63,7 @@ bandit -r spring example_langchain example_langgraph example_mcp -ll -q
 .\scripts\run-load-test.ps1 -Profile smoke -Workload mixed -Rate 5 -Duration 20s
 ```
 
-预期：阈值全部通过、HTTP 失败率为 0、无 dropped iteration。它只验证压测链路，不代表企业容量；9 小时测试命令见 [`tests_performance/README.md`](../tests_performance/README.md)。
+预期：阈值全部通过、HTTP 失败率为 0、无 dropped iteration。它只验证压测链路，不代表企业容量；9 小时测试命令见 [`tests/performance/README.md`](../tests/performance/README.md)。
 
 ## 5. 构建并检查制品
 

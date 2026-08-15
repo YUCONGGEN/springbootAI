@@ -95,6 +95,8 @@ class ApplicationContext:
         if self._started:
             return
 
+        # 记录刷新前的 Bean 名快照，失败时回滚到该状态，避免部分 Bean 已注册导致不一致
+        snapshot = set(self.bean_factory.get_bean_names()) if hasattr(self.bean_factory, 'get_bean_names') else set()
         try:
             self._load_config()
             self._scan_components()
@@ -109,7 +111,38 @@ class ApplicationContext:
             import traceback
             self.logger.error(f"Failed to refresh application context: {str(e)}")
             self.logger.error(traceback.format_exc())
+            # 回滚：移除本次 refresh 新注册的 Bean，清理已创建的资源，确保状态一致
+            self._rollback_refresh(snapshot)
             raise
+
+    def _rollback_refresh(self, snapshot: set) -> None:
+        """refresh() 失败时回滚到刷新前的状态。
+
+        - 移除本次新增的 Bean 定义和实例
+        - 停止已启动的定时任务
+        - 关闭已初始化的连接池等资源
+        """
+        try:
+            # 停止定时任务（若已启动）
+            if self._scheduler is not None:
+                try:
+                    self._scheduler.shutdown(wait=False)
+                except Exception:
+                    pass
+                self._scheduler = None
+
+            # 移除本次新增的 Bean
+            current_names = set(self.bean_factory.get_bean_names()) if hasattr(self.bean_factory, 'get_bean_names') else set()
+            for name in current_names - snapshot:
+                try:
+                    if hasattr(self.bean_factory, 'remove_bean_definition'):
+                        self.bean_factory.remove_bean_definition(name)
+                    elif hasattr(self.bean_factory, '_bean_definitions'):
+                        self.bean_factory._bean_definitions.pop(name, None)
+                except Exception:
+                    pass
+        except Exception:
+            pass  # 回滚失败不应掩盖原始异常
 
     def _load_config(self) -> None:
         self.config_loader.load_config()

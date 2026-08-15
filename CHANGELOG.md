@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.2.6] - 2026-08-15
+
+### 新增
+
+- **Seata AT 数据源代理**：新增 `spring/cloud/seata_at_proxy.py`（500 行），在 ORM 拦截器层自动记录 SQL 的 before/after image，生成 undo_log，全局事务回滚时自动反向恢复数据。支持 MySQL(`%s`) 和 SQLite(`?`) 占位符自动适配。Seata 模式从三模式（local/http/distributed）扩展为四模式（新增 `at`）。
+- **AT 代理测试**：新增 `tests/test_seata_at_proxy.py`（18 项全通过），覆盖 SQL 解析、undo_log CRUD、undo 反向恢复（INSERT→DELETE / UPDATE→UPDATE before / DELETE→INSERT before）、AT 拦截器记录、提交删除 undo_log。
+
+### 重构
+
+- **目录整合**：`example_all`、`example_langchain`、`example_langgraph`、`example_mcp`、`test_cloud_app` 五个散落目录合并到 `examples/` 下；`tests_integration`、`tests_performance`、`tests_runtime` 合并到 `tests/integration/`、`tests/performance/`、`tests/runtime/`。`pyproject.toml` 的 `pythonpath` 增加 `examples`，5 个入口脚本修复 `sys.path`。
+- **文档整理**：`REPOSITORY_MODULE.md` 合并到 `ORM_MODULE.md`（减少文档碎片），更新 README 导航表和 3 处引用。
+- **路径引用同步**：CI 4 个 workflow、11 个文档、Dockerfile、benchmark_app.py 中的 example/tests 路径全部更新。
+
+### 文档
+
+- `README.md` Seata 边界说明从"⚠️ 有边界"改为"✅ 可用"（3 处）。
+- `doc/CLOUD_MODULE.md` 新增 AT 模式使用指南（工作流程图 + 代码示例 + 限制说明）。
+- `doc/ORM_MODULE.md` 新增"Repository 分页查询"章节（原 REPOSITORY_MODULE.md 内容）。
+- 25 个文件版本号从 2.2.5 更新到 2.2.6。
+
 ## [2.2.5] - 2026-08-14
 
 ### 新增
@@ -14,7 +34,6 @@
 - `doc/ACTUATOR_MODULE.md` 新增第四章（Spring Boot Admin 可视化面板）、第五章（Prometheus + Grafana 工业级监控，含三步接入流程与多 worker 注意事项）、第六章（自定义业务指标）。
 - `doc/ORM_MODULE.md` 第五章新增"方法 1：@SelectPage 注解（推荐）"小节。
 - `README.md` 4.8 健康检查表新增 `/actuator/admin`、`/actuator/prometheus`、`/actuator/sysmetrics` 三个端点。
-- `doc/EIGHT_MODULES.md` Actuator 模块说明补充"Spring Boot Admin 可视化 + Prometheus 指标"。
 
 ### 测试
 

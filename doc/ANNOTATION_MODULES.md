@@ -1,6 +1,6 @@
-# SpringBootAI 常用注解模块指南
+﻿# SpringBootAI 常用注解模块指南
 
-> 框架版本：SpringBootAI 2.2.0
+> 框架版本：SpringBootAI 2.2.6
 
 ---
 
@@ -401,3 +401,15 @@ except OptimisticLockError:
 ### Q4: 缓存的 key 能用多个参数吗？
 
 可以。例如 `@Cacheable(key="{id}-{type}")` 会根据 `id` 和 `type` 两个参数的值组合成 key。
+
+---
+
+## 改进记录
+
+### Validation Size 约束对非字符串/集合类型静默通过 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/validation/constraints.py` Size 约束类
+
+**现象**：`Size` 约束使用 `len(value)` 检查长度，但若 value 是 `int`/`float`/`None`，`len()` 会抛 `TypeError`，当前实现可能 catch 异常并静默通过，导致无效数据未被拦截。
+
+**改进方案**：`Size` 约束应先检查 `isinstance(value, (str, bytes, list, dict, tuple, set))`，不匹配类型时返回 `False`（校验失败）。`@Size` 注解文档说明仅适用于字符串和集合类型。

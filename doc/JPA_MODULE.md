@@ -1,6 +1,6 @@
-# SpringBootAI JPA 实体与仓库 —— 使用指南
+﻿# SpringBootAI JPA 实体与仓库 —— 使用指南
 
-> 框架版本：SpringBootAI 2.2.5 / 内嵌 PyMyBatis 2.2.5
+> 框架版本：SpringBootAI 2.2.6 / 内嵌 PyMyBatis 2.2.6
 
 ---
 
@@ -341,7 +341,7 @@ user_mapper.update(user)              # 执行 UPDATE
 
 | 模块 | 文档 | 说明 |
 |------|------|------|
-| Spring Data Repository | [REPOSITORY_MODULE.md](REPOSITORY_MODULE.md) | 分页、排序、条件查询（`PagingAndSortingRepository`） |
+| Spring Data Repository | [ORM_MODULE.md - Repository 章节](ORM_MODULE.md#repository-分页查询--不用手写sql的分页) | 分页、排序、条件查询（`PagingAndSortingRepository`） |
 | 测试切片 | [TEST_SLICE_MODULE.md](TEST_SLICE_MODULE.md) | `DataJpaTest` 数据层测试 |
 | ORM 完整指南 | [ORM_MODULE.md](ORM_MODULE.md) | Mapper 注解 / XML Mapper / DDL 配置 / 类型映射表 |
 

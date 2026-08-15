@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 # ====================================================================
 # CI 工作流：核心 + AI + LangChain + LangGraph + MCP 全量测试
@@ -99,11 +99,11 @@ jobs:
     - name: Run LangChain demo smoke test (15 chapters)
       run: |
         echo "Running LangChain full demo (15 chapters, no API Key needed)..."
-        python example_langchain/demo/langchain_full_demo.py
+        python examples/example_langchain/demo/langchain_full_demo.py
 
     - name: Run real runtime-path tests with cumulative coverage gate
       run: |
-        pytest tests_runtime/ -v --tb=short \
+        pytest tests/runtime/ -v --tb=short \
           --cov=spring --cov-append --cov-report=xml --cov-report=term \
           --cov-fail-under=60
 
@@ -190,13 +190,13 @@ jobs:
         RUN_INTEGRATION_TESTS: "1"
         RUN_SEATA_INTEGRATION_TESTS: "1"
         SEATA_BRIDGE_TOKEN: springpy-integration-secret
-      run: pytest tests_integration/ -m integration -v --tb=short
+      run: pytest tests/integration/ -m integration -v --tb=short
 
     - name: Verify Redis outage fails closed
       run: |
         docker compose -f docker-compose.integration.yml stop redis
         RUN_FAILURE_INTEGRATION_TESTS=1 pytest \
-          tests_integration/test_middleware_failure_modes.py::test_redis_outage_fails_closed \
+          tests/integration/test_middleware_failure_modes.py::test_redis_outage_fails_closed \
           -v --tb=short
         docker compose -f docker-compose.integration.yml up -d --wait redis
 
@@ -204,7 +204,7 @@ jobs:
       run: |
         docker compose -f docker-compose.integration.yml stop seata-bridge
         RUN_FAILURE_INTEGRATION_TESTS=1 pytest \
-          tests_integration/test_middleware_failure_modes.py::test_seata_bridge_outage_fails_closed \
+          tests/integration/test_middleware_failure_modes.py::test_seata_bridge_outage_fails_closed \
           -v --tb=short
         docker compose -f docker-compose.integration.yml up -d --wait seata-bridge
 

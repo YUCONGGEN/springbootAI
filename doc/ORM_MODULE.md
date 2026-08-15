@@ -1,6 +1,6 @@
-# SpringBootAI 数据库操作（ORM）—— 使用指南
+﻿# SpringBootAI 数据库操作（ORM）—— 使用指南
 
-> 框架版本：SpringBootAI 2.2.5 / 内嵌 PyMyBatis 2.2.5
+> 框架版本：SpringBootAI 2.2.6 / 内嵌 PyMyBatis 2.2.6
 
 ---
 
@@ -483,7 +483,7 @@ def find(self, table: str, id: int):
 
 #### 方式一：@SelectPage 注解（推荐）
 
-> **v2.2.5+ 新增**：Mapper 方法上加 `@SelectPage`，框架自动执行 COUNT + LIMIT/OFFSET。
+> **v2.2.6+ 新增**：Mapper 方法上加 `@SelectPage`，框架自动执行 COUNT + LIMIT/OFFSET。
 
 ```python
 from spring.orm import Mapper, SelectPage
@@ -857,3 +857,107 @@ A: 启动验证和自动化测试。进程退出后数据就没了，不适合�
 **Q: 如何确保 ORM 配置正确？**
 
 A: ① 启动日志没有 Mapper 未注册或连接失败；② 调插入接口后能在数据库里查到记录；③ 在 `@Transactional` 方法里故意抛异常，确认数据回滚；④ 并发请求后连接池没有持续耗尽。
+
+---
+
+## Repository 分页查询 —— 不用手写SQL的分页
+
+### 你遇到了什么问题？
+
+前端请求"第 1 页，每页 20 条，按创建时间倒序"。你要手写 `SELECT COUNT(*)`、`LIMIT`、`OFFSET`、`ORDER BY`……每个列表接口都写一遍，烦得要死还容易出错。
+
+### ① 是什么
+
+**把数据库查询变成翻书操作。** 你只需要告诉框架：第几页、每页几条、按什么排序，框架自动生成 SQL 并把结果装进对象里。就像你去图书馆借书，跟管理员说"我要第 3 排第 5 本"，不用自己翻。
+
+### ② 怎么用
+
+```python
+from spring.orm.ddl_auto import entity, Id, Column
+from spring.data import PagingAndSortingRepository, Pageable, Sort, Specification
+
+# 定义实体（数据库表对应的类）
+@entity("users")
+class User:
+    id = Id()
+    name = Column("user_name")
+    age = Column()
+    def __init__(self, id=None, name=None, age=None):
+        self.id = id; self.name = name; self.age = age
+
+# pool 是你的数据库连接池（和 ORM 共用）
+repo = PagingAndSortingRepository(pool, User, dialect="mysql")
+
+# --- 基础 CRUD ---
+repo.save(User(name="小明", age=20))
+repo.save_all([User(name="小红"), User(name="小刚")])
+
+user = repo.find_by_id(1)
+print(user)  # 输出: User(id=1, name="小明", age=20)
+
+all_users = repo.find_all()          # 查全部
+repo.exists_by_id(1)                 # 输出: True
+repo.count()                         # 输出: 3
+repo.delete_by_id(1)                 # 删一条
+repo.delete_all()                    # 删全部
+
+# --- 分页：第 0 页，每页 10 条 ---
+page = repo.find_all(Pageable.of(page=0, size=10))
+print(page.content)           # 当前页数据列表
+print(page.total_elements)    # 总条数，如 30
+print(page.total_pages)       # 总页数，如 3
+print(page.has_next())        # 还有下一页吗？True
+
+# --- 排序：按年龄降序 ---
+sorted_users = repo.find_all(sort=Sort.by("user_name").descending())
+# 结果：按 user_name 字段 Z→A 排列
+
+# --- 条件筛选：只查成年人 ---
+class AdultSpec(Specification):
+    def to_predicate(self, root, col_resolver):
+        return ("age >= ?", [18], "AND")  # 参数绑定防 SQL 注入
+
+adults = repo.find_all(specification=AdultSpec())
+# 结果：只返回 age >= 18 的用户
+
+# --- 分页 + 排序 + 筛选 三合一 ---
+page = repo.find_all(
+    Pageable.of(0, 10, Sort.by("age")),
+    specification=AdultSpec()
+)
+# 结果：第 0 页、每页 10 条、按年龄排序、而且只要成年人
+
+# --- 复合条件：成年 AND 名字包含"明" ---
+from spring.data import Specifications
+spec = Specifications.where(AdultSpec()).and_(NameSpec())
+```
+
+### ③ 运行结果
+
+你只需调用一个 `repo.find_all(Pageable.of(page=0, size=10))`，框架自动执行：
+- 一条 `SELECT COUNT(*)` 查总条数
+- 一条 `SELECT ... LIMIT 10 OFFSET 0` 查当前页数据
+- 返回封装好的 `Page` 对象，包含数据、总页数、总条数、是否有下一页
+
+### mini-FAQ
+
+**Q：页码从 0 还是从 1 开始？**
+从 0 开始。`Pageable.of(page=0, size=10)` 是第一页。`page=1` 是第二页。
+
+**Q：大数据量分页慢怎么办？**
+确保 `Sort.by()` 的字段在数据库中有索引。另外总条数查询（`SELECT COUNT(*)`）在大表上可能较慢。
+
+**Q：能像 Java Spring 那样写 `findByNameAndAge` 吗？**
+不支持方法名派生查询。需要用 `Specification` 手写条件。
+
+---
+
+## 改进记录
+
+### SQL 注入检测器对正常 DML 语句误报 — 高 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/orm/pymybatis/security/sql_injection_detector.py` INJECTION_PATTERNS
+
+**现象**：`INJECTION_PATTERNS` 中包含 `\b(DROP|DELETE|UPDATE|INSERT|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b`，级别为 HIGH。而 `DEFAULT_DETECTOR` 的 `max_risk_level=LOW`，意味着任何包含 `DELETE`/`UPDATE`/`INSERT` 关键字的正常业务 SQL 或参数值（如用户输入 "Please update your profile"）都会被误判为注入风险并被阻止。
+
+**修复方案**：从 `INJECTION_PATTERNS`（用于检测参数值）中移除 `DELETE`/`UPDATE`/`INSERT`/`CREATE`，仅保留 DDL 关键字 `DROP`/`TRUNCATE`/`ALTER`/`GRANT`/`REVOKE`。DDL 语句仍由 `DDL_PATTERNS` 按语句前缀检测。

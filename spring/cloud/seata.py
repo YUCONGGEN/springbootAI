@@ -2,10 +2,12 @@
 分布式事务模块
 通过官方 Java 客户端桥接真实 Apache Seata，并提供仅供开发验证的 HTTP 补偿协调器
 
-支持三种模式：
+支持四种模式：
 - local: 本地模式，仅追踪事务状态（默认）
 - http: 实验性 HTTP 补偿模式，不提供 AT 强一致性，禁止用于生产
 - distributed: 真实 Seata Server + TCC 模式（需要官方 Java 客户端桥接服务）
+- at: AT 模式，通过 ORM 拦截器自动记录 undo_log，回滚时自动反向恢复数据
+      需配合 ``SeataATProxy.install()`` 使用，详见 ``spring.cloud.seata_at_proxy``
 
 实验性 HTTP 补偿模式工作原理：
 1. TM（事务发起方）开启全局事务，生成XID
@@ -80,6 +82,8 @@ class SeataTransactionManager:
         self._recovery_interval_s = 30.0
         self._recovery_stop = threading.Event()
         self._recovery_thread: Optional[threading.Thread] = None
+        # 降级开关：distributed 模式下 bridge 不可达时是否降级为本地事务（默认 False=直接失败）
+        self._fallback_to_local = False
 
         # HTTP compensation mode stores coordinator metadata durably.  Branch
         # callbacks still need callback_url to be recoverable after a restart.
@@ -107,6 +111,7 @@ class SeataTransactionManager:
         recovery_grace_ms: int = 30000,
         recovery_interval_s: float = 30.0,
         callback_allowed_hosts: Optional[List[str]] = None,
+        fallback_to_local: bool = False,
     ) -> None:
         """重新配置单例；初始化入口不能依赖第二次构造调用。"""
         client_config_changed = (
@@ -142,6 +147,7 @@ class SeataTransactionManager:
             self._transaction_store_path = normalized_path
         self._recovery_grace_ms = max(0, int(recovery_grace_ms))
         self._recovery_interval_s = max(0.0, float(recovery_interval_s))
+        self._fallback_to_local = bool(fallback_to_local)
         self.set_mode(mode)
 
     def _validate_callback_url(self, callback_url: str) -> str:
@@ -284,6 +290,14 @@ class SeataTransactionManager:
         
         elif self.mode == "distributed":
             if not (self._bridge_client and self._seata_client_initialized):
+                # bridge 未初始化：根据配置决定降级还是直接失败
+                if self._fallback_to_local:
+                    logger.warning(
+                        "[Seata] distributed bridge not initialized, falling back to local transaction "
+                        "(seata.fallback_to_local=True)"
+                    )
+                    # 降级为本地事务：上下文已设置，直接返回 tx_id
+                    return tx_id
                 self._cleanup_context()
                 raise RuntimeError("distributed Seata client is not initialized")
             try:
@@ -304,6 +318,13 @@ class SeataTransactionManager:
                 logger.info(f"[Seata] Begin global transaction (distributed): {tx_id}")
                 return tx_id
             except Exception as e:
+                if self._fallback_to_local:
+                    logger.warning(
+                        "[Seata] distributed begin failed (%s), falling back to local transaction "
+                        "(seata.fallback_to_local=True)", e
+                    )
+                    # 上下文已设置（in_transaction=True, tx_id 已生成），直接降级返回
+                    return tx_id
                 self._cleanup_context()
                 raise RuntimeError(f"failed to begin distributed Seata transaction: {e}") from e
         
@@ -801,8 +822,8 @@ class SeataTransactionManager:
     
     def set_mode(self, mode: str):
         """设置事务模式 (local/http/distributed)"""
-        if mode not in ["local", "http", "distributed"]:
-            raise ValueError("Mode must be 'local', 'http' or 'distributed'")
+        if mode not in ["local", "http", "distributed", "at"]:
+            raise ValueError("Mode must be 'local', 'http', 'distributed' or 'at'")
 
         if mode != 'http':
             self.stop_recovery_worker()

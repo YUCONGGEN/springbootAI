@@ -1,0 +1,80 @@
+# Prometheus 告警规则
+# 评估周期：每 15 秒（由 evaluation_interval 控制）
+
+groups:
+  - name: springbootai-alerts
+    rules:
+      # ═══════════ 高 severity ═══════════
+
+      # 应用宕机：健康检查端点不可达
+      - alert: AppDown
+        expr: up{job="springbootai"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SpringBootAI 应用已宕机"
+          description: "实例 {{ $labels.instance }} 无法访问，已持续 1 分钟。"
+
+      # CPU 使用率过高（基于进程 CPU 时间增长率）
+      - alert: HighCpuUsage
+        expr: rate(process_cpu_seconds_total{job="springbootai"}[1m]) > 0.8
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CPU 使用率过高"
+          description: "实例 {{ $labels.instance }} CPU 使用率超过 80%，已持续 5 分钟。"
+
+      # 内存使用过高（RSS > 1GB）
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{job="springbootai"} > 1073741824
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "内存使用过高"
+          description: "实例 {{ $labels.instance }} RSS 内存超过 1GB（当前 {{ $value | humanize1024 }}），已持续 5 分钟。"
+
+      # ═══════════ 中 severity ═══════════
+
+      # 文件描述符接近上限
+      - alert: HighFileDescriptors
+        expr: process_open_fds{job="springbootai"} > 900
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "文件描述符数过高"
+          description: "实例 {{ $labels.instance }} 打开 FD 数 {{ $value }}（阈值 900），可能存在资源泄漏。"
+
+      # GC 压力过大（每秒 GC 次数 > 10）
+      - alert: HighGcPressure
+        expr: rate(python_gc_collections{job="springbootai"}[1m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GC 压力过大"
+          description: "实例 {{ $labels.instance }} 每秒 GC 次数超过 10，可能影响响应延迟。"
+
+      # 进程重启（启动时间变化）
+      - alert: ProcessRestarted
+        expr: changes(process_start_time_seconds{job="springbootai"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "进程已重启"
+          description: "实例 {{ $labels.instance }} 在过去 5 分钟内发生了重启。"
+
+      # ═══════════ 低 severity ═══════════
+
+      # 抓取失败
+      - alert: ScrapeFailure
+        expr: up{job="springbootai"} == 0
+        for: 30s
+        labels:
+          severity: info
+        annotations:
+          summary: "Prometheus 抓取失败"
+          description: "无法抓取 {{ $labels.instance }} 的指标，请检查 /actuator/prometheus 端点。"

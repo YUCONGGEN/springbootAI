@@ -1,0 +1,16 @@
+# Grafana Dashboard 自动配置
+# 启动时自动加载 dashboards/ 目录下的 JSON 文件
+
+apiVersion: 1
+
+providers:
+  - name: SpringBootAI
+    orgId: 1
+    folder: SpringBootAI
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true

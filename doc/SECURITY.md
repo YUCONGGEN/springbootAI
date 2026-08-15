@@ -1,6 +1,6 @@
-# SpringBootAI 安全模块 —— 小白也能看懂的 Web 安全指南
+﻿# SpringBootAI 安全模块 —— 小白也能看懂的 Web 安全指南
 
-> 框架版本：SpringBootAI 2.2.0
+> 框架版本：SpringBootAI 2.2.6
 
 ---
 
@@ -501,3 +501,23 @@ BCrypt 每次生成哈希时会随机加盐，所以同样的密码两次生成�
 - 已知的临时缓解措施
 
 维护者会协调修复和披露时间；在修复发布前不要公开漏洞细节。
+
+---
+
+## 改进记录
+
+### JWT 默认密钥硬编码 — 高 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/security/jwt_utils.py` configure() / init_jwt()
+
+**现象**：`configure()` 在 `secret_key=None` 时回退到硬编码默认值 `'spring-python-secret-key-change-in-production'`。开发环境误暴露到公网时，攻击者可用已知密钥伪造任意 JWT。
+
+**修复方案**：移除硬编码默认值，改为优先读 `JWT_SECRET_KEY` 环境变量，缺失时生成进程级随机密钥（`secrets.token_hex(32)`）+ 警告日志；检测到旧版硬编码密钥时自动替换为随机密钥。
+
+### JWT generate_refresh_token 多余编解码 — 中 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/security/jwt_utils.py` generate_refresh_token()
+
+**现象**：生成 refresh token 的流程是 `generate_token()` → `jwt.decode(verify_signature=False)` → 修改 `token_type` → `jwt.encode()`，多做了一次无意义的编解码。
+
+**修复方案**：直接构造 payload 一次 encode，去掉 decode→修改→reencode 流程。

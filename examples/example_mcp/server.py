@@ -1,10 +1,21 @@
 """Runnable SpringBootAI MCP Server demo.
 
 Run from the project root:
-    python -m example_mcp.server
+    python examples/example_mcp/server.py
 
 The endpoint is http://127.0.0.1:8001/mcp.
 """
+
+import os
+import sys
+
+# 加入项目根和 examples/ 到 sys.path，支持直接 python examples/example_mcp/server.py 运行
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_EXAMPLES_DIR = os.path.dirname(_HERE)
+_PROJECT_ROOT = os.path.dirname(_EXAMPLES_DIR)
+for _p in (_PROJECT_ROOT, _EXAMPLES_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from spring.ai import ToolExecutionPolicy, ToolRegistry
 from spring.mcp import MCPServerAdapter, MCPServerProperties

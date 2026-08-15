@@ -1,4 +1,8 @@
-# SpringBootAI
+﻿# SpringBootAI
+
+<p align="center">
+  <img src="doc/images/hero-banner.png" alt="SpringBootAI 功能总览" width="100%" />
+</p>
 
 [![PyPI](https://img.shields.io/pypi/v/springbootAI)](https://pypi.org/project/springbootAI/)
 [![Python](https://img.shields.io/pypi/pyversions/springbootAI)](https://pypi.org/project/springbootAI/)
@@ -17,7 +21,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.2.1`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 当前验证的是官方 TC + TCC 回调，不会为 Python 数据库操作自动生成 AT `undo_log`。
+当前版本是 `2.2.6`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -117,7 +121,7 @@ curl http://127.0.0.1:8080/api/hello/Alice
 | 📦 LangChain | [LANGCHAIN_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGCHAIN_MODULE.md) | `pip install springbootAI[langchain]` | Chains / Agents / Memory / Retrievers / VectorStores / 30+ 提供商 |
 | 📦 LangGraph | [LANGGRAPH_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGGRAPH_MODULE.md) | `pip install springbootAI[langgraph]` | 状态图 / 条件路由 / 人工中断 / 注解式工作流 |
 | 📦 MCP | [MCP_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/MCP_MODULE.md) | `pip install springbootAI[mcp]` | MCP Client / Server / Tool / Resource / Prompt / 注解调用 |
-| ✅ 内嵌 PyMyBatis ORM | [ORM_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 |
+| ✅ 内嵌 PyMyBatis ORM | [ORM_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 / Repository 分页查询 |
 | ✅ JPA 实体与仓库 | [JPA_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/JPA_MODULE.md) | 随核心包 | `@Entity` + `@Table` / 字段自动推断 / `@CreateTime` / Repository / DataJpaTest |
 | ✅ Cloud 微服务 | [CLOUD_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 分布式事务 |
 | 📦 Excel 读写 | [EXCEL_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/EXCEL_MODULE.md) | `pip install springbootAI[excel]` | `@ExcelProperty` / `@ExcelIgnore` 注解驱动读写 |
@@ -125,7 +129,6 @@ curl http://127.0.0.1:8080/api/hello/Alice
 | ✅ Swagger 文档 | [SWAGGER_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SWAGGER_MODULE.md) | 随核心包 | `@Tag` / `@Operation` 注解驱动 API 文档 |
 | ✅ 安全 | [SECURITY.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SECURITY.md) | 随核心包 | JWT 生成校验 / 密码加密 / SQL 注入防护 / 访问控制 |
 | ✅ BeanUtils | [BEAN_UTILS.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEAN_UTILS.md) | 随核心包 | `copy_properties` / `clone` 属性复制工具 |
-| ✅ ① Repository | [REPOSITORY_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/REPOSITORY_MODULE.md) | 随核心包 | 不用手写SQL的分页查询 |
 | ✅ ② Actuator | [ACTUATOR_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ACTUATOR_MODULE.md) | 随核心包 | 系统健康检查面板 |
 | ✅ ③ 多数据源 | [DATASOURCE_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/DATASOURCE_MODULE.md) | 随核心包 | 读写分离 |
 | ✅ ④ 事务事件 | [TX_EVENT_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/TX_EVENT_MODULE.md) | 随核心包 | 操作完成后自动发通知 |
@@ -189,10 +192,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `spring` 框架 API | 2.2.1 |
-| `spring.orm.pymybatis` | 2.2.1 |
-| `spring.ai` AI 模块 | 2.2.1 |
-| `spring.langchain` LangChain 模块 | 2.2.1 |
+| `spring` 框架 API | 2.2.6 |
+| `spring.orm.pymybatis` | 2.2.6 |
+| `spring.ai` AI 模块 | 2.2.6 |
+| `spring.langchain` LangChain 模块 | 2.2.6 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景
@@ -208,7 +211,7 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 - `@Transactional` 支持七种 Spring 传播模式；`REQUIRES_NEW` 和 `NOT_SUPPORTED` 需要连接池有额外可用连接。
 - Profile 会筛选 `@Profile` Bean，并深度合并同目录的 `application-{profile}.yml`。
 - Nacos、RabbitMQ、Prometheus 依赖外部服务；Sentinel 限流熔断和 OpenTelemetry 追踪可内嵌运行。
-- HTTP 事务模式是持久化补偿协调器，不提供 Seata AT 一致性；`distributed` 模式当前提供真实 Seata TC + TCC 回调，不会自动代理 Python 数据源或生成 `undo_log`。
+- HTTP 事务模式是持久化补偿协调器；`distributed` 模式提供真实 Seata TC + TCC 回调；`at` 模式通过 ORM 拦截器自动记录 undo_log 并在回滚时反向恢复数据。
 - 限流、分布式锁、幂等和缓存语义依赖 Redis 等后端；核心业务必须选择 fail-closed，不能依赖进程内降级继续提供分布式语义。
 
 ### 1.6 注解使用总览
@@ -243,7 +246,7 @@ SpringBootAI 注解会先把元数据放到 `__spring_annotations__`。之后是
 | Nacos 服务发现 | ✅ 可用 | 服务注册/发现/订阅 |
 | Sentinel 限流熔断 | ✅ 可用 | 内嵌引擎，QPS 限流、异常比例熔断、热点参数限流，无需 Dashboard |
 | 分布式追踪 | ✅ 可用 | 原生 OpenTelemetry(W3C traceparent)，自动 HTTP/Feign 注入 |
-| Seata 分布式事务 | ⚠️ 有边界 | `distributed` 对接真实 Seata TC 并执行 TCC 回调；`http` 仅提供持久化补偿；均不等同 Python AT 数据源代理 |
+| Seata 分布式事务 | ✅ 可用 | `distributed` 对接真实 Seata TC 执行 TCC 回调；`at` 模式通过 ORM 拦截器自动记录 undo_log 并反向恢复；`http` 提供持久化补偿 |
 | API Gateway | ✅ 可用 | 轻量 ASGI/WSGI 网关，路由转发、路径重写、过滤器链、负载均衡 |
 | Prometheus 监控 | ✅ 可用 | Counter/Gauge/Histogram 指标暴露 |
 | Feign 声明式 HTTP | ✅ 可用 | 声明式接口、Fallback 降级、自动传播 XID 和 trace 头 |
@@ -348,7 +351,7 @@ python -c "from spring.orm.pymybatis import __version__; print(__version__)"
 
 ### 3.5 最小应用
 
-仓库中的 `example_all`、`example_langchain`、`example_langgraph`、`example_mcp`、`test_cloud_app` 只用于源码参考和回归验证，不会打包进 `springbootAI`。安装后请按下面结构创建自己的应用包。**每个被扫描目录都必须包含 `__init__.py`，并从项目根目录启动。**
+仓库中的 `examples/example_all`、`examples/example_langchain`、`examples/example_langgraph`、`examples/example_mcp`、`examples/test_cloud_app` 只用于源码参考和回归验证，不会打包进 `springbootAI`。安装后请按下面结构创建自己的应用包。**每个被扫描目录都必须包含 `__init__.py`，并从项目根目录启动。**
 
 创建包结构：
 
@@ -1526,7 +1529,7 @@ curl http://localhost:8080/actuator/health
 
 ## 15. 项目结构
 
-`example_all`、`example_langchain`、`example_langgraph`、`example_mcp`、`test_cloud_app` 是仓库级示例，不属于 `springbootAI` 安装包。实际项目应创建自己的应用包。
+`examples/example_all`、`examples/example_langchain`、`examples/example_langgraph`、`examples/example_mcp`、`examples/test_cloud_app` 是仓库级示例，不属于 `springbootAI` 安装包。实际项目应创建自己的应用包。
 
 推荐目录结构：
 
@@ -1633,7 +1636,7 @@ python -m pytest -q tests
 .\scripts\run-load-test.ps1 -Profile smoke
 ```
 
-完整参数和说明见 [性能测试指南](https://github.com/YUCONGGEN/springbootAI/blob/master/tests_performance/README.md)。
+完整参数和说明见 [性能测试指南](https://github.com/YUCONGGEN/springbootAI/blob/master/tests/performance/README.md)。
 
 AI、LangChain、LangGraph 和 MCP 已提供独立 workload，并已加入 9 小时 `mixed` 长稳测试。默认使用 Fake 模型和进程内 MCP Server，不访问外部模型、不会产生 Token 费用：
 

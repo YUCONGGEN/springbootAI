@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import csv as _csv
 import inspect
-from typing import Any, List, Optional, Type
+from typing import Any, Iterator, List, Optional, Type
 
 from .annotations import (
     CsvColumnModel, CsvFile, _get_class_file_meta, has_explicit_properties,
@@ -151,6 +151,58 @@ class CsvReader:
                 kwargs[model.attr_name] = value
             results.append(_build_instance(self.head, kwargs))
         return results
+
+    def doReadLazy(self) -> Iterator[Any]:
+        """流式读取 CSV，逐行 yield 实体对象。
+
+        使用 Python ``csv.reader`` 逐行读取，不一次性加载全部行到内存，
+        适用于 10 万行以上的大文件，避免内存溢出。
+
+        注意：调用方必须消费完生成器（或显式 close），以确保文件句柄被正确关闭。
+        推荐用法::
+
+            for row in reader.doReadLazy():
+                process(row)
+        """
+        if self.head is None:
+            raise CsvReadError("read 需指定 head 实体类")
+        meta = self._resolve_meta()
+        columns: List[CsvColumnModel] = parse_csv_columns(self.head)
+        explicit = has_explicit_properties(self.head)
+
+        f = _open_for_read(self.source, meta.encoding)
+        owns_fh = f is not self.source
+        try:
+            reader = _csv.reader(f, delimiter=meta.delimiter, quotechar=meta.quote_char)
+            header_cells: List[str] = []
+            col_mapping: dict = {}
+            initialized = False
+            for row in reader:
+                if not initialized:
+                    # 解析表头行（若有）
+                    if meta.has_header:
+                        header_cells = [str(c).strip() if c is not None else "" for c in row]
+                        col_mapping = self._map_columns(columns, header_cells, explicit, meta.has_header)
+                        initialized = True
+                        continue
+                    else:
+                        col_mapping = self._map_columns(columns, [], explicit, meta.has_header)
+                        initialized = True
+                # 数据行
+                if not row or all((v is None or str(v).strip() == "") for v in row):
+                    continue
+                kwargs = {}
+                for col_idx, model in col_mapping.items():
+                    cell_value = row[col_idx] if col_idx < len(row) else None
+                    value = self._convert_from_cell(model, cell_value)
+                    kwargs[model.attr_name] = value
+                yield _build_instance(self.head, kwargs)
+        finally:
+            if owns_fh:
+                try:
+                    f.close()
+                except Exception:
+                    pass
 
     def _map_columns(
         self,

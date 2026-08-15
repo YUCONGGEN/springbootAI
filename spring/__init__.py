@@ -1,11 +1,11 @@
-from .annotations import *
+﻿from .annotations import *
 from .context import *
 from .web import *
 from .config import *
 from .utils import *
 from .main import create_app, run, SpringApplication, run_cli
 
-__version__ = "2.2.1"
+__version__ = "2.2.6"
 __author__ = "yuconggen"
 __license__ = "MIT"
 

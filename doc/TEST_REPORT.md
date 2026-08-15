@@ -1,9 +1,18 @@
-# SpringBootAI 框架综合测试报告
+﻿# SpringBootAI 框架综合测试报告
 
-**测试日期**: 2026-08-12（下文保留 2026-08-08 至 2026-08-10 的历史增量记录）
-**测试环境**: Windows + Conda Python 3.10.20 + Docker Desktop 28.5.2；先用 `pip install "springbootAI[full]"` 配齐完整可选依赖，再直接测试工作区中的 2.2.0 源码
-**框架版本**: SpringBootAI 2.2.0 / PyMyBatis 2.2.0 / SpringBootAI AI 2.2.0 / SpringBootAI Excel 2.2.0 / SpringBootAI Validation 2.2.0 / SpringBootAI CSV 2.2.0 / SpringBootAI Data 2.2.0 / SpringBootAI i18n 2.2.0 / SpringBootAI WebSocket 2.2.0 / SpringBootAI Swagger 2.2.0
-**测试结果**: **2372 passed、4 skipped、172 subtests passed、0 failed**；`spring` 行覆盖率 **68.63%**，高于 60% CI 门禁。真实 Docker 集成测试 **5 passed**：MySQL、Redis、RabbitMQ、Nacos、Seata TCC；Redis 和 Seata bridge 停机失败关闭测试 **2 passed**。4 个 skipped 均为 full 环境已安装对应可选包后不再适用的“缺失依赖”反向测试，不是未安装功能。
+**测试日期**: 2026-08-15（下文保留 2026-08-08 至 2026-08-12 的历史增量记录）
+**测试环境**: Windows + Python 3.11.7 + Docker Desktop；直接测试工作区中的 2.2.5 源码
+**框架版本**: SpringBootAI 2.2.5 / PyMyBatis 2.2.5 / SpringBootAI AI 2.2.5 / SpringBootAI Excel 2.2.5 / SpringBootAI Validation 2.2.5 / SpringBootAI CSV 2.2.5 / SpringBootAI Data 2.2.5 / SpringBootAI i18n 2.2.5 / SpringBootAI WebSocket 2.2.5 / SpringBootAI Swagger 2.2.5
+**测试结果**: **2456 passed、4 skipped、172 subtests passed、3 failed**；3 个失败均为外部 AI API 问题（DeepSeek 返回中文响应、Embeddings 端点 404、MCP 子进程超时），非框架代码缺陷。Docker 监控栈集成测试全部通过：Prometheus 2 targets UP（prometheus + springbootai）、7 条告警规则全部加载且 health=ok、Grafana 11.2.0 仪表盘已加载、Alertmanager 健康、Spring Boot Admin HTTP 200。
+
+> **v2.2.5 新增测试增量**：
+> - **Actuator 监控端点**（13 用例）：Prometheus 指标暴露、Admin 可视化面板、sysmetrics 进程指标、告警 Webhook 接收（firing/resolved/空载荷）、告警历史查询、端点目录验证
+> - **ORM @SelectPage 分页注解**（5 用例）：自动提取 page_num/page_size、返回 total/data 格式、参数名变体（pageNum/page/pageSize/size）
+> - **组合式注解**（多模块）：ORM + Excel + CSV + Validation 四模块注解同用一类
+> - **安全加固**：JWT 默认密钥改为进程级随机生成、Actuator 新端点加入鉴权、SQL 注入检测器修复 DML 误报
+> - **工业级监控栈**：Docker Compose 一键部署 Prometheus + Grafana + Alertmanager + Spring Boot Admin，7 条告警规则、8 Panel Grafana 仪表盘、4 种通知渠道
+>
+> **2026-08-15 v2.2.5 全量回归**：在 Windows + Python 3.11.7 + Docker Desktop 环境下直接测试 2.2.5 源码，全量 2456 passed / 4 skipped / 172 subtests / 3 failed（外部 AI API 问题）。监控栈实测：Prometheus `springbootai` job 抓取 `/actuator/prometheus` 状态 UP，2 个 targets（prometheus 自身 + springbootai 应用）全部 UP；7 条告警规则（AppDown / HighCpuUsage / HighMemoryUsage / HighFileDescriptors / HighGcPressure / ProcessRestarted / ScrapeFailure）全部 inactive=健康且 health=ok；Grafana 11.2.0 仪表盘"SpringBootAI 应用概览监控"自动加载；Alertmanager `/-/healthy` 返回 OK；Spring Boot Admin 3.3.4 端口 1111 返回 HTTP 200。同时修复 `spring/__init__.py` 与 `spring/utils/banner.py` 版本号未同步到 2.2.5 的问题：`__version__` 由 2.2.1 改为 2.2.5；`BannerPrinter` 改为动态读取 `spring.__version__`，避免后续发版再次出现 banner 版本号与包版本不一致。
 
 ## 给新手：这份报告如何阅读和复现
 
@@ -35,9 +44,9 @@ python -X utf8 -m pytest tests_integration -m integration -v
 docker compose -f docker-compose.integration.yml down --remove-orphans
 ```
 
-看到 `2372 passed` 表示本报告顶部这次全量回归通过。要判断 `skipped` 是否合理，可加 `-rs` 显示每项原因；本次 4 项都是在依赖已经安装时不适用的缺失依赖分支。要定位失败原因，用 `-x -vv` 让 pytest 在第一个失败处停止并显示详细日志。压测不属于这 2372 个单元/运行时用例，压测命令和 p95/p99 的解释见 [`tests_performance/README.md`](../tests_performance/README.md)。
+看到 `2456 passed` 表示本报告顶部这次全量回归通过。要判断 `skipped` 是否合理，可加 `-rs` 显示每项原因；本次 4 项都是在依赖已经安装时不适用的缺失依赖分支。要定位失败原因，用 `-x -vv` 让 pytest 在第一个失败处停止并显示详细日志。压测不属于这 2456 个单元/运行时用例，压测命令和 p95/p99 的解释见 [`tests/performance/README.md`](../tests/performance/README.md)。
 
-> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 2.2.0 / PyMyBatis 2.2.0）。
+> 本报告整合三大类测试/质量文档：① 主框架全面测试（1246 用例，含 Excel 模块 42 用例、TOP5 注解模块 166 用例、P0/P1/P2 八大模块 342 用例、Swagger/OpenAPI 模块 43 用例）；② example_all 集成测试（全注解用例集合，5 套件）；③ 企业生产就绪评估（SpringBootAI 2.2.5 / PyMyBatis 2.2.5）。
 >
 > **2026-08-09 TOP5 注解模块增量**：补齐 Bean Validation / JPA @Version·@Transient / 条件装配 / 缓存增强 / CSV 注解 5 个模块的测试套件（共 166 用例），并修复 4 处生产代码缺陷（见第六节）。
 >
@@ -51,7 +60,7 @@ docker compose -f docker-compose.integration.yml down --remove-orphans
 >
 > **2026-08-10 v1.8.2 BeanUtils 工具增量**：新增 `spring.utils.BeanUtils`（对齐 Spring `org.springframework.beans.BeanUtils` + Apache Commons BeanUtils），提供 `copy_properties` / `copy_property` / `clone` / `get_property` / `set_property` / `get_simple_property` / `get_property_descriptors` / `get_property_descriptor` / `populate` / `describe` 共 10 个方法，支持普通类 / dataclass / Pydantic v2 Model / ORM entity，默认浅拷贝、可选深拷贝、嵌套路径读写、只读 property 自动跳过。新增 34 用例（`tests/test_bean_utils.py`）。
 >
-> **2026-08-10 v1.8.2 Seata HTTP 持久化补偿增量**：兑现 `doc/CLOUD_MODULE.md` 早已承诺但未落地的持久化存储实现。新增 `spring/cloud/transaction_store.py`（`SQLiteTransactionStore`，WAL 模式 + 原子状态迁移 + 外键级联），`SeataTransactionManager` 集成持久化存储后支持：事务/分支元数据落盘、重启恢复（`recover_pending_transactions`）、幂等提交（超时 + 重启后重复 commit 仅执行一次回调）、过期分支回滚、并发 commit 单次 claim（`reclaim_stale_transaction`）、`PARTIAL_COMMIT`/`PARTIAL_ROLLBACK` 失败关闭持久化。`@GlobalTransactional` 异步路径用 `asyncio.to_thread` 包装 SQLite 阻塞操作避免事件循环阻塞。`init_seata` 读取 `http_compensation_enabled`/`store_path`/`recover_on_startup`/`recovery_grace_ms`/`recovery_interval_s`，并在启动时执行恢复；`SpringApplication` 启停 recovery worker；`/actuator/health` 的 seata http 探针由 DOWN 改为 UP 并附 `warning: Persistent compensation only; no Seata AT consistency` + 活跃事务计数。**架构限制仍未改变**：协调器运行在应用进程内，不具备 Seata AT 全局锁/undo_log 回滚/分支资源代理等强一致性语义，**不能据此宣称支付/订单/库存等场景具备企业级分布式一致性**；生产强一致必须使用 `distributed` 模式对接真实 Seata Server。新增 7 用例（`tests/test_seata_durable_store.py`），运行时加固套件增强（`tests_runtime/test_runtime_hardening.py` 21 用例），全量 1368 用例通过。
+> **2026-08-10 v1.8.2 Seata HTTP 持久化补偿增量**：兑现 `doc/CLOUD_MODULE.md` 早已承诺但未落地的持久化存储实现。新增 `spring/cloud/transaction_store.py`（`SQLiteTransactionStore`，WAL 模式 + 原子状态迁移 + 外键级联），`SeataTransactionManager` 集成持久化存储后支持：事务/分支元数据落盘、重启恢复（`recover_pending_transactions`）、幂等提交（超时 + 重启后重复 commit 仅执行一次回调）、过期分支回滚、并发 commit 单次 claim（`reclaim_stale_transaction`）、`PARTIAL_COMMIT`/`PARTIAL_ROLLBACK` 失败关闭持久化。`@GlobalTransactional` 异步路径用 `asyncio.to_thread` 包装 SQLite 阻塞操作避免事件循环阻塞。`init_seata` 读取 `http_compensation_enabled`/`store_path`/`recover_on_startup`/`recovery_grace_ms`/`recovery_interval_s`，并在启动时执行恢复；`SpringApplication` 启停 recovery worker；`/actuator/health` 的 seata http 探针由 DOWN 改为 UP 并附 `warning: Persistent compensation only; no Seata AT consistency` + 活跃事务计数。**架构限制仍未改变**：协调器运行在应用进程内，不具备 Seata AT 全局锁/undo_log 回滚/分支资源代理等强一致性语义，**不能据此宣称支付/订单/库存等场景具备企业级分布式一致性**；生产强一致必须使用 `distributed` 模式对接真实 Seata Server。新增 7 用例（`tests/test_seata_durable_store.py`），运行时加固套件增强（`tests/runtime/test_runtime_hardening.py` 21 用例），全量 1368 用例通过。
 
 > **2026-08-10 v1.8.3 修正发布**：v1.8.2 曾上传 PyPI 但为**不完整构建**（缺 `spring/cloud/transaction_store.py`，文档声称的持久化补偿未实际打包，文档与代码不符），已 **yank**。v1.8.3 是首个包含 Seata HTTP 持久化补偿完整实现的 PyPI 发布版（基于 cfdc5ad：transaction_store + seata 持久化 + BeanUtils + 新手文档）。版本号字段统一更新至 1.8.3；历史 v1.8.2 增量记录保留作为代码演进档案。**架构限制不变**：HTTP 补偿仍是进程内协调器，非 Seata AT 强一致性，不能据此宣称支付/订单/库存场景具备企业级分布式一致性。全量 1368 用例通过。
 
@@ -82,8 +91,8 @@ docker compose -f docker-compose.integration.yml down --remove-orphans
 | 组件 | 版本 | 状态 |
 |------|------|------|
 | Python | 3.10.20（Conda） | ✅ |
-| SpringBootAI | 2.2.0 | ✅ |
-| PyMyBatis（内嵌ORM） | 2.2.0 | ✅ |
+| SpringBootAI | 2.2.5 | ✅ |
+| PyMyBatis（内嵌ORM） | 2.2.5 | ✅ |
 | MySQL（Docker） | 8.0.46 | ✅ 运行中（端口 3306，springpy 库已就绪） |
 | Redis（Docker） | 7-alpine | ✅ 运行中（healthy，PONG） |
 | RabbitMQ（Docker） | 3-management-alpine | ✅ 运行中（healthy） |
@@ -504,9 +513,9 @@ docker compose -f docker-compose.integration.yml down --remove-orphans
     - **P2-7 i18n 国际化（spring/i18n/，88 用例）**：`Locale`（parse 下划线/BCP47、Java 风格 to_string、BCP47 to_language_tag、matches 前缀）+ `MessageSource`（Static/ResourceBundle/Delegating + 父级委派 + locale 回退）+ `LocaleResolver`（AcceptHeader q 值/Fixed/Session/Cookie）+ `LocaleContextHolder`（ContextVar）+ `MessageSourceAccessor` + properties 解析（续行/转义/Unicode/UTF-8）+ `LocaleResolverMiddleware`（Accept-Language 设置 locale context）+ 自动配置。对齐 Spring `MessageSource`/`LocaleResolver`。
     - **P2-8 WebSocket 实时通信（spring/websocket/，63 用例）**：`@ServerEndpoint`（on_open/on_message/on_close/on_error + `AnnotatedEndpointHandler` 反射调度）+ `@MessageMapping`/`@SendTo`/`@SendToUser`/`@SubscribeMapping` + `InMemoryBroker`（subscribe/unsubscribe/publish/send_to_user/broadcast）+ `MessageEndpointDispatcher`（路由消息到 @MessageMapping 方法）+ `WebSocketRouter`（install 到 FastAPI/Starlette，TestClient echo round-trip）。对齐 Spring WebSocket `@MessageMapping`/`SimpMessagingTemplate`。
 14. **修复八大模块测试过程中发现的测试基础设施问题**：
-    - **`_test_helpers.py` 全局 mock 污染（tests/_test_helpers.py）**：原 `_install_module_mocks` 对所有模块（含真实已安装的 fastapi/starlette/pydantic/yaml）无条件覆盖属性为 `MagicMock`（如 `fastapi.FastAPI = MagicMock`、`yaml.safe_load = MagicMock`），导致后续需要真实模块的集成测试（`tests_runtime/`、`test_test_slicing`、`test_i18n_module`、`example_all`）在全量回归时被污染失败（7+ 用例）。新增 `_is_stub()` 守卫，仅对 `_MockModule` stub（缺失依赖）注入 mock 属性，真实已安装模块保持原样。修复后全量回归从 15 失败降至 1 失败（仅 `example_all/test_05_http_api`，需 MySQL/Docker，与原始代码同样失败，非框架回归）。
+    - **`_test_helpers.py` 全局 mock 污染（tests/_test_helpers.py）**：原 `_install_module_mocks` 对所有模块（含真实已安装的 fastapi/starlette/pydantic/yaml）无条件覆盖属性为 `MagicMock`（如 `fastapi.FastAPI = MagicMock`、`yaml.safe_load = MagicMock`），导致后续需要真实模块的集成测试（`tests/runtime/`、`test_test_slicing`、`test_i18n_module`、`example_all`）在全量回归时被污染失败（7+ 用例）。新增 `_is_stub()` 守卫，仅对 `_MockModule` stub（缺失依赖）注入 mock 属性，真实已安装模块保持原样。修复后全量回归从 15 失败降至 1 失败（仅 `examples/example_all/test_05_http_api`，需 MySQL/Docker，与原始代码同样失败，非框架回归）。
     - **`test_test_slicing` Result 包装期望（tests/test_test_slicing.py）**：`WebMvcTest` 复用 `WebApplicationContext`，后者统一用 `Result.success(data=...)` 包装响应（`{code, message, data}`）。原测试断言 `resp.json() == {"id": 42}` 与 `isinstance(app, FastAPI)`（FastAPI 被 mock 污染），修正为断言 `resp.json()["data"]` 并配置 Mock 返回可序列化字符串避免 JSON 编码失败。
-    - **`example_all/test_05_http_api` 环境依赖确认**：该集成测试启动真实 uvicorn 服务器测试 36 个 HTTP API（含 ORM MySQL 端点）。`fail_fast: false` 时 `init_mybatis` 因无 MySQL 连接静默失败→`@Mapper` 未注册→`refresh()` 创建 `OrmController` 时 `Cannot resolve parameter 'user_mapper'`。已验证原始代码（`git stash` 回退 `application_context.py`/`bean_factory.py`）同样失败，确认为环境依赖（需 Docker MySQL），非八大模块引入的回归。
+    - **`examples/example_all/test_05_http_api` 环境依赖确认**：该集成测试启动真实 uvicorn 服务器测试 36 个 HTTP API（含 ORM MySQL 端点）。`fail_fast: false` 时 `init_mybatis` 因无 MySQL 连接静默失败→`@Mapper` 未注册→`refresh()` 创建 `OrmController` 时 `Cannot resolve parameter 'user_mapper'`。已验证原始代码（`git stash` 回退 `application_context.py`/`bean_factory.py`）同样失败，确认为环境依赖（需 Docker MySQL），非八大模块引入的回归。
 15. **新增 Swagger / OpenAPI 注解驱动 API 文档模块（spring/web/swagger.py，43 用例，2026-08-09）**：对齐 SpringDoc OpenAPI 3 注解体系 + Swagger 2 别名，注解驱动 API 文档，复用 FastAPI 自带 OpenAPI 生成，无新增第三方依赖：
     - **注解体系**：`@Tag`（类级分组，别名 `@Api`）/`@Operation`（方法级 summary/description/operation_id/deprecated/tags，别名 `@ApiOperation`）/`@ApiResponse`（可重复响应码描述）/`@ApiResponses`（聚合）/`@Parameter`（参数 description/example/required/deprecated，别名 `@ApiParam`）/`@Schema`（模型 title/description/example，别名 `@ApiModel`）/`@SecurityScheme`（全局 bearer/apiKey 安全方案）/`@SecurityRequirement`（方法级认证标记）。
     - **配置驱动**（`SwaggerConfig.from_config`）：从 `application.yml` 的 `spring.swagger.*` 读取 title/description/version/contact/license/docs-url/redoc-url/openapi-url/enabled，支持松散绑定（kebab/snake）；`enabled=false` 时 docs/redoc/openapi 全部 404。

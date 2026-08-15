@@ -26,8 +26,8 @@ COPY requirements-mcp.txt ./
 RUN python -m pip install -r requirements-mcp.txt
 
 COPY spring ./spring
-COPY tests_performance ./tests_performance
+COPY tests/performance ./tests/performance
 
 EXPOSE 8080
 
-CMD ["python", "-m", "uvicorn", "tests_performance.benchmark_app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2", "--no-access-log"]
+CMD ["python", "-m", "uvicorn", "tests.performance.benchmark_app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2", "--no-access-log"]

@@ -79,9 +79,11 @@ class SQLInjectionDetector:
             '信息收集函数',
         ),
 
-        # 危险关键字
-        SQLInjectionPattern(r'\b(DROP|DELETE|UPDATE|INSERT|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b',
-                            SQLInjectionLevel.HIGH, '危险SQL关键字'),
+        # 危险关键字（仅检测 DDL/权限语句，不检测 DML——DELETE/UPDATE/INSERT 是正常业务 SQL，
+        # 且此模式用于检测参数值，业务文本中包含 "update"/"delete" 等英文单词不应被误判为注入）
+        # DDL 语句（DROP/TRUNCATE/ALTER/CREATE/GRANT/REVOKE）已在下方 DDL_PATTERNS 中按语句前缀检测
+        SQLInjectionPattern(r'\b(DROP|TRUNCATE|ALTER|GRANT|REVOKE)\b',
+                            SQLInjectionLevel.HIGH, '危险DDL关键字'),
 
         # 基于子查询的注入
         SQLInjectionPattern(r'\(\s*SELECT\s+', SQLInjectionLevel.MEDIUM, '子查询注入'),

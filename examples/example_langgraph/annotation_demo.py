@@ -1,5 +1,14 @@
 """Runnable annotation-driven LangGraph example without an API key."""
 
+import os
+import sys
+
+# 加入项目根到 sys.path，支持直接 python examples/example_langgraph/annotation_demo.py 运行
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_HERE))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 from typing import TypedDict
 
 from spring.langgraph import GraphEdge, GraphInvoke, GraphNode, LangGraph

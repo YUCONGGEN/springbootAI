@@ -34,13 +34,19 @@ _SENSITIVE_KEYS = (
 )
 
 # 需要鉴权的敏感端点（health/info 保留开放，供 K8s/Docker 探针使用）
+# prometheus/sysmetrics 暴露进程级指标（RSS/CPU/线程/FD/python_gc 等），列入敏感端点
+# admin 端点仅返回静态 HTML（无敏感数据），保持开放但页面内 JS 调用的端点受鉴权保护
 _SENSITIVE_ENDPOINTS = frozenset({
-    "env", "loggers", "metrics", "beans", "configprops", "mappings", "threaddump"
+    "env", "loggers", "metrics", "beans", "configprops", "mappings", "threaddump",
+    "prometheus", "sysmetrics",
 })
 
 # Actuator 鉴权开关（由 configure_actuator 从配置读取）
 _actuator_secured = True
 _actuator_admin_roles = frozenset({"ADMIN", "ACTUATOR"})
+
+# 告警历史缓存（内存，最多 100 条，由 /actuator/alert POST 写入，/actuator/alerts GET 读取）
+_alert_history: List[Dict[str, Any]] = []
 
 
 def configure_actuator(application_context) -> None:
@@ -61,22 +67,6 @@ def configure_actuator(application_context) -> None:
             _actuator_admin_roles = frozenset(r.upper() for r in roles)
     except Exception:
         pass  # 配置读取失败时保持默认（secured=True）
-
-
-def _check_actuator_auth():
-    """FastAPI 依赖：对敏感端点验证 JWT token + 角色权限。
-
-    - ``_actuator_secured=False`` 时跳过鉴权（开发环境）
-    - ``_actuator_secured=True`` 时要求 Bearer JWT 且 roles 包含 ADMIN/ACTUATOR
-    """
-    if not _actuator_secured:
-        return  # 鉴权关闭，放行
-
-    from fastapi import HTTPException
-
-    # FastAPI 依赖注入需要 Request 对象；此函数被 endpoints 直接调用时使用全局 request
-    # 通过 inspect 获取 request 参数（兼容 FastAPI 依赖系统）
-    raise HTTPException(status_code=401, detail="Actuator authentication required")
 
 
 def _create_actuator_dependency(endpoint_name: str):
@@ -145,6 +135,8 @@ def get_endpoint_directory() -> dict:
         "threaddump": {"href": "/actuator/threaddump", "methods": ["GET"]},
         "prometheus": {"href": "/actuator/prometheus", "methods": ["GET"]},
         "sysmetrics": {"href": "/actuator/sysmetrics", "methods": ["GET"]},
+        "alert": {"href": "/actuator/alert", "methods": ["POST"]},
+        "alerts": {"href": "/actuator/alerts", "methods": ["GET"]},
         "admin": {"href": "/actuator/admin", "methods": ["GET"]},
     }
     return {"_links": {k: v for k, v in endpoints.items()}}
@@ -363,6 +355,8 @@ _beans_auth = _create_actuator_dependency("beans")
 _configprops_auth = _create_actuator_dependency("configprops")
 _mappings_auth = _create_actuator_dependency("mappings")
 _threaddump_auth = _create_actuator_dependency("threaddump")
+_prometheus_auth = _create_actuator_dependency("prometheus")
+_sysmetrics_auth = _create_actuator_dependency("sysmetrics")
 
 
 @actuator_router.get('/env')
@@ -423,7 +417,7 @@ def threaddump_endpoint(_: None = Depends(_threaddump_auth)):
 # ==================== /prometheus Prometheus 指标端点 ====================
 
 @actuator_router.get('/prometheus')
-def prometheus_endpoint():
+def prometheus_endpoint(_: None = Depends(_prometheus_auth)):
     """暴露 Prometheus 文本格式指标，供 Prometheus Server 抓取。
 
     对齐 Spring Boot ``/actuator/prometheus``：
@@ -478,9 +472,81 @@ def get_sysmetrics() -> dict:
 
 
 @actuator_router.get('/sysmetrics')
-def sysmetrics_endpoint():
+def sysmetrics_endpoint(_: None = Depends(_sysmetrics_auth)):
     """进程系统指标端点（供 Admin 面板 JS 调用）。"""
     return JSONResponse(content=get_sysmetrics(), status_code=200)
+
+
+# ==================== /alert Alertmanager Webhook 接收端点 ====================
+
+def get_alert_history() -> List[Dict[str, Any]]:
+    """获取已接收的告警历史记录（内存缓存，最多 100 条）。"""
+    return list(_alert_history)
+
+
+def add_alert_record(alert: Dict[str, Any]) -> None:
+    """添加一条告警记录到历史缓存。"""
+    _alert_history.append(alert)
+    # 保留最近 100 条
+    if len(_alert_history) > 100:
+        _alert_history.pop(0)
+
+
+@actuator_router.post('/alert')
+def alert_webhook(payload: Dict[str, Any] = Body(...)):
+    """接收 Alertmanager 推送的告警通知。
+
+    Alertmanager 配置 webhook_configs 后，告警会以 JSON 格式 POST 到此端点。
+    payload 格式参考：https://prometheus.io/docs/alerting/latest/configuration/#webhook_config
+
+    收到的告警存入内存历史缓存（最近 100 条），供 /actuator/admin 面板展示。
+    生产环境建议对接钉钉/企业微信/邮件等通知渠道。
+    """
+    import logging
+    _logger = logging.getLogger("Spring.Web.Actuator.Alert")
+
+    alerts = payload.get('alerts', [])
+    for alert in alerts:
+        status = alert.get('status', 'unknown')
+        labels = alert.get('labels', {})
+        annotations = alert.get('annotations', {})
+        alert_name = labels.get('alertname', 'Unknown')
+        severity = labels.get('severity', 'info')
+        instance = labels.get('instance', '')
+
+        record = {
+            'alertname': alert_name,
+            'status': status,
+            'severity': severity,
+            'instance': instance,
+            'summary': annotations.get('summary', ''),
+            'description': annotations.get('description', ''),
+            'starts_at': alert.get('startsAt', ''),
+            'ends_at': alert.get('endsAt', ''),
+        }
+        add_alert_record(record)
+
+        if status == 'firing':
+            _logger.warning(
+                "[Alert] %s [%s] %s — %s (instance=%s)",
+                alert_name, severity,
+                annotations.get('summary', ''),
+                annotations.get('description', ''),
+                instance,
+            )
+        else:
+            _logger.info("[Alert] %s RESOLVED (instance=%s)", alert_name, instance)
+
+    return JSONResponse(
+        content={'status': 'ok', 'received': len(alerts)},
+        status_code=200,
+    )
+
+
+@actuator_router.get('/alerts')
+def alerts_history(_: None = Depends(_sysmetrics_auth)):
+    """获取告警历史记录（供 Admin 面板展示）。"""
+    return JSONResponse(content=get_alert_history(), status_code=200)
 
 
 # ==================== /admin Spring Boot Admin 可视化面板 ====================
@@ -551,6 +617,11 @@ def _build_admin_dashboard_html() -> str:
         <div class="card">
             <h2>健康状态</h2>
             <div id="health"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <!-- 告警通知 -->
+        <div class="card">
+            <h2>告警通知</h2>
+            <div id="alerts"><span class="spinner"></span> 加载中...</div>
         </div>
         <!-- 系统信息 -->
         <div class="card">
@@ -756,8 +827,39 @@ def _build_admin_dashboard_html() -> str:
         document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
         document.getElementById(contentId).classList.add('active');
     }
+    function loadAlerts() {
+        fetch('/actuator/alerts')
+            .then(r => r.ok ? r.json() : [])
+            .then(alerts => {
+                if (!alerts || alerts.length === 0) {
+                    document.getElementById('alerts').innerHTML =
+                        '<span style="color: #4ade80;">✓ 无活跃告警</span>';
+                    return;
+                }
+                let html = '<table class="data-table"><tr><th>告警</th><th>级别</th><th>状态</th><th>实例</th><th>摘要</th><th>时间</th></tr>';
+                alerts.slice().reverse().forEach(a => {
+                    const sevColor = a.severity === 'critical' ? '#ef4444' :
+                                     a.severity === 'warning' ? '#f59e0b' : '#3b82f6';
+                    const statusColor = a.status === 'firing' ? '#ef4444' : '#4ade80';
+                    const time = a.starts_at ? new Date(a.starts_at).toLocaleString() : '-';
+                    html += `<tr>
+                        <td>${a.alertname}</td>
+                        <td style="color:${sevColor};font-weight:bold;">${a.severity}</td>
+                        <td style="color:${statusColor};font-weight:bold;">${a.status}</td>
+                        <td>${a.instance || '-'}</td>
+                        <td>${a.summary || ''}</td>
+                        <td>${time}</td>
+                    </tr>`;
+                });
+                html += '</table>';
+                document.getElementById('alerts').innerHTML = html;
+            })
+            .catch(() => {
+                document.getElementById('alerts').innerHTML = '<span style="color:#6b7280;">告警加载失败（需鉴权）</span>';
+            });
+    }
     function loadAll() {
-        loadHealth(); loadInfo(); loadSystemMetrics(); loadThreads();
+        loadHealth(); loadAlerts(); loadInfo(); loadSystemMetrics(); loadThreads();
         loadLoggers(); loadPrometheus(); loadBeans();
     }
     loadAll();

@@ -86,14 +86,14 @@ server.run()
 
 `allowed_tools` 必须明确填写。只写了 `@MCPTool`、却没有进入白名单的方法不会发布。`dangerous=True` 的工具还必须同时设置 `allow_dangerous_tools=True`，因此删除、付款、发消息等动作不会因为误写一个注解就对外开放。
 
-完整文件见 [annotation_demo.py](../example_mcp/annotation_demo.py)。不使用注解的等价写法见 [server.py](../example_mcp/server.py)。
+完整文件见 [annotation_demo.py](../examples/example_mcp/annotation_demo.py)。不使用注解的等价写法见 [server.py](../examples/example_mcp/server.py)。
 
 ## 4. 第一个注解式 MCP Client
 
 先启动仓库示例服务端：
 
 ```bash
-python -m example_mcp.server
+python examples/example_mcp/server.py
 ```
 
 再声明客户端。`@MCPClient("demo")` 的名字必须与配置或 `MCPClientProperties.name` 一致：

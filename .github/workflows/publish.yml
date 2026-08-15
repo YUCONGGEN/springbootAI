@@ -1,4 +1,4 @@
-name: Publish
+﻿name: Publish
 
 # ====================================================================
 # 发布工作流：构建 sdist + wheel 并发布到 PyPI。
@@ -70,8 +70,8 @@ jobs:
           pip install -r requirements-langgraph.txt
           pip install -r requirements-mcp.txt
           pip install bandit==1.9.4 pip-audit==2.10.1
-          pytest tests/ tests_runtime/ -q --cov=spring --cov-report=term --cov-fail-under=60
-          bandit -r spring/ example_langchain/ example_langgraph/ example_mcp/ -ll -q
+          pytest tests/ tests/runtime/ -q --cov=spring --cov-report=term --cov-fail-under=60
+          bandit -r spring/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ -ll -q
           pip-audit -r requirements-lock.txt --timeout 60 --progress-spinner off
           pip-audit -r requirements-ai.txt --timeout 60 --progress-spinner off
           pip-audit -r requirements-langgraph.txt --timeout 60 --progress-spinner off

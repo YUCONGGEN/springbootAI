@@ -2,15 +2,23 @@
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from spring.web import actuator as actuator_module
 from spring.web.actuator import actuator_router, configure_actuator
 
 
 @pytest.fixture
 def client():
-    """构建带 actuator 路由的 TestClient"""
+    """构建带 actuator 路由的 TestClient（关闭鉴权以便测试端点功能）"""
+    # 临时关闭鉴权：prometheus/sysmetrics 等敏感端点在生产环境需要 JWT，
+    # 但本测试套件验证端点行为而非鉴权逻辑
+    original_secured = actuator_module._actuator_secured
+    actuator_module._actuator_secured = False
     app = FastAPI()
     app.include_router(actuator_router, prefix="/actuator")
-    return TestClient(app)
+    try:
+        yield TestClient(app)
+    finally:
+        actuator_module._actuator_secured = original_secured
 
 
 # ==================== /actuator/prometheus 测试 ====================
@@ -101,15 +109,87 @@ def test_sysmetrics_returns_json(client):
         assert data["error"] == "psutil not installed"
 
 
+# ==================== /actuator/alert 告警 Webhook 测试 ====================
+
+def test_alert_webhook_receives_firing_alert(client):
+    """/actuator/alert 接收 firing 状态告警"""
+    payload = {
+        "alerts": [
+            {
+                "status": "firing",
+                "labels": {"alertname": "HighCpuUsage", "severity": "critical", "instance": "localhost:8000"},
+                "annotations": {"summary": "CPU 使用率过高", "description": "CPU 超过 80%"},
+                "startsAt": "2026-08-15T10:00:00Z",
+                "endsAt": "0001-01-01T00:00:00Z",
+            }
+        ]
+    }
+    resp = client.post("/actuator/alert", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["received"] == 1
+
+
+def test_alert_webhook_receives_resolved_alert(client):
+    """/actuator/alert 接收 resolved 状态告警"""
+    payload = {
+        "alerts": [
+            {
+                "status": "resolved",
+                "labels": {"alertname": "AppDown", "severity": "critical", "instance": "localhost:8000"},
+                "annotations": {"summary": "应用已宕机", "description": "已恢复"},
+                "startsAt": "2026-08-15T10:00:00Z",
+                "endsAt": "2026-08-15T10:05:00Z",
+            }
+        ]
+    }
+    resp = client.post("/actuator/alert", json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["received"] == 1
+
+
+def test_alerts_history_returns_received_alerts(client):
+    """/actuator/alerts 返回已接收的告警历史"""
+    # 先发送一条告警
+    client.post("/actuator/alert", json={
+        "alerts": [{
+            "status": "firing",
+            "labels": {"alertname": "HighMemoryUsage", "severity": "critical", "instance": "localhost:8000"},
+            "annotations": {"summary": "内存过高", "description": "RSS > 1GB"},
+            "startsAt": "2026-08-15T10:00:00Z",
+            "endsAt": "0001-01-01T00:00:00Z",
+        }]
+    })
+    # 查询历史
+    resp = client.get("/actuator/alerts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) > 0
+    assert data[-1]["alertname"] == "HighMemoryUsage"
+    assert data[-1]["severity"] == "critical"
+    assert data[-1]["status"] == "firing"
+
+
+def test_alert_webhook_empty_payload(client):
+    """/actuator/alert 空告警列表"""
+    resp = client.post("/actuator/alert", json={"alerts": []})
+    assert resp.status_code == 200
+    assert resp.json()["received"] == 0
+
+
 # ==================== 端点目录测试 ====================
 
 def test_endpoint_directory_includes_new_endpoints(client):
-    """/actuator 目录包含 prometheus、sysmetrics、admin"""
+    """/actuator 目录包含 prometheus、sysmetrics、alert、alerts、admin"""
     resp = client.get("/actuator")
     data = resp.json()
     links = data["_links"]
     assert "prometheus" in links
     assert "sysmetrics" in links
+    assert "alert" in links
+    assert "alerts" in links
     assert "admin" in links
     assert links["prometheus"]["href"] == "/actuator/prometheus"
     assert links["admin"]["href"] == "/actuator/admin"
+    assert links["alert"]["methods"] == ["POST"]

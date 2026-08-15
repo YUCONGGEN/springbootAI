@@ -1,11 +1,11 @@
-# AI 与 LangChain 模块测试指南 —— 小白也能看懂
+﻿# AI 与 LangChain 模块测试指南 —— 小白也能看懂
 
 > 本文档说明 SpringBootAI 两个 AI 相关模块的全部测试用例：**有什么用、怎么跑、每个测试验证什么**。
 > 测试总数：**672 个**（AI 模块 87 + LangChain 模块 585），全部通过，0 失败。
 > - AI 模块：[tests/test_ai_module.py](../tests/test_ai_module.py) — 87 个
 > - LangChain 基础测试：[tests/test_langchain_module.py](../tests/test_langchain_module.py) — 75 个
 > - LangChain 扩展测试：[tests/test_langchain_ext.py](../tests/test_langchain_ext.py) — 510 个
-> - 完整能力 Demo：[example_langchain/demo/langchain_full_demo.py](../example_langchain/demo/langchain_full_demo.py) — 15 章节
+> - 完整能力 Demo：[examples/example_langchain/demo/langchain_full_demo.py](../examples/example_langchain/demo/langchain_full_demo.py) — 15 章节
 
 ---
 
@@ -106,7 +106,7 @@ python -m pytest tests/test_langchain_module.py::TestAgents::test_create_agent_s
 python -m pytest tests/test_ai_module.py tests/test_langchain_module.py tests/test_langchain_ext.py -q
 
 # 运行完整能力 Demo（15 章节，无需 API Key）
-python example_langchain/demo/langchain_full_demo.py
+python examples/example_langchain/demo/langchain_full_demo.py
 ```
 
 ### 常见跑测试的问题
@@ -383,12 +383,12 @@ python example_langchain/demo/langchain_full_demo.py
 
 ## 完整能力 Demo（15 章节）
 
-**文件**：[example_langchain/demo/langchain_full_demo.py](../example_langchain/demo/langchain_full_demo.py)
+**文件**：[examples/example_langchain/demo/langchain_full_demo.py](../examples/example_langchain/demo/langchain_full_demo.py)
 
 **大白话**：一个脚本跑通 LangChain 全部 12 个能力子模块 + SafeEval + Partner，不用 Spring 容器、不用 HTTP、不用 API Key。
 
 ```bash
-python example_langchain/demo/langchain_full_demo.py
+python examples/example_langchain/demo/langchain_full_demo.py
 ```
 
 **章节列表**：

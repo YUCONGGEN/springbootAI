@@ -353,7 +353,14 @@ class GreetingController:
 | 导入导出 CSV | [CSV 指南](CSV_MODULE.md) |
 | 服务发现、Feign、网关、事务补偿 | [Cloud 指南](CLOUD_MODULE.md) |
 | 大模型、知识库、工具调用 | [AI 指南](AI_MODULE.md) |
-| 分页、Actuator、多数据源、i18n、WebSocket | [八大模块指南](EIGHT_MODULES.md) |
+| 分页查询（不用手写SQL） | [ORM 指南 - Repository 章节](ORM_MODULE.md#repository-分页查询--不用手写sql的分页) |
+| 系统健康检查、监控大盘 | [Actuator 指南](ACTUATOR_MODULE.md) |
+| 读写分离、多数据源切换 | [多数据源指南](DATASOURCE_MODULE.md) |
+| 中英文自动切换 | [i18n 指南](I18N_MODULE.md) |
+| 实时通信（聊天室、推送） | [WebSocket 指南](WEBSOCKET_MODULE.md) |
+| 配置自动绑定成对象 | [配置绑定指南](CONFIG_BINDING_MODULE.md) |
+| 事务事件通知 | [事务事件指南](TX_EVENT_MODULE.md) |
+| 只测某一切片功能 | [测试切片指南](TEST_SLICE_MODULE.md) |
 
 > **建议路线**：大多数新手按这个顺序最高效 → **本文** → **README 第 4/6/7 章** → **ORM_MODULE.md** → 按需查阅其他文档。
 
@@ -536,7 +543,7 @@ A：`__init__.py` 告诉 Python"这个目录是一个包（package）"。没有�
 A：不能用后者。`-m` 模块方式能让 Python 正确解析包路径，框架的组件扫描依赖于正确的包结构。用 `-m` 方式，并且要站在 `demo/` 的父目录执行。
 
 ### Q7：框架支持 WebSocket 吗？
-A：支持。详见 [八大模块指南](EIGHT_MODULES.md) 的 WebSocket 章节。
+A：支持。详见 [WebSocket 指南](WEBSOCKET_MODULE.md)。
 
 ---
 

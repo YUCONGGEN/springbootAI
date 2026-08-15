@@ -1,4 +1,13 @@
-from spring.utils.logger import SpringLogger
+﻿from spring.utils.logger import SpringLogger
+
+
+def _default_version() -> str:
+    # 读取 spring 包的 __version__，避免每次发版都要修改本文件
+    try:
+        import spring  # noqa: WPS433 (局部导入避免循环依赖)
+        return getattr(spring, "__version__", "2.2.6")
+    except Exception:  # pragma: no cover - 极端情况下兜底
+        return "2.2.6"
 
 
 class BannerPrinter:
@@ -8,11 +17,11 @@ class BannerPrinter:
 / __| '_ \\| '__| | '_ \\ / _` | '_ \\ / _ \\ / _ \\| __| / _ \\  | | 
 \\__ \\ |_) | |  | | | | | (_| | |_) | (_) | (_) | |_ / ___ \\ | | 
 |___/ .__/|_|  |_|_| |_|\\__, |_.__/ \\___/ \\___/ \\__/_/   \\_\\___|
-    |_|                 |___/                                  
+    |_|                 |___|                                  
     """
 
-    def __init__(self, version: str = "2.2.1"):  # v1.8.7 修复 import 时提前创建 logs/ 目录
-        self.version = version
+    def __init__(self, version: str = None):  # v1.8.7 修复 import 时提前创建 logs/ 目录；v2.2.6 改为动态读取 __version__
+        self.version = version or _default_version()
         self.logger = SpringLogger()
 
     def print_banner(self) -> None:

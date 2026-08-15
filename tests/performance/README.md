@@ -1,4 +1,4 @@
-# SpringBootAI 性能与容量测试
+﻿# SpringBootAI 性能与容量测试
 
 这套测试使用固定版本的 k6，通过 Docker 运行，不需要在本机安装 k6。默认会构建并启动一个双 worker 基准服务，覆盖异步/同步 Controller、请求体解析、内嵌 Gateway、Bean Validation、缓存增强、CSV、JPA 乐观锁和条件装配。
 
@@ -23,9 +23,9 @@
 .\scripts\run-load-test.ps1 -Profile smoke
 ```
 
-脚本会自动启动基准服务、等待健康检查、执行压测并清理容器。JSON 结果保存在 `tests_performance/results/`。
+脚本会自动启动基准服务、等待健康检查、执行压测并清理容器。JSON 结果保存在 `tests/performance/results/`。
 
-第一次只执行 `smoke`。它只持续 20 秒，作用是确认 Docker、构建、健康检查和路由都正常。smoke 通过后再执行 `baseline` 建立基线，最后才执行 `stress` 或 9 小时 `soak`。如果 smoke 都失败，不要直接增加 RPS；先查看终端里第一条错误和 `tests_performance/results/` 中最新 JSON。
+第一次只执行 `smoke`。它只持续 20 秒，作用是确认 Docker、构建、健康检查和路由都正常。smoke 通过后再执行 `baseline` 建立基线，最后才执行 `stress` 或 9 小时 `soak`。如果 smoke 都失败，不要直接增加 RPS；先查看终端里第一条错误和 `tests/performance/results/` 中最新 JSON。
 
 ## 压测档位
 
@@ -105,7 +105,7 @@
   -P95Ms 500
 ```
 
-结果写入 `tests_performance/results/conditional-assembly-*.json`，包含 min、avg、p50、p95、p99、max、注册数量和失败明细。
+结果写入 `tests/performance/results/conditional-assembly-*.json`，包含 min、avg、p50、p95、p99、max、注册数量和失败明细。
 
 ## 判定规则
 
@@ -128,7 +128,7 @@
 .\scripts\run-worker-recovery-test.ps1 -Workers 4 -RecoverySeconds 15 -MaxFailures 2
 ```
 
-结果同样写入 `tests_performance/results/`。该测试验证单 worker 崩溃恢复，不替代整机重启、网络分区和数据库故障演练。
+结果同样写入 `tests/performance/results/`。该测试验证单 worker 崩溃恢复，不替代整机重启、网络分区和数据库故障演练。
 
 ## 真实 Seata 契约测试
 
@@ -138,7 +138,7 @@
 $env:SEATA_BRIDGE_TOKEN='springpy-integration-secret'
 $env:RUN_SEATA_INTEGRATION_TESTS='1'
 docker compose -f docker-compose.integration.yml up -d --build --wait seata-server seata-bridge
-pytest tests_integration/test_seata_distributed_contract.py -v
+pytest tests/integration/test_seata_distributed_contract.py -v
 ```
 
 测试会启动宿主机回调端点，验证 `prepare -> commit` 和 `prepare -> rollback` 都由真实 Seata TC 驱动，并检查 XID、分支 ID、metadata 与共享 token。它还需要在业务数据库层验证提交、回滚、超时和进程崩溃恢复；TCC 回调必须由业务服务自己实现幂等、防空回滚和防悬挂。
@@ -160,7 +160,7 @@ pytest tests_integration/test_seata_distributed_contract.py -v
 .\scripts\run-9h-soak-test.ps1
 ```
 
-默认持续 9 小时、100 次迭代/秒、4 个 Uvicorn worker。正式长跑前会先执行短混合烟测和三种测试切片装配门禁；HTTP 错误、业务断言、丢弃迭代或过载响应超过阈值都会返回非零退出码。JSON 报告写入 `tests_performance/results/`。
+默认持续 9 小时、100 次迭代/秒、4 个 Uvicorn worker。正式长跑前会先执行短混合烟测和三种测试切片装配门禁；HTTP 错误、业务断言、丢弃迭代或过载响应超过阈值都会返回非零退出码。JSON 报告写入 `tests/performance/results/`。
 
 无需改脚本即可调整压力：
 
@@ -174,7 +174,7 @@ pytest tests_integration/test_seata_distributed_contract.py -v
 .\scripts\run-9h-soak-test.ps1 -Duration 24h -Rate 100 -Workers 4 -MaxVus 1000
 ```
 
-该命令会先做 20 秒混合冒烟和测试切片装配检查，然后连续压测 24 小时。请保持 Docker Desktop 和当前 PowerShell 窗口运行；结果保存在 `tests_performance/results/`。第一次长测建议使用默认 100 RPS，确认 CPU、内存和 `dropped_iterations` 后再增加 `Rate`，否则压到负载机极限并不能代表服务容量。
+该命令会先做 20 秒混合冒烟和测试切片装配检查，然后连续压测 24 小时。请保持 Docker Desktop 和当前 PowerShell 窗口运行；结果保存在 `tests/performance/results/`。第一次长测建议使用默认 100 RPS，确认 CPU、内存和 `dropped_iterations` 后再增加 `Rate`，否则压到负载机极限并不能代表服务容量。
 
 混合模型覆盖 Controller、Gateway、Bean Validation、缓存、CSV、JPA 乐观锁、条件注解、Spring Data 分页与 Specification、`@DS/@Master/@Slave`、事务事件阶段、嵌套配置绑定与校验、i18n、Actuator，以及真实 WebSocket 和消息注解链路。
 

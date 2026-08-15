@@ -1,4 +1,4 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=77", "wheel>=0.37"]
 build-backend = "setuptools.build_meta"
 
@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # 发行名 springbootAI（PyPI 包名，pip install springbootAI）；导入包名仍为 spring
 name = "springbootAI"
-version = "2.2.5"
+version = "2.2.6"
 description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
 readme = "README.md"
 license = "MIT"
@@ -220,7 +220,7 @@ full = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [".", "examples"]
 filterwarnings = [
     # 静默 langchain_classic 弃用告警和 community sunset 告警
     # 原因：本项目有意锁定 langchain classic (1.x) API，这些是预期内的框架级告警

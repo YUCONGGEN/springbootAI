@@ -1,0 +1,259 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "SpringBootAI 应用全景监控仪表盘 —— CPU、内存、线程、GC、文件描述符、运行时长",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "CPU 使用率 (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "rate(process_cpu_seconds_total{job=\"springbootai\"}[1m]) * 100",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "内存使用 (RSS / Virtual)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "bytes"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes{job=\"springbootai\"}",
+          "legendFormat": "RSS {{instance}}",
+          "refId": "A"
+        },
+        {
+          "expr": "process_virtual_memory_bytes{job=\"springbootai\"}",
+          "legendFormat": "Virtual {{instance}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "文件描述符使用",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "process_open_fds{job=\"springbootai\"}",
+          "legendFormat": "Open FDs {{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "GC 次数 (按代)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "stacking": { "mode": "none" } },
+          "unit": "short"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "increase(python_gc_collections{job=\"springbootai\"}[5m])",
+          "legendFormat": "Gen {{generation}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "GC 回收对象数",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 50, "lineWidth": 1, "showPoints": "never" },
+          "unit": "short"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "rate(python_gc_objects_collected_total{job=\"springbootai\"}[1m])",
+          "legendFormat": "Gen {{generation}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "进程运行时长",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 3600 },
+              { "color": "green", "value": 86400 }
+            ]
+          },
+          "unit": "s",
+          "mappings": []
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "expr": "time() - process_start_time_seconds{job=\"springbootai\"}",
+          "legendFormat": "Uptime",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "应用健康状态",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+          ]
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"springbootai\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "抓取状态总览",
+      "type": "table",
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "expr": "up{job=\"springbootai\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true, "job": true },
+            "renameByName": { "Value": "Status", "instance": "Instance", "app": "App", "env": "Env" }
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              { "destinationType": "string", "targetField": "Status" }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["springbootai", "python", "prometheus"],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(process_cpu_seconds_total{job=\"springbootai\"}, instance)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "SpringBootAI 应用全景监控",
+  "uid": "springbootai-overview",
+  "version": 1,
+  "weekStart": ""
+}

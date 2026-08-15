@@ -1,4 +1,4 @@
-"""A deterministic SpringBootAI application used by the k6 load profiles."""
+﻿"""A deterministic SpringBootAI application used by the k6 load profiles."""
 
 import asyncio
 import hashlib
@@ -856,7 +856,7 @@ class BenchmarkController:
         }
 
 
-@SpringBootApplication(scan_base_packages=["tests_performance"])
+@SpringBootApplication(scan_base_packages=["tests.performance"])
 class BenchmarkApplication:
     pass
 

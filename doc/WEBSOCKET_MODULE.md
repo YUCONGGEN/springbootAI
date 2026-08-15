@@ -1,7 +1,7 @@
-# WebSocket —— 像微信一样实时通信
+﻿# WebSocket —— 像微信一样实时通信
 
-> 框架版本：SpringBootAI 2.2.5
-> 返回 [八大模块总览](EIGHT_MODULES.md)
+> 框架版本：SpringBootAI 2.2.6
+> 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
 
@@ -87,3 +87,23 @@ HTTP 是"你问我才答"，每次请求建立新连接。WebSocket 是"建立�
 
 **Q：怎么测试 WebSocket？**
 不能用 `requests` 库（它是 HTTP 客户端），需要用 `websockets` 库或 FastAPI 的 `TestClient`。
+
+---
+
+## 改进记录
+
+### Session 注册表广播无速率限制 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/websocket/session.py` broadcast() / send_to_user()
+
+**现象**：`broadcast()` 和 `send_to_user()` 遍历所有 session 同步发送消息，无速率限制。恶意客户端高频触发广播可导致事件循环阻塞。
+
+**改进方案**：引入 `asyncio.Semaphore` 限制并发发送数（默认 100）；增加每秒消息数限制（令牌桶）；大规模广播使用 `asyncio.gather(*tasks, return_exceptions=True)` 并发发送。
+
+### Session close() 非线程安全 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/websocket/session.py` close() / mark_closed()
+
+**现象**：`close()` 和 `mark_closed()` 修改 `_closed` 标志时无锁保护，并发调用可能导致状态不一致。
+
+**改进方案**：使用 `asyncio.Lock` 或 `threading.Lock` 保护状态变更，`close()` 内部检查 `if self._closed: return` 实现幂等。

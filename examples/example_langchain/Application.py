@@ -13,7 +13,14 @@ example_langchain 应用入口
 """
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# 移动到 examples/ 后需同时加入项目根（导入 spring）和 examples/（导入 example_langchain 包）
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_EXAMPLES_DIR = os.path.dirname(_HERE)
+_PROJECT_ROOT = os.path.dirname(_EXAMPLES_DIR)
+for _p in (_PROJECT_ROOT, _EXAMPLES_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # 无 key 环境下自动降级 FakeChatModel（生产环境请删除此行并配置真实 key）
 os.environ.setdefault("AI_ALLOW_FAKE", "true")

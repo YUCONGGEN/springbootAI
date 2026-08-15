@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, List, Optional, Type
+from typing import Any, Iterator, List, Optional, Type
 
 from .annotations import (
     ExcelColumnModel, ExcelSheet, _get_class_sheet_meta, parse_excel_columns,
@@ -197,6 +197,59 @@ class ExcelReader:
                 wb.close()
             except Exception:
                 pass
+
+    def doReadLazy(self) -> Iterator[Any]:
+        """流式读取选定工作表，逐行 yield 实体对象。
+
+        使用 openpyxl ``read_only=True`` 模式，不将整个文件加载到内存，
+        适用于 10 万行以上的大文件，避免内存溢出。
+
+        注意：调用方必须消费完生成器（或显式 close），以确保工作簿被正确关闭。
+        推荐用法::
+
+            for row in reader.doReadLazy():
+                process(row)
+        """
+        openpyxl = _require_openpyxl()
+        wb = _load_workbook(self.source, openpyxl, read_only=True)
+        try:
+            sheets = self._resolve_sheet(wb)
+            if not sheets:
+                return
+            yield from self._iter_one_sheet(sheets[0])
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
+
+    def _iter_one_sheet(self, ws) -> Iterator[Any]:
+        """流式迭代单个工作表的行，逐行 yield 实体对象。"""
+        head_cls = self.head
+        if head_cls is None:
+            raise ExcelReadError("read 需指定 head 实体类")
+
+        sheet_meta = _get_class_sheet_meta(head_cls)
+        columns: List[ExcelColumnModel] = parse_excel_columns(head_cls)
+        head_row = self._resolve_head_row_number(sheet_meta)
+
+        max_col = ws.max_column or 0
+        max_row = ws.max_row or 0
+        if max_row < head_row:
+            return
+        header_cells = [ws.cell(row=head_row, column=c).value for c in range(1, max_col + 1)]
+        col_mapping = self._map_columns(columns, header_cells)
+
+        for row_idx in range(head_row + 1, max_row + 1):
+            row_values = [ws.cell(row=row_idx, column=c).value for c in range(1, max_col + 1)]
+            if all(v is None or v == "" for v in row_values):
+                continue
+            kwargs = {}
+            for col_idx, model in col_mapping.items():
+                cell_value = ws.cell(row=row_idx, column=col_idx).value
+                value = self._convert_from_cell(model, cell_value)
+                kwargs[model.attr_name] = value
+            yield _build_instance(head_cls, kwargs)
 
     def doReadAll(self) -> dict:
         """读取所有工作表，返回 {sheet_name: [实体列表]}。"""

@@ -1,6 +1,6 @@
-# SpringBootAI CSV 模块 —— 小白也能看懂的使用指南
+﻿# SpringBootAI CSV 模块 —— 小白也能看懂的使用指南
 
-> 模块版本：SpringBootAI CSV 2.2.0 ｜ 框架版本：SpringBootAI 2.2.0
+> 模块版本：SpringBootAI CSV 2.2.6 ｜ 框架版本：SpringBootAI 2.2.6
 > CSV 模块基于 Python 标准库 `csv`，**零额外依赖**，`pip install springbootAI` 即可用。
 
 ---
@@ -659,3 +659,15 @@ A: 只需三步：
 1. `from spring.excel` → `from spring.csv`
 2. `ExcelProperty` → `CsvProperty`、`ExcelIgnore` → `CsvIgnore`
 3. `@excel_sheet` → `@csv_file`
+
+---
+
+## 改进记录
+
+### 大文件读取未流式处理，内存溢出风险 — 高 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/csv/reader.py` doRead()
+
+**现象**：CSV 读取使用 `csv.reader()` 虽然逐行读取，但结果列表全部收集后返回。10 万行以上的大文件内存占用可能超过 1GB。
+
+**修复方案**：新增 `doReadLazy()` 流式生成器方法，逐行 yield 实体对象，不一次性加载全部行到内存。调用方按需消费：`for row in reader.doReadLazy(): process(row)`。

@@ -1,6 +1,6 @@
-# SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
+﻿# SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
 
-> 框架版本：SpringBootAI 2.2.0
+> 框架版本：SpringBootAI 2.2.6
 
 ---
 
@@ -453,7 +453,8 @@ Seata 就是负责跨多个服务协调事务的：
 
 - **local 模式**：只做事务追踪，不做跨服务协调。开发调试用。
 - **http 模式**：持久化补偿协调。服务挂了重启后能恢复未完成的事务。**但它不具备强一致性**——就像发微信让对方确认，你发了但对方可能没收到。
-- **distributed 模式**：通过仓库提供的 Java bridge 对接真实 Seata Server，Python 业务分支使用 TCC 的 prepare/commit/rollback 回调。它具备真实 XID、TC 协调和 TCC fence，但不会自动代理 Python 数据库连接，也不会自动生成 AT `undo_log`。
+- **distributed 模式**：通过仓库提供的 Java bridge 对接真实 Seata Server，Python 业务分支使用 TCC 的 prepare/commit/rollback 回调。它具备真实 XID、TC 协调和 TCC fence。
+- **at 模式**：通过 ORM 拦截器自动记录 SQL 的 before/after image，生成 undo_log，全局事务回滚时自动反向恢复数据。不需要 Java bridge，适合单服务多表事务回滚。详见 [AT 模式使用指南](#at-模式使用指南)。
 
 ### ② 怎么用
 
@@ -545,11 +546,68 @@ seata:
 |---|---|---|
 | 开发调试 | `local` | 只在本地追踪事务，不做跨服务协调 |
 | 非关键业务的补偿流程 | `http` | 能持久化和恢复，但不是强一致 |
+| 单服务多表事务回滚 | `at` | ORM 拦截器自动记录 undo_log，回滚时自动恢复 |
 | 支付/订单/库存等核心业务 | 经过业务验证的 TCC/Saga/Outbox | `distributed` 可提供 TCC 协调，但必须完成业务资源、幂等与故障验证 |
 
 ### ⚠️ 重要警告
 
-**http 模式不等于强一致性，distributed 也不等于自动 AT。** distributed 模式失败时会拒绝静默降级，但 TCC 的最终正确性仍取决于业务 prepare/commit/rollback 是否持久化、幂等并正确处理空回滚和悬挂。没有这些实现和故障测试，不要把它用于支付、订单或库存核心链路。
+**http 模式不等于强一致性。** distributed 模式失败时会拒绝静默降级，但 TCC 的最终正确性仍取决于业务 prepare/commit/rollback 是否持久化、幂等并正确处理空回滚和悬挂。没有这些实现和故障测试，不要把它用于支付、订单或库存核心链路。`at` 模式自动处理单表 undo，但不支持 JOIN、子查询和跨服务事务。
+
+### AT 模式使用指南
+
+#### ① 是什么
+
+AT（Automatic Transaction）模式是 Seata 最常用的事务模式。它自动拦截 SQL，在执行前查询数据快照（before image），执行后查询新快照（after image），把两个快照存入 `undo_log` 表。全局事务回滚时，根据 undo_log 自动反向恢复数据。
+
+**大白话**：就像你改文件前先备份一份，改错了用备份恢复。AT 模式自动帮你做"备份"和"恢复"。
+
+#### ② 怎么用
+
+```python
+from spring.cloud.seata import seata_manager, SeataTransactionManager
+from spring.cloud.seata_at_proxy import SeataATProxy
+
+# 1. 设置 AT 模式
+seata_manager.set_mode("at")
+
+# 2. 在 SqlSession 上安装 AT 拦截器（框架启动时执行一次）
+at_proxy = SeataATProxy(sql_session, seata_manager)
+at_proxy.install()
+
+# 3. 业务代码中开启全局事务
+@GlobalTransactional
+def transfer(from_id, to_id, amount):
+    # UPDATE 和 DELETE 会自动记录 undo_log
+    mapper.update_balance(from_id, -amount)
+    mapper.update_balance(to_id, +amount)
+    # 如果这里抛异常，undo_log 会自动恢复余额
+```
+
+#### ③ 工作流程
+
+```
+开启全局事务 (begin)
+    │
+    ▼
+执行 UPDATE account SET balance=50 WHERE id=1
+    │
+    ├─ 1. 拦截器查询 before image: SELECT * FROM account WHERE id=1 → {id:1, balance:100}
+    ├─ 2. 执行原 SQL: UPDATE account SET balance=50 WHERE id=1
+    ├─ 3. 拦截器查询 after image: SELECT * FROM account WHERE id=1 → {id:1, balance:50}
+    └─ 4. 存入 undo_log: before={balance:100}, after={balance:50}
+    │
+    ▼
+全局事务回滚 (rollback)
+    │
+    └─ 读取 undo_log → 用 before image 恢复: UPDATE account SET balance=100 WHERE id=1
+```
+
+#### ④ 限制
+
+- 仅支持单表 SQL（不支持 JOIN / 子查询）
+- INSERT 的 undo 需要知道主键（不支持自增回填）
+- WHERE 条件直接用于 before image 查询
+- 仅在 `seata_manager.is_in_transaction()` 为 True 时生效
 
 ---
 
@@ -643,5 +701,42 @@ http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复
 
 ### 相关代码位置
 
-- [`spring/cloud/seata.py`](../spring/cloud/seata.py) — `SeataTransactionManager` 三模式实现
+- [`spring/cloud/seata.py`](../spring/cloud/seata.py) — `SeataTransactionManager` 四模式实现（local/http/distributed/at）
+- [`spring/cloud/seata_at_proxy.py`](../spring/cloud/seata_at_proxy.py) — AT 模式数据源代理（ORM 拦截器 + undo_log）
 - [`spring/cloud/transaction_store.py`](../spring/cloud/transaction_store.py) — `SQLiteTransactionStore`（WAL + 原子状态迁移）
+
+---
+
+## 改进记录
+
+### Seata distributed 模式桥接失败无降级 — 高 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/cloud/seata.py` begin_transaction() distributed 分支
+
+**现象**：`begin_transaction(mode='distributed')` 调用外部 Seata bridge，若 bridge 不可达，异常处理不充分——事务状态可能停留在 `BEGINNING`，后续 `commit()`/`rollback()` 行为未定义。
+
+**修复方案**：新增 `fallback_to_local` 配置项（默认 False），bridge 未初始化或 begin 失败时降级为本地事务 + 警告日志。降级时上下文已设置（in_transaction=True），直接返回 tx_id。
+
+### Seata recovery worker 无优雅停机 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/cloud/seata.py` recovery worker 线程
+
+**现象**：recovery worker 是守护线程（`daemon=True`），应用退出时被强杀，正在恢复中的事务可能丢失。
+
+**改进方案**：注册 `atexit` 钩子或接入 `spring.core.graceful_shutdown`，停机前等待 recovery worker 完成当前任务；设置停机超时（默认 30 秒）。
+
+### RabbitMQ 消息发布未处理 JSON 序列化失败 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/messaging/rabbitmq.py` publish_to_queue()
+
+**现象**：`publish_to_queue` 对消息体 `json.dumps()` 时，若包含不可序列化对象（如 `datetime`），会抛 `TypeError`，当前未捕获，调用方收到未包装的 `TypeError`。
+
+**改进方案**：捕获 `TypeError`，包装为 `MessageSerializationError`；提供自定义 `default` 回调支持 `datetime` → ISO 格式自动转换。
+
+### RabbitMQ 连接失败无重试 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/messaging/rabbitmq.py` get_channel()
+
+**现象**：`get_channel()` 连接失败直接抛异常，无重试逻辑。网络抖动场景下首次连接失败即导致服务不可用。
+
+**改进方案**：集成 `spring.retry` 的 `@Retryable`，配置指数退避（初始 1 秒，倍数 2，最大 30 秒，最多 5 次）。

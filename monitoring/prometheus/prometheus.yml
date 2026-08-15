@@ -1,0 +1,39 @@
+# Prometheus 抓取配置
+# SpringBootAI 应用需暴露 /actuator/prometheus 端点
+
+global:
+  scrape_interval: 15s          # 每 15 秒抓取一次（生产环境推荐值）
+  evaluation_interval: 15s      # 每 15 秒评估一次告警规则
+  scrape_timeout: 10s           # 单次抓取超时
+
+# 告警规则文件
+rule_files:
+  - "alerting_rules.yml"
+
+# Alertmanager 配置
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+# 抓取目标
+scrape_configs:
+  # ─── SpringBootAI 应用指标 ───
+  - job_name: "springbootai"
+    metrics_path: "/actuator/prometheus"
+    scheme: "http"
+    static_configs:
+      - targets:
+          - "host.docker.internal:8000"
+        labels:
+          app: "springbootai"
+          env: "dev"
+    # 如启用了 Actuator 鉴权，取消注释并配置 Bearer Token：
+    # bearer_token: "your-jwt-token-here"
+
+  # ─── Prometheus 自身指标 ───
+  - job_name: "prometheus"
+    static_configs:
+      - targets:
+          - "localhost:9090"

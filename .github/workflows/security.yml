@@ -1,4 +1,4 @@
-name: Security Scan
+﻿name: Security Scan
 
 # ====================================================================
 # 安全扫描工作流：依赖漏洞 + 静态分析 + 硬编码密钥检查
@@ -6,7 +6,7 @@ name: Security Scan
 # 覆盖范围：
 #   - spring/            核心框架代码
 #   - spring/langchain/  LangChain 模块（新增）
-#   - example_langchain/ 演示应用
+#   - examples/example_langchain/ 演示应用
 #
 # 注意：safe_eval_arithmetic 使用 ast.parse 实现（非 eval），是安全设计，
 #       Bandit B307(eval) 不会误报；如误报可在 .bandit 配置中排除。
@@ -56,19 +56,19 @@ jobs:
     - name: Bandit security static analysis
       run: |
         echo "Blocking every medium/high finding across the repository..."
-        bandit -r spring/ example_langchain/ example_langgraph/ example_mcp/ \
+        bandit -r spring/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ \
           -ll -f json -o bandit-report.json
         echo "Bandit medium/high gate passed"
 
     - name: Check for hardcoded secrets
       run: |
-        echo "Checking for hardcoded passwords/secrets in spring/ and example_langchain/..."
+        echo "Checking for hardcoded passwords/secrets in spring/ and examples/example_langchain/..."
         # 正则覆盖 password/passwd/secret/api_key/api-key/apikey/token/credential
         # 赋值语句，要求引号内字面值至少 6 字符（排除空串和短占位符）。
         # grep -v 排除已知安全模式：枚举值、占位符、示例值、测试夹具。
         matches=$(grep -rnE --include="*.py" \
             "(password|passwd|secret|api[_-]?key|apikey|token|credential)[[:space:]]*=[[:space:]]*['\"][^'\"]{6,}['\"]" \
-            spring/ example_langchain/ example_langgraph/ example_mcp/ \
+            spring/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ \
             | grep -vE "(change-in-production|change-me|your-|placeholder|example|fake|dummy|insecure|xxxx|PASSWORD[[:space:]]*=[[:space:]]*'password')" \
             || true)
         if [ -n "$matches" ]; then
@@ -83,7 +83,7 @@ jobs:
       run: |
         echo "Verifying safe_eval_arithmetic uses AST (not eval/exec)..."
         # 匹配任何形式的 eval() 调用（包括 str(eval(...))、return eval(...) 等变体）
-        if grep -rnE "\beval\s*\(|exec\s*\(" spring/langchain/ example_langchain/ \
+        if grep -rnE "\beval\s*\(|exec\s*\(" spring/langchain/ examples/example_langchain/ \
             | grep -vE "(safe_eval_arithmetic|#.*eval|['\"]eval|eval\(\)[^a-zA-Z]|_eval\b|\.pyc)" \
             | grep -v "def safe_eval_arithmetic" \
             | grep -v "mode='eval'" ; then

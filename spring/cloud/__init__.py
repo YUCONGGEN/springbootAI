@@ -20,6 +20,13 @@ from spring.cloud.seata import (
 )
 from spring.cloud.transaction_store import SQLiteTransactionStore
 from spring.cloud.seata_bridge import SeataBridgeClient, SeataBridgeError
+from spring.cloud.seata_at_proxy import (
+    SeataATProxy,
+    SeataATInterceptor,
+    UndoLogManager,
+    UndoExecutor,
+    parse_sql,
+)
 from spring.cloud.sentinel import (
     sentinel_engine,
     SentinelEngine,
@@ -66,6 +73,7 @@ __all__ = [
     # 分布式事务
     'seata_manager', 'init_seata', 'SeataTransactionManager', 'BranchStatus',
     'SQLiteTransactionStore', 'SeataBridgeClient', 'SeataBridgeError',
+    'SeataATProxy', 'SeataATInterceptor', 'UndoLogManager', 'UndoExecutor', 'parse_sql',
     # 熔断限流
     'sentinel_engine', 'SentinelEngine', 'FlowRule', 'DegradeRule',
     'SystemRule', 'HotParamRule', 'BlockException', 'sentinel_protect',

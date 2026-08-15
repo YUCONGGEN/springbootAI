@@ -1,7 +1,7 @@
-# 配置绑定 —— 把 YAML 配置自动变成 Python 对象
+﻿# 配置绑定 —— 把 YAML 配置自动变成 Python 对象
 
-> 框架版本：SpringBootAI 2.2.5
-> 返回 [八大模块总览](EIGHT_MODULES.md)
+> 框架版本：SpringBootAI 2.2.6
+> 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
 
@@ -72,3 +72,31 @@ class MyAppProps:
 
 **Q：YAML 里写 `max-connections: "32"` 能自动转成 int 吗？**
 不能！字符串不会自动转数字，YAML 里写 `max-connections: 32`（不加引号）才是数字。
+
+---
+
+## 改进记录
+
+### ApplicationContext._current_context 无锁保护 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/context/application_context.py` _current_context 类变量
+
+**现象**：`_current_context` 是类变量，在 `__init__` 中直接赋值，无锁保护。多线程环境下存在数据竞争。
+
+**改进方案**：使用 `threading.Lock` 保护读写，或改为 `ContextVar` 实现协程安全的上下文传播。
+
+### refresh() 失败后部分 Bean 已注册，状态不一致 — 高 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/context/application_context.py` refresh()
+
+**现象**：`refresh()` 按顺序执行各步骤，若中间某步抛异常，前面已注册的 Bean 不会回滚，`_started` 仍为 `False`，再次调用 `refresh()` 行为不可预测。
+
+**修复方案**：在 `refresh()` 入口保存 Bean 名快照，失败时调用新增的 `_rollback_refresh()` 方法：停止已启动的定时任务、移除本次新增的 Bean 定义，确保状态一致。
+
+### 生产环境配置校验逻辑重复且分散 — 低 ⏳ 待处理 (v2.4.0)
+
+**位置**：`spring/config/config_loader.py` _validate_prod_config
+
+**现象**：`_validate_prod_config` 中对 JWT、Seata、AI 的校验逻辑各自独立，缺乏统一校验框架，违反开闭原则。
+
+**改进方案**：抽象 `ProdConfigRule` 接口，每条规则独立一个类，通过注册表模式收集所有规则。

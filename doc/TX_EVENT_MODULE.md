@@ -1,7 +1,7 @@
-# 事务事件 —— 操作完成后自动发通知
+﻿# 事务事件 —— 操作完成后自动发通知
 
-> 框架版本：SpringBootAI 2.2.5
-> 返回 [八大模块总览](EIGHT_MODULES.md)
+> 框架版本：SpringBootAI 2.2.6
+> 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
 

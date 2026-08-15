@@ -1,7 +1,7 @@
-# i18n 国际化 —— 中英文自动切换
+﻿# i18n 国际化 —— 中英文自动切换
 
-> 框架版本：SpringBootAI 2.2.5
-> 返回 [八大模块总览](EIGHT_MODULES.md)
+> 框架版本：SpringBootAI 2.2.6
+> 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
 
@@ -85,3 +85,15 @@ app.add_middleware(
 
 **Q：`messages.properties` 是干什么的？**
 是兜底文件。请求的语言找不到对应文件时，回退到这个默认文件。至少要有一个。
+
+---
+
+## 改进记录
+
+### MessageFormat 参数插值不严谨 — 低 ⏳ 待处理 (v2.4.0)
+
+**位置**：`spring/i18n/message_source.py` 消息参数格式化
+
+**现象**：消息参数格式化中对 Java `MessageFormat` 语法（如 `{0,number,#.##}`）的剥离使用简单正则，遇到嵌套花括号或转义字符时可能解析错误，导致最终消息包含原始 `{0}` 占位符。
+
+**改进方案**：使用 `string.Formatter` 或 `str.format_map()` 替代手写正则；对无法解析的占位符，回退为 `?` 并记录 WARNING 日志。

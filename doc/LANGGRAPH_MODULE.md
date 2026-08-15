@@ -75,7 +75,7 @@ python -c "import langgraph; print(langgraph.__version__)"
 仓库已经提供一个不需要真实 API Key 的示例。它使用 AI 模块中的 `FakeChatModel`，不会访问网络：
 
 ```bash
-python -m example_langgraph.demo
+python examples/example_langgraph/demo.py
 ```
 
 你会看到三段结果：
@@ -88,7 +88,7 @@ python -m example_langgraph.demo
 
 这三段分别表示：普通路径完成、大额路径暂停、用同一个线程号恢复成功。
 
-示例源码在 [example_langgraph/demo.py](../example_langgraph/demo.py)。它模拟“订单审核”流程：金额小于 1000 直接结束，金额达到 1000 时要求人工审核。示例使用内存检查点，只适合学习；生产不能照搬这一点，见[第 12 章](#12-生产上线前检查)。
+示例源码在 [examples/example_langgraph/demo.py](../examples/example_langgraph/demo.py)。它模拟“订单审核”流程：金额小于 1000 直接结束，金额达到 1000 时要求人工审核。示例使用内存检查点，只适合学习；生产不能照搬这一点，见[第 12 章](#12-生产上线前检查)。
 
 ## 3. 看懂最小代码
 
@@ -561,10 +561,10 @@ async def explain(self, state):
 
 这里 MCP 负责外部工具通信，Spring AI 负责模型调用，LangGraph 只负责编排。三层各用现成实现，没有重复造协议、Agent 或状态图引擎。
 
-可直接运行 [annotation_demo.py](../example_langgraph/annotation_demo.py)：
+可直接运行 [annotation_demo.py](../examples/example_langgraph/annotation_demo.py)：
 
 ```bash
-python -m example_langgraph.annotation_demo
+python examples/example_langgraph/annotation_demo.py
 ```
 
 专项测试：

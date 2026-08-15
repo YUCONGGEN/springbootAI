@@ -1,7 +1,7 @@
-# SpringBootAI LangChain 模块使用指南 —— 小白也能看懂
+﻿# SpringBootAI LangChain 模块使用指南 —— 小白也能看懂
 
 > 把 [LangChain](https://github.com/langchain-ai/langchain) 全套能力（Chains / Agents / Memory / Retrievers / VectorStores / Parsers / Loaders）封装为 Spring 风格 Bean，配合 30+ 第三方模型提供商（OpenAI / Anthropic / Ollama / DeepSeek / ZhipuAI / Tongyi …）开箱即用。
-> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.2.0 / LangChain 模块 2.2.0
+> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.2.6 / LangChain 模块 2.2.6
 
 ---
 
@@ -882,10 +882,10 @@ class LangChainAppConfig:
 
 ## 第7章：示例应用（example_langchain）
 
-项目自带一个完整的演示应用 `example_langchain/`：
+项目自带一个完整的演示应用 `examples/example_langchain/`：
 
 ```
-example_langchain/
+examples/example_langchain/
 ├── Application.py                              # @SpringBootApplication 启动类
 ├── config/LangChainAppConfig.py                # @Configuration 装配 AI + LangChain
 ├── controller/LangChainController.py           # @RestController REST 接口
@@ -901,7 +901,7 @@ example_langchain/
 ```bash
 # 无 API Key 也能跑（降级 FakeChatModel）
 $env:AI_ALLOW_FAKE = "true"
-python example_langchain/Application.py
+python examples/example_langchain/Application.py
 # 服务监听 8081 端口
 ```
 
@@ -1157,4 +1157,4 @@ assistant = bind_langchain_client(
 )
 ```
 
-完整示例见 [annotation_demo.py](../example_langchain/demo/annotation_demo.py)，行为测试见 [test_ai_declarative_annotations.py](../tests/test_ai_declarative_annotations.py)。
+完整示例见 [annotation_demo.py](../examples/example_langchain/demo/annotation_demo.py)，行为测试见 [test_ai_declarative_annotations.py](../tests/test_ai_declarative_annotations.py)。

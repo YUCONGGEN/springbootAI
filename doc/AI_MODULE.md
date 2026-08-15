@@ -1,7 +1,7 @@
-# SpringBootAI AI 模块使用指南 —— 小白也能看懂
+﻿# SpringBootAI AI 模块使用指南 —— 小白也能看懂
 
 > 让你的 Python 程序能和 ChatGPT、DeepSeek 等大模型聊天、回答问题、调用你的函数、读你的文档来回答。
-> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.2.0 / SpringBootAI AI 2.2.0
+> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.2.6 / SpringBootAI AI 2.2.6
 
 ---
 
@@ -1000,3 +1000,31 @@ A：按 `order` 值从小到大执行。比如 Memory Advisor 设 `order=1`，RA
 ---
 
 > **相关文档**：[LangChain 模块使用指南](LANGCHAIN_MODULE.md) | [AI & LangChain 测试指南](AI_LANGCHAIN_TEST_GUIDE.md) | [新手入门指南](BEGINNER_GUIDE.md)
+
+---
+
+## 改进记录
+
+### API Key 明文存储在 Provider 实例属性 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/ai/providers.py` OpenAIChatModel.__init__
+
+**现象**：`self.api_key = api_key` 明文存储。若实例被序列化、打印 repr、或意外进入异常堆栈，密钥会泄漏。
+
+**改进方案**：使用 `self._api_key`（下划线前缀），实现 `__repr__` 屏蔽密钥。
+
+### 流式响应异常时 response 对象未关闭 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/ai/providers.py` stream 方法
+
+**现象**：流式调用使用 `requests.post(..., stream=True)`，迭代过程中抛出异常时底层 socket 可能未正确关闭，导致连接泄漏。
+
+**改进方案**：使用 `try/finally` 确保 `response.close()`。
+
+### 工具调用循环缺少总 token 上限保护 — 中 ⏳ 待处理 (v2.3.0)
+
+**位置**：`spring/ai/providers.py` MAX_TOOL_ITERATIONS
+
+**现象**：`MAX_TOOL_ITERATIONS = 5` 限制了往返轮数，但未限制累计 token 数。每轮工具调用返回超大结果时，5 轮可能消耗数万 token。
+
+**改进方案**：增加配置项 `max_total_tokens`（默认 100000），每轮调用前估算累计 token，超限则终止循环。

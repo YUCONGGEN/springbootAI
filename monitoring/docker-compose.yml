@@ -1,0 +1,100 @@
+# SpringBootAI 工业级监控栈 —— Prometheus + Grafana + Alertmanager + Spring Boot Admin
+#
+# 使用方式：
+#   cd monitoring
+#   docker-compose up -d
+#
+# 服务端口：
+#   Prometheus:    http://localhost:9090
+#   Grafana:       http://localhost:3000  (admin/admin)
+#   Alertmanager:  http://localhost:9093
+#   Spring Boot Admin: http://localhost:1111
+#
+# 前提：SpringBootAI 应用需先启动并暴露 /actuator 端点（默认 http://localhost:8000）
+
+services:
+  # ─────────────────── Prometheus ───────────────────
+  # 指标采集服务器，定时抓取 /actuator/prometheus 端点
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: springbootai-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerting_rules.yml:/etc/prometheus/alerting_rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - monitoring-net
+
+  # ─────────────────── Alertmanager ───────────────────
+  # 告警管理器，接收 Prometheus 推送的告警，转发到通知渠道
+  # 通知渠道在 alertmanager.yml 中配置（钉钉/企业微信/邮件/Webhook）
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: springbootai-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - monitoring-net
+
+  # ─────────────────── Grafana ───────────────────
+  # 可视化仪表盘，数据源自动注入 Prometheus
+  # Dashboard JSON 自动加载，无需手动导入
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: springbootai-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring-net
+
+  # ─────────────────── Spring Boot Admin ───────────────────
+  # 可视化运维面板，通过 Actuator 端点监控 SpringBootAI 应用
+  # 注意：SBA 是 Java 应用，首次拉取镜像约 200MB
+  spring-boot-admin:
+    image: codecentric/spring-boot-admin:3.3.4
+    container_name: springbootai-admin
+    ports:
+      - "1111:8181"
+    environment:
+      # 通过环境变量直接注册 SpringBootAI 实例（无需 Java 客户端）
+      - SPRING_BOOT_ADMIN_INSTANCE_NAME=springbootai
+      - SPRING_BOOT_ADMIN_INSTANCE_HEALTH_URL=http://host.docker.internal:8000/actuator/health
+      - SPRING_BOOT_ADMIN_INSTANCE_MANAGEMENT_URL=http://host.docker.internal:8000/actuator
+      - SPRING_BOOT_ADMIN_INSTANCE_SERVICE_URL=http://host.docker.internal:8000
+      # 修复 Windows Docker Desktop cgroup v2 兼容性问题
+      - JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - monitoring-net
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+
+networks:
+  monitoring-net:
+    driver: bridge

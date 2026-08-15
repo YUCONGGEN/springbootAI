@@ -1,7 +1,7 @@
-# Actuator —— 系统健康检查面板
+﻿# Actuator —— 系统健康检查面板
 
-> 框架版本：SpringBootAI 2.2.5
-> 返回 [八大模块总览](EIGHT_MODULES.md)
+> 框架版本：SpringBootAI 2.2.6
+> 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
 
@@ -15,6 +15,7 @@
 - [第四章：Spring Boot Admin 可视化面板](#第四章spring-boot-admin-可视化面板)
 - [第五章：Prometheus + Grafana 工业级监控](#第五章prometheus--grafana-工业级监控)
 - [第六章：自定义业务指标](#第六章自定义业务指标)
+- [第七章：工业级监控一键部署（小白教程）](#第七章工业级监控一键部署小白教程)
 - [mini-FAQ](#mini-faq)
 
 ---
@@ -283,6 +284,412 @@ prometheus_metrics.configure(namespace='myapp', subsystem='api')
 
 ---
 
+## 第七章：工业级监控一键部署（小白教程）
+
+> **这一章解决什么问题？**
+> 前面几章的 `/actuator/admin` 是个简易面板，但它没有图表、没有告警、没有历史趋势。
+> 这一章教你用**现成的工业级工具**（Prometheus + Grafana + Alertmanager + Spring Boot Admin），
+> 搭一套专业监控体系——**有折线图、有告警推送、有历史数据**，跟大厂用的一样。
+>
+> **你不需要懂这些工具的内部原理**，只需要会复制粘贴命令就行。
+
+### 7.1 先搞懂这四个工具分别是干什么的
+
+打个比方，假设你的 SpringBootAI 应用是一个"病人"，这四个工具的角色如下：
+
+| 工具 | 比喻 | 干什么 |
+|------|------|--------|
+| **Prometheus** | 护士 | 每 15 秒来量一次体温、血压（抓取 `/actuator/prometheus` 指标），记录到病历本 |
+| **Grafana** | 体检报告 | 把护士记录的数据画成折线图、柱状图，让你一眼看出"体温趋势是否正常" |
+| **Alertmanager** | 报警器 | 体温超过 38°C？立刻给你发钉钉/邮件/微信通知 |
+| **Spring Boot Admin** | 主治医生 | 站在病房外看仪表盘，能看到病人整体状态、开药方（改日志级别） |
+
+它们之间的关系：
+
+```
+你的 SpringBootAI 应用（病人，运行在 :8000 端口）
+    │
+    │  /actuator/prometheus（暴露指标数据）
+    ├──→ Prometheus（护士，:9090）—— 每 15 秒来抓一次数据
+    │        │
+    │        │  数据存起来后
+    │        ├──→ Grafana（体检报告，:3000）—— 把数据画成图表
+    │        │
+    │        │  发现异常时
+    │        └──→ Alertmanager（报警器，:9093）—— 发钉钉/邮件通知
+    │                 │
+    │                 │  告警推送到
+    │                 └──→ /actuator/alert（你的应用接收告警，显示在 Admin 面板）
+    │
+    │  /actuator/health（暴露健康状态）
+    └──→ Spring Boot Admin（主治医生，:1111）—— 看整体状态
+```
+
+### 7.2 开始之前需要准备什么
+
+**你需要安装 Docker Desktop。**
+
+- **Windows/Mac**：去 https://www.docker.com/products/docker-desktop 下载安装，一路下一步就行
+- **Linux**：执行 `curl -fsSL https://get.docker.com | sh`
+
+安装完成后，打开终端（Windows 用 PowerShell），输入：
+
+```bash
+docker --version
+```
+
+如果显示 `Docker version 24.x.x` 之类的版本号，说明安装成功了。
+
+> **小白提示**：Docker 就像一个"虚拟机"，能在你电脑上跑各种服务而不污染你的系统。后面四个监控工具都是用 Docker 跑的，你不需要单独安装它们。
+
+### 7.3 三步启动完整监控栈
+
+#### 第一步：启动你的 SpringBootAI 应用
+
+```bash
+# 在项目根目录下执行
+python -m spring.main
+```
+
+应用启动后，浏览器打开 http://localhost:8000/actuator/health ，如果看到 `{"status":"UP"}` 就说明应用正常运行了。
+
+> **为什么需要这步？** 监控工具要读取应用的指标数据，应用得先跑起来。
+
+#### 第二步：启动监控栈
+
+```bash
+# 进入监控目录
+cd monitoring
+
+# 一键拉起四个监控服务（首次会下载镜像，约 5-10 分钟）
+docker-compose up -d
+```
+
+> **小白提示**：
+> - `-d` 表示后台运行，不会占用你的终端
+> - 首次启动会下载四个 Docker 镜像（共约 1.5GB），请耐心等待
+> - 下载完成后，以后每次启动只需要几秒钟
+
+#### 第三步：验证服务是否启动成功
+
+```bash
+# 查看四个服务是否都在运行
+docker-compose ps
+```
+
+你应该看到类似这样的输出：
+
+```
+NAME                          STATUS
+springbootai-prometheus       Up
+springbootai-grafana          Up
+springbootai-alertmanager     Up
+springbootai-admin            Up
+```
+
+如果四个都是 `Up`，恭喜你，监控栈启动成功了！
+
+### 7.4 打开 Grafana 仪表盘看图表
+
+浏览器打开 **http://localhost:3000**
+
+- 用户名：`admin`
+- 密码：`admin`
+- （首次登录会提示修改密码，点 "Skip" 跳过即可）
+
+登录后，左侧菜单点 **Dashboards** → 你会看到一个叫 **"SpringBootAI 应用全景监控"** 的仪表盘，点进去就能看到 8 个图表：
+
+#### 你会看到什么
+
+| 图表 | 看什么 | 正常情况 | 异常情况 |
+|------|--------|----------|----------|
+| **CPU 使用率** | 折线图，显示进程 CPU 占比 | 5%-30% 波动 | 持续 >80% = 有问题 |
+| **内存使用** | 两条线：RSS（实际内存）+ Virtual（虚拟内存） | RSS 稳定不增长 | RSS 持续上涨 = 内存泄漏 |
+| **文件描述符** | 打开的文件句柄数 | 稳定在几十到几百 | 持续上涨不回落 = 资源泄漏 |
+| **GC 次数** | Python 垃圾回收次数（按代分组） | 偶尔波动 | 频繁密集 = GC 压力大 |
+| **GC 回收对象** | 每秒回收的对象数（柱状图） | 低矮柱子 | 高柱子密集 = 内存压力大 |
+| **进程运行时长** | 大数字，显示应用已运行多久 | 绿色（>1天） | 红色（<1小时）= 刚重启过 |
+| **应用健康状态** | UP（绿色）或 DOWN（红色） | 绿色 UP | 红色 DOWN = 应用挂了 |
+| **抓取状态总览** | 表格，列出所有被监控的实例 | 都是 1 | 有 0 = 抓取失败 |
+
+#### 仪表盘的三个实用功能
+
+1. **自动刷新**：右上角时间选择器旁有刷新图标，默认 15 秒自动刷新一次
+2. **时间范围**：右上角可选 "Last 5 minutes" / "Last 1 hour" / "Last 24 hours" 等
+3. **实例筛选**：仪表盘顶部有下拉框，如果部署了多个实例，可以选择只看某一个
+
+### 7.5 打开 Spring Boot Admin 面板
+
+浏览器打开 **http://localhost:1111**
+
+这是 Java 生态的原版 Spring Boot Admin Server，它会自动发现并监控你的 SpringBootAI 应用。你会看到：
+
+- **应用列表**：显示 springbootai 实例，状态为 UP（绿色）
+- **详情页**：点击应用名进入，可以看到
+  - **Health**：健康检查详情（数据库、Redis 等各组件状态）
+  - **Info**：应用版本、Python 版本、操作系统信息
+  - **Metrics**：JVM/进程指标
+  - **Environment**：环境变量和配置（敏感字段自动脱敏）
+  - **Loggers**：日志级别管理（可在线切换 DEBUG/INFO/WARN/ERROR）
+  - **Threads**：线程转储（查看线程状态和调用栈）
+  - **Mappings**：所有 HTTP 路由列表
+
+### 7.6 打开 Prometheus 查看原始数据
+
+浏览器打开 **http://localhost:9090**
+
+- 顶部菜单 **Status → Targets**：能看到 springbootai 抓取目标的状态（UP = 正常）
+- 顶部搜索框输入 `process_resident_memory_bytes`，点 Execute：能看到当前内存使用量
+- 顶部菜单 **Alerts**：能看到所有告警规则及其状态（绿色=正常，红色=触发中）
+
+> **小白提示**：Prometheus 本身的界面比较简陋，主要是给运维人员排查用的。日常看图表用 Grafana 就行。
+
+### 7.7 告警是怎么工作的
+
+#### 告警流程
+
+```
+Prometheus 发现异常（比如 CPU > 80% 持续 5 分钟）
+    │
+    └──→ 推送给 Alertmanager
+            │
+            ├──→ 发钉钉/企业微信/邮件通知你（需要配置，见 7.8 节）
+            │
+            └──→ 推送到 /actuator/alert（你的应用接收）
+                    │
+                    └──→ 显示在 /actuator/admin 面板的"告警通知"区块
+```
+
+#### 预置的 7 条告警规则
+
+| 告警名称 | 什么时候触发 | 级别 | 持续多久才报 |
+|----------|-------------|------|-------------|
+| **AppDown** | 应用完全不可访问 | 严重（红色） | 1 分钟 |
+| **HighCpuUsage** | CPU 使用率 > 80% | 严重（红色） | 5 分钟 |
+| **HighMemoryUsage** | 内存 RSS > 1GB | 严重（红色） | 5 分钟 |
+| **HighFileDescriptors** | 打开文件数 > 900 | 警告（橙色） | 3 分钟 |
+| **HighGcPressure** | 每秒 GC > 10 次 | 警告（橙色） | 5 分钟 |
+| **ProcessRestarted** | 进程重启了 | 警告（橙色） | 立即 |
+| **ScrapeFailure** | Prometheus 抓取失败 | 提示（蓝色） | 30 秒 |
+
+> **为什么有"持续时间"？** 避免误报。CPU 偶尔飙到 90% 是正常的，但持续 5 分钟都 >80% 就真的有问题了。
+
+#### 在 Admin 面板看告警
+
+访问 http://localhost:8000/actuator/admin ，你会看到"告警通知"区块：
+
+- **无告警时**：显示绿色 "✓ 无活跃告警"
+- **有告警时**：显示表格，每行一条告警，按级别着色：
+  - critical = 红色
+  - warning = 橙色
+  - info = 蓝色
+- 告警恢复后状态变为绿色 "resolved"
+
+### 7.8 配置钉钉/企业微信/邮件通知
+
+默认只推送到应用的 `/actuator/alert` 端点（显示在 Admin 面板）。如果你想收到钉钉/邮件通知，需要编辑配置文件。
+
+#### 方式一：钉钉机器人通知
+
+1. 打开钉钉群 → 群设置 → 智能群助手 → 添加机器人 → 选"自定义"
+2. 机器人名字随便填，安全设置选"加签"，复制出 Webhook 地址（类似 `https://oapi.dingtalk.com/robot/send?access_token=xxx`）
+3. 编辑 `monitoring/alertmanager/alertmanager.yml`，找到钉钉部分，取消注释并填入 URL：
+
+```yaml
+  - name: "dingtalk"
+    webhook_configs:
+      - url: "https://oapi.dingtalk.com/robot/send?access_token=你的token"
+        send_resolved: true   # 告警恢复时也通知
+```
+
+4. 重启 Alertmanager：
+
+```bash
+cd monitoring
+docker-compose restart alertmanager
+```
+
+#### 方式二：企业微信机器人通知
+
+1. 企业微信群 → 右上角 ... → 添加群机器人 → 复制 Webhook 地址
+2. 编辑 `monitoring/alertmanager/alertmanager.yml`，取消注释企业微信部分：
+
+```yaml
+  - name: "wechat"
+    webhook_configs:
+      - url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的key"
+        send_resolved: true
+```
+
+3. 重启 Alertmanager：`docker-compose restart alertmanager`
+
+#### 方式三：邮件通知
+
+编辑 `monitoring/alertmanager/alertmanager.yml`，取消注释邮件部分并填入 SMTP 信息：
+
+```yaml
+  - name: "email"
+    email_configs:
+      - to: "ops@company.com"              # 收件人
+        from: "alert@company.com"           # 发件人
+        smarthost: "smtp.company.com:587"   # SMTP 服务器地址
+        auth_username: "alert@company.com"
+        auth_password: "your-password"      # SMTP 密码
+        require_tls: true
+```
+
+然后修改顶部的 `receiver: "email"` 把默认通知渠道改为邮件，重启 Alertmanager。
+
+> **Spring Boot Admin Server 端口说明**：
+> SBA Docker 镜像内部默认监听 **8181** 端口（不是 1111）。
+> docker-compose 中映射为 `1111:8181`，即宿主机 1111 → 容器 8181。
+> 访问地址仍然是 http://localhost:1111。
+>
+> **Windows Docker Desktop 兼容性**：
+> SBA 3.3.4 在 Windows Docker Desktop 上因 cgroup v2 兼容性问题会崩溃，
+> 已通过环境变量 `JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport` 修复。
+
+### 7.9 监控配置文件说明
+
+```
+monitoring/
+├── docker-compose.yml                        ← 总配置：定义四个服务怎么启动
+├── prometheus/
+│   ├── prometheus.yml                        ← 抓取配置：告诉 Prometheus 去哪里抓数据
+│   └── alerting_rules.yml                    ← 告警规则：什么情况算异常
+├── alertmanager/
+│   └── alertmanager.yml                      ← 通知渠道：告警发给谁
+└── grafana/
+    ├── provisioning/
+    │   ├── datasources/prometheus.yml        ← 自动配置：告诉 Grafana 数据在 Prometheus
+    │   └── dashboards/springbootai.yml       ← 自动配置：告诉 Grafana 仪表盘在哪
+    └── dashboards/
+        └── springbootai-overview.json        ← 仪表盘定义：8 个图表的配置
+```
+
+**每个文件的作用解释**：
+
+| 文件 | 你需要改吗 | 说明 |
+|------|-----------|------|
+| `docker-compose.yml` | 一般不用改 | 定义四个 Docker 服务的端口、镜像、依赖关系 |
+| `prometheus/prometheus.yml` | 改端口时需要改 | 如果你的应用不在 8000 端口，改这里的 `targets` |
+| `prometheus/alerting_rules.yml` | 按需改 | 想加新告警规则（如磁盘空间）在这里加 |
+| `alertmanager/alertmanager.yml` | 需要改 | 配置钉钉/邮件/微信通知地址 |
+| `grafana/provisioning/*` | 不用改 | Grafana 自动配置，启动时自动加载 |
+| `grafana/dashboards/*.json` | 一般不用改 | 仪表盘图表定义，想加新图表可以用 Grafana 界面编辑 |
+
+### 7.10 如果你的应用端口不是 8000
+
+如果你的 SpringBootAI 应用跑在别的端口（比如 5000），需要改两个地方：
+
+**第一处**：`monitoring/prometheus/prometheus.yml`
+
+```yaml
+# 把 host.docker.internal:8000 改成你的端口
+static_configs:
+  - targets:
+      - "host.docker.internal:5000"   # ← 改这里
+```
+
+**第二处**：`monitoring/docker-compose.yml` 中 Spring Boot Admin 的环境变量
+
+```yaml
+environment:
+  - SPRING_BOOT_ADMIN_INSTANCE_HEALTH_URL=http://host.docker.internal:5000/actuator/health   # ← 改端口
+  - SPRING_BOOT_ADMIN_INSTANCE_MANAGEMENT_URL=http://host.docker.internal:5000/actuator      # ← 改端口
+  - SPRING_BOOT_ADMIN_INSTANCE_SERVICE_URL=http://host.docker.internal:5000                  # ← 改端口
+```
+
+改完后重启：
+
+```bash
+cd monitoring
+docker-compose down
+docker-compose up -d
+```
+
+### 7.11 如果开启了 Actuator 鉴权
+
+生产环境建议开启 Actuator 鉴权（防止敏感端点被未授权访问）。开启后 Prometheus 也需要带 Token 才能抓取。
+
+编辑 `monitoring/prometheus/prometheus.yml`，取消注释 `bearer_token`：
+
+```yaml
+  - job_name: "springbootai"
+    metrics_path: "/actuator/prometheus"
+    scheme: "http"
+    bearer_token: "你的JWT-Token"    # ← 填入有效的 JWT Token
+    static_configs:
+      - targets:
+          - "host.docker.internal:8000"
+```
+
+> **小白提示**：开发环境可以关闭鉴权，在 `application.yml` 中设置：
+> ```yaml
+> management:
+>   endpoints:
+>     web:
+>       security:
+>         enabled: false    # 关闭鉴权（仅开发环境）
+> ```
+
+### 7.12 日常操作速查
+
+| 我想... | 怎么做 |
+|---------|--------|
+| 启动监控 | `cd monitoring && docker-compose up -d` |
+| 停止监控 | `cd monitoring && docker-compose down` |
+| 重启某个服务 | `docker-compose restart prometheus`（换服务名即可） |
+| 查看服务状态 | `docker-compose ps` |
+| 查看日志 | `docker-compose logs -f grafana`（换服务名即可） |
+| 看 Grafana 图表 | 浏览器打开 http://localhost:3000 |
+| 看 Admin 面板 | 浏览器打开 http://localhost:1111 |
+| 看应用内置面板 | 浏览器打开 http://localhost:8000/actuator/admin |
+| 看告警状态 | 浏览器打开 http://localhost:9093 |
+| 清掉所有数据重来 | `docker-compose down -v`（`-v` 删除数据卷） |
+
+### 7.13 常见问题排查
+
+**Q：docker-compose up 后 Grafana 打不开？**
+
+等 30 秒让 Grafana 完全启动。如果还是不行，看日志：
+
+```bash
+docker-compose logs grafana
+```
+
+**Q：Prometheus Targets 显示 DOWN？**
+
+1. 确认你的 SpringBootAI 应用正在运行：浏览器打开 http://localhost:8000/actuator/health
+2. 确认 `/actuator/prometheus` 能访问：浏览器打开 http://localhost:8000/actuator/prometheus
+3. 如果应用跑在 Docker 里而不是宿主机上，把 `prometheus.yml` 中的 `host.docker.internal:8000` 改成 `应用容器名:8000`
+
+**Q：Grafana 里看不到数据？**
+
+1. 确认 Prometheus Targets 是 UP（http://localhost:9090 → Status → Targets）
+2. 确认时间范围选对了（右上角选 "Last 5 minutes"）
+3. 确认应用确实有流量（CPU/内存图表在应用空闲时可能是一条直线）
+
+**Q：Spring Boot Admin 显示应用 OFFLINE？**
+
+1. 确认应用正在运行
+2. 确认 `/actuator/health` 返回 `{"status":"UP"}`
+3. 如果开启了鉴权，SBA 也需要配置 Token（目前 SBA 默认不带 Token，仅适用于鉴权关闭的环境）
+
+**Q：告警收到了但 Admin 面板没显示？**
+
+Admin 面板 30 秒刷新一次，等一会儿再看。或者手动点页面右上角"刷新"按钮。
+
+### 7.14 生产环境注意事项
+
+1. **不要把监控端口暴露到公网**：Grafana/Prometheus/Alertmanager 端口只在内网开放，用 Nginx 反向代理 + IP 白名单
+2. **数据持久化**：docker-compose 已配置数据卷（`prometheus-data` / `grafana-data`），重启不丢数据。但 `docker-compose down -v` 会删除数据
+3. **资源占用**：四个服务共约 2GB 内存。如果服务器内存紧张，可以只跑 Prometheus + Grafana（去掉 Alertmanager 和 SBA）
+4. **Prometheus 存储保留**：默认保留 30 天（`--storage.tsdb.retention.time=30d`），历史数据多了会占磁盘
+5. **Linux 注意**：`host.docker.internal` 在 Linux 上需要 Docker 20.10+，低版本需要手动添加 `extra_hosts`
+
+---
+
 ## mini-FAQ
 
 **Q：生产环境能把 /actuator 暴露到公网吗？**
@@ -305,3 +712,23 @@ prometheus_metrics.configure(namespace='myapp', subsystem='api')
 
 **Q：Admin 面板的"内存 & CPU"显示 psutil not installed？**
 执行 `pip install psutil` 即可。其它区块不受影响。
+
+---
+
+## 改进记录
+
+### 新增端点未纳入鉴权体系 — 高 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/web/actuator.py` /actuator/prometheus、/actuator/sysmetrics
+
+**现象**：`/actuator/prometheus`、`/actuator/sysmetrics` 两个新端点未挂载鉴权依赖。sysmetrics 暴露进程 RSS、CPU、线程数、FD 数；prometheus 暴露 python_*/process_* 指标。
+
+**修复方案**：将 `prometheus`、`sysmetrics` 加入 `_SENSITIVE_ENDPOINTS` 集合，挂载 `Depends(_prometheus_auth)` / `Depends(_sysmetrics_auth)` 鉴权依赖。`/actuator/admin` 保持不鉴权（HTML 无敏感数据）。
+
+### 死代码函数 _check_actuator_auth() — 低 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/web/actuator.py`
+
+**现象**：`_check_actuator_auth()` 永远 `raise HTTPException(401)`，且未被任何端点调用（实际鉴权由 `_create_actuator_dependency` 返回的闭包完成）。
+
+**修复方案**：删除该死代码函数。

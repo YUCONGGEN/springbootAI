@@ -1,6 +1,6 @@
-# SpringBootAI Excel 模块 —— 小白也能看懂的使用指南
+﻿# SpringBootAI Excel 模块 —— 小白也能看懂的使用指南
 
-> 模块版本：`spring.excel` 2.2.0 ｜ 框架版本：SpringBootAI 2.2.0
+> 模块版本：`spring.excel` 2.2.6 ｜ 框架版本：SpringBootAI 2.2.6
 
 ---
 
@@ -699,3 +699,15 @@ A: 两个方法：① `big_number=True`（推荐）；② 字段类型用 `Decim
 **Q: Excel 模块和 ORM 模块的注解有关系吗？**
 
 A: 设计范式一致（都用类属性描述符 + MRO 反射），但功能独立。`@ExcelProperty` 管 Excel，`@entity` 管数据库表。参见 [ORM 模块文档](ORM_MODULE.md)。
+
+---
+
+## 改进记录
+
+### 大文件读取未流式处理，内存溢出风险 — 高 ✅ 已修复 (v2.2.6)
+
+**位置**：`spring/excel/reader.py` doRead()
+
+**现象**：Excel 读取使用 `openpyxl.load_workbook()` 一次性加载整个文件到内存。10 万行以上的大文件内存占用可能超过 1GB。
+
+**修复方案**：新增 `doReadLazy()` 流式生成器方法，使用 openpyxl `read_only=True` 模式逐行 yield 实体对象，不将整个文件加载到内存。新增 `_iter_one_sheet()` 内部方法实现逐行迭代。
