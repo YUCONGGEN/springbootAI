@@ -1,6 +1,6 @@
 # SpringBootAI CLI 与项目脚手架 —— 使用指南
 
-> 框架版本：SpringBootAI 2.3.1
+> 框架版本：SpringBootAI 2.3.2
 > 源码位置：`spring/cli/main.py`、`spring/cli/scaffold.py`
 > 对齐 Java：Spring Boot CLI / Spring Initializr
 
@@ -32,7 +32,7 @@
 
 | 场景 | 不用 CLI | 用 CLI |
 |------|----------|--------|
-| **创建新项目** | 手动建目录、写 `Application.py`、写 `application.yml`、写 `requirements.txt`... | `springbootai init my-project --modules web,orm` 一行搞定 |
+| **创建新项目** | 手动建目录、写 `Application.py`、写 `application.yml`、写 `requirements.txt`... | `springbootai init my-project` 中文问答生成；CI 加 `--non-interactive` |
 | **查看框架版本** | `pip show springbootAI` | `springbootai version` |
 | **查看运行环境** | 自己写脚本检查 Python 版本、已装依赖 | `springbootai info` 一键展示 |
 | **查看可用模块** | 翻文档 | `springbootai list modules` |
@@ -86,12 +86,11 @@ springbootai version
 预期输出：
 
 ```
-SpringBootAI v2.3.1
+SpringBootAI v2.3.2
   Python: 3.11.5
   Platform: Windows-10-10.0.22621-SP0
   Installation: e:\交付\springbootAI
 
-  注意：首次启动时会显示 JWT 安全警告，提醒配置 secret_key。生产环境请通过 spring.security.jwt.secret-key 配置。
 ```
 
 如果提示 `springbootai: command not found`，检查：
@@ -139,7 +138,7 @@ Python 路径: /usr/bin/python3
 | `version` | `springbootai version` | 显示框架版本、Python 版本、平台信息 |
 | `info` | `springbootai info` | 显示详细运行环境信息（含已安装依赖检测） |
 | `list` | `springbootai list <what>` | 列出可用模块或注解 |
-| `init` | `springbootai init <project> [options]` | 初始化新项目（类似 Spring Initializr） |
+| `init` | `springbootai init [project] [options]` | 初始化新项目（终端内默认中文问答） |
 | `run` | `springbootai run <app_file>` | 运行应用入口文件 |
 | `docs` | `springbootai docs [options]` | 生成 API 文档（基于 Sphinx） |
 
@@ -161,7 +160,7 @@ positional arguments:
     version             显示框架版本信息
     info                显示运行环境信息
     list                列出可用模块或注解
-    init                初始化新项目（类似 Spring Initializr）
+    init                初始化新项目（中文问答向导；可用 --non-interactive 关闭问答）
     run                 运行应用
     docs                生成 API 文档（Sphinx）
 ```
@@ -232,26 +231,34 @@ SpringBootAI 可用注解（90 个）:
 
 | 模式 | 触发方式 | 适用场景 |
 |------|----------|----------|
-| **交互式问答** | 不带参数或 `--interactive` | 新手友好，逐步引导 |
-| **非交互模式** | `--non-interactive` 或 `--modules` 等参数 | CI/CD 流水线、脚本自动化 |
+| **交互式问答** | 在真实终端执行 `springbootai init [project]`，或显式加 `--interactive` | 新手友好，逐步确认项目意图 |
+| **非交互模式** | 显式加 `--non-interactive`；无 TTY 的管道环境也会自动避免读取输入 | CI/CD、脚本自动化 |
+
+在终端中，即使已写项目名或模块参数，仍会进入问答；命令行参数只是对应问题的默认值。例如：
+
+```bash
+springbootai init my-app --modules web,orm
+```
+
+会显示模块默认值 `web,orm`，其余问题仍可直接回车使用默认值。要让命令完全不提问，必须加入 `--non-interactive`。
 
 ### 命令语法
 
 ```bash
-springbootai init <project> [options]
+springbootai init [project] [options]
 ```
 
 **完整参数说明：**
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `project` | 位置参数 | 必填 | 项目名称或目标路径（如 `my-app` 或 `./my-app`） |
+| `project` | 位置参数 | `demo-app`（交互时） | 项目名称或目标路径（如 `my-app` 或 `./my-app`）；交互模式可以留空后填写 |
 | `--package` / `-p` | 选项 | 从项目名派生 | Python 包名（连字符转下划线，小写） |
 | `--modules` / `-m` | 选项 | `web` | 启用的模块，逗号分隔：`web,orm,ai,cloud,redis` |
 | `--port` | 选项 | `8000` | 服务端口 |
-| `--database` / `-d` | 选项 | `none` | 数据库类型：`none` / `sqlite` / `mysql` / `postgresql` |
+| `--database` | 选项 | `none` | 数据库类型：`none` / `sqlite` / `mysql` / `postgresql` |
 | `--redis` / `--no-redis` | 布尔标志 | 否 | 启用/关闭 Redis 配置 |
-| `--ai` / `--no-ai` | 布尔标志 | 否 | 启用/关闭 AI（OpenAI/LangChain）配置 |
+| `--ai` / `--no-ai` | 布尔标志 | 否 | 启用/关闭 AI 配置骨架 |
 | `--cloud` / `--no-cloud` | 布尔标志 | 否 | 启用/关闭 Cloud（Nacos/服务发现）配置 |
 | `--docker` / `--no-docker` | 布尔标志 | 是 | 生成/不生成 Docker 文件 |
 | `--sample-crud` / `--no-sample-crud` | 布尔标志 | 否 | 生成/不生成示例 CRUD 代码（需要 ORM 模块） |
@@ -285,7 +292,7 @@ springbootai init <project> [options]
 
 #### 方式一：交互式问答（推荐新手）
 
-直接运行 `init` 命令，不带模块参数，进入中文问答向导：
+在真实终端中直接运行 `init` 命令；可以带项目名，模块等参数会作为问答默认值：
 
 ```bash
 springbootai init my-app
@@ -305,10 +312,16 @@ HTTP 端口 [8000]:
 是否生成 Docker 文件（是/否） [是]:
 是否生成示例 CRUD（需要 ORM）（是/否） [否]:
 
-✅ Project 'my-app' created at: /home/user/my-app
-   Package: my_app
-   Modules: web
-   Port: 8000
+项目已创建：/home/user/my-app
+  包名：my_app
+  模块：web
+  端口：8000
+  数据库：none
+
+下一步：
+  1. cd /home/user/my-app
+  2. python -m pip install -r requirements.txt
+  3. python Application.py
 ```
 
 #### 方式二：非交互模式（CI/CD 友好）
@@ -328,15 +341,16 @@ springbootai init my-app \
 输出：
 
 ```
-✅ Project 'my-app' created at: /home/user/my-app
-   Package: my_app
-   Modules: web, orm, ai, redis
-   Port: 8080
+项目已创建：/home/user/my-app
+  包名：my_app
+  模块：web, orm, ai, redis
+  端口：8080
+  数据库：mysql
 
-   Next steps:
-   1. cd my-app
-   2. pip install -r requirements.txt
-   3. python Application.py
+下一步：
+  1. cd /home/user/my-app
+  2. python -m pip install -r requirements.txt
+  3. python Application.py
 ```
 
 #### 方式三：混合模式（参数 + 交互确认）
@@ -354,8 +368,8 @@ springbootai init my-app --port 9000 --docker --no-ai
 #### 方式四：使用独立脚手架命令
 
 ```bash
-# 等价于 springbootai init
-springbootai-init my-app --modules web,orm --port 8080
+# 等价于 springbootai init；脚本场景显式关闭问答
+springbootai-init my-app --modules web,orm --port 8080 --non-interactive
 ```
 
 ### 包名派生规则
@@ -373,7 +387,7 @@ springbootai-init my-app --modules web,orm --port 8080
 也可以手动指定：
 
 ```bash
-springbootai init my-project --package custom_pkg
+springbootai init my-project --package custom_pkg --non-interactive
 ```
 
 > **包名校验**：包名必须是合法的 Python 标识符（`^[a-zA-Z_][a-zA-Z0-9_]*$`），否则会抛出 `ValueError`。
@@ -385,19 +399,19 @@ springbootai init my-project --package custom_pkg
 ```bash
 # 目录已存在且非空
 springbootai init existing-project
-# ❌ Error: Directory '/path/to/existing-project' already exists and is not empty. Refusing to overwrite.
+# 创建项目失败：目录 '/path/to/existing-project' 已存在且非空（directory is not empty），为避免覆盖用户文件已停止
 ```
 
 如果需要在空目录中创建项目，可以：
 
 ```bash
 mkdir my-project
-springbootai init my-project
+springbootai init my-project --non-interactive
 ```
 
 ### 生成的项目结构
 
-以 `springbootai init my-app --modules web,orm,redis --port 9000 --database mysql --docker --sample-crud` 为例：
+以 `springbootai init my-app --modules web,orm,redis --port 9000 --database mysql --docker --sample-crud --non-interactive` 为例：
 
 ```
 my-app/
@@ -422,21 +436,21 @@ my-app/
         ├── __init__.py
         ├── common/              # 公共模块
         │   ├── __init__.py
-        │   ├── ApiResponse.py    # 统一响应格式
+        │   ├── response.py       # 统一响应格式
         │   ├── exceptions.py     # 业务异常定义
-        │   └── exception_handler.py  # 全局异常处理器
+        │   └── handlers.py       # 全局异常处理器
         ├── controllers/         # 控制器目录（web 模块）
         │   ├── __init__.py
-        │   └── HelloController.py  # 示例控制器
+        │   └── hello_controller.py  # 示例控制器
         ├── services/            # 业务服务层（--sample-crud 时生成）
         │   ├── __init__.py
-        │   └── UserService.py   # 用户 CRUD 服务
+        │   └── user_service.py   # 用户 CRUD 服务
         ├── models/              # 实体模型（--sample-crud 时生成）
         │   ├── __init__.py
-        │   └── User.py          # 用户实体
+        │   └── user.py           # 用户实体
         ├── repositories/        # 数据仓储层（--sample-crud 时生成）
         │   ├── __init__.py
-        │   └── UserRepository.py  # 用户仓储
+        │   └── user_repository.py  # 用户仓储
         └── mappers/             # MyBatis Mapper（orm 模块）
             └── __init__.py
 ```
@@ -446,82 +460,95 @@ my-app/
 **Application.py（启动类）：**
 
 ```python
-"""my-app 启动类
+"""my-app 的 SpringBootAI 启动入口。"""
+from __future__ import annotations
 
-自动生成于 SpringBootAI 2.3.1 脚手架。
-运行：python Application.py
-"""
-import sys
 import os
+import sys
 
-# 将 src/ 目录加入 Python 路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.join(PROJECT_ROOT, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
+# 显式导入全局异常处理器；控制器由组件扫描注册。
+from my_app.common import handlers as _global_handlers  # noqa: F401
+from my_app.controllers import *  # noqa: F401,F403
 from spring.annotations import SpringBootApplication
-from my_app.controllers import *  # noqa: F401, F403
 
 
-@SpringBootApplication
+@SpringBootApplication(scan_base_packages=["my_app"])
 class Application:
-    """应用启动入口"""
+    """应用启动入口。"""
 
     @staticmethod
-    def main():
+    def main() -> None:
         from spring.main import SpringApplication
-        app = SpringApplication(Application)
-        app.run()
+        SpringApplication(Application).run()
 
 
-if __name__ == '__main__':
+def create_app():
+    """供 uvicorn Application:create_app --factory 使用。"""
+    from spring.main import create_app as _create_app
+    return _create_app(Application)
+
+
+if __name__ == "__main__":
     Application.main()
 ```
 
 **config/application.yml（配置文件）：**
 
 ```yaml
-# my-app 配置文件
-# SpringBootAI 2.3.1
+# my-app 的 SpringBootAI 配置文件
+# 生产环境请替换密钥、收紧 CORS，并按需启用外部服务。
 
 server:
   port: 9000
-  host: 0.0.0.0
+  host: "${SERVER_HOST:0.0.0.0}"
+  cors:
+    allow_origins: ["http://localhost:3000"]
+    allow_credentials: false
 
 spring:
   application:
     name: my-app
+  ai:
+    enabled: false              # 未配置密钥时不会调用模型
+  cloud:
+    nacos:
+      discovery:
+        enabled: false          # 外部服务默认关闭
 
 # 数据库配置（orm 模块 + mysql）
-spring:
-  datasource:
-    url: jdbc:mysql://localhost:3306/my_app
-    driver: mysql
-    username: root
-    password: ${DB_PASSWORD}
-  jpa:
-    ddl-auto:
-      mode: update
-    entity-packages:
-      - my_app.models
+database:
+  enabled: true
+  orm: mybatis
+  driver: mysql
+  host: "${DB_HOST:localhost}"
+  port: "${DB_PORT:3306}"
+  database: "${DB_NAME:springbootai}"
+  username: "${DB_USERNAME:}"
+  password: "${DB_PASSWORD:}"
+  ddl-auto:
+    mode: none
 
 # Redis 配置
-spring:
-  redis:
-    host: localhost
-    port: 6379
-    password: ${REDIS_PASSWORD}
-    enabled: true
+redis:
+  enabled: true
+  host: "${REDIS_HOST:localhost}"
+  port: "${REDIS_PORT:6379}"
+  password: "${REDIS_PASSWORD:}"
 
-# 日志配置
-logging:
-  level: INFO
+# 其余常用配置（JWT、Nacos、RabbitMQ、Kafka、Prometheus、日志、缓存、重试、追踪）
+# 均已在生成的 config/application.yml 中保留中文说明和默认值。
 ```
 
 **requirements.txt（依赖清单）：**
 
 ```
-# my-app 依赖
-# SpringBootAI 2.3.1
-springbootAI==2.3.1
+# my-app 依赖（由 SpringBootAI 脚手架生成）
+springbootAI==2.3.2
 PyMySQL==1.2.0          # MySQL 驱动
 redis==8.1.0            # Redis 客户端
 ```
@@ -531,12 +558,12 @@ redis==8.1.0            # Redis 客户端
 | 模块组合 | 生成的目录 | 配置段 | requirements.txt 额外依赖 |
 |----------|-----------|--------|--------------------------|
 | `web` | `controllers/`, `common/` | `server` | 无 |
-| `orm` | `models/`, `mappers/` | `spring.datasource` + `spring.jpa` | `PyMySQL==1.2.0` / `psycopg2` |
+| `orm` | `models/`, `repositories/`, `mappers/` | `database` | MySQL/PostgreSQL 时增加对应驱动 |
 | `ai` | 无额外目录 | `spring.ai` | `langchain-openai==1.4.2` |
-| `cloud` | 无额外目录 | `spring.cloud.nacos` | `redis==8.1.0` |
-| `redis` | 无额外目录 | `spring.redis` | `redis==8.1.0` |
-| `web,orm,redis` | `controllers/`, `common/`, `models/`, `mappers/` | `server` + `datasource` + `redis` | `PyMySQL` + `redis` |
-| `web,orm,ai` | `controllers/`, `common/`, `models/`, `mappers/` | `server` + `datasource` + `ai` | `PyMySQL` + `langchain-openai` |
+| `cloud` | `docs/Cloud配置说明.md` | `spring.cloud` + `discovery` | Nacos/RabbitMQ 依赖按需生成 |
+| `redis` | 无额外目录 | `redis` | `redis==8.1.0` |
+| `web,orm,redis` | `controllers/`, `common/`, `models/`, `repositories/`, `mappers/` | `server` + `database` + `redis` | 数据库驱动 + `redis` |
+| `web,orm,ai` | `controllers/`, `common/`, `models/`, `repositories/`, `mappers/` | `server` + `database` + `spring.ai` | AI 依赖按需生成 |
 
 ### 通过 Python 代码调用脚手架
 
@@ -559,7 +586,7 @@ print(f"项目已创建: {project_dir}")
 from spring.cli.scaffold import main
 
 # 命令行风格调用
-main(['my-project', '--modules', 'web,orm', '--port', '9000'])
+main(['my-project', '--modules', 'web,orm', '--port', '9000', '--non-interactive'])
 ```
 
 ---
@@ -594,7 +621,7 @@ springbootai run /path/to/Application.py
 
 1. 检查应用文件是否存在（不存在则报错退出）
 2. 将应用文件所在目录加入 `sys.path`
-3. 读取文件内容并编译执行（`exec`）
+3. 使用标准库 `runpy.run_path(..., run_name='__main__')` 执行入口
 
 > **说明**：`springbootai run` 本质上等价于 `python Application.py`，但提供了统一的命令入口。它会自动把应用文件所在目录加入 Python 路径，方便导入同目录下的模块。
 
@@ -682,15 +709,16 @@ springbootai init blog-system --modules web,orm,ai --port 8080 --database mysql 
 输出：
 
 ```
-✅ Project 'blog-system' created at: /home/user/blog-system
-   Package: blog_system
-   Modules: web, orm, ai
-   Port: 8080
+项目已创建：/home/user/blog-system
+  包名：blog_system
+  模块：web, orm, ai
+  端口：8080
+  数据库：mysql
 
-   Next steps:
-   1. cd blog-system
-   2. pip install -r requirements.txt
-   3. python Application.py
+下一步：
+  1. cd /home/user/blog-system
+  2. python -m pip install -r requirements.txt
+  3. python Application.py
 ```
 
 ### 2. 进入项目并安装依赖
@@ -703,11 +731,11 @@ pip install -r requirements.txt
 `requirements.txt` 内容：
 
 ```
-# blog-system 依赖
-# SpringBootAI 2.3.1
-springbootAI==2.3.1
-PyMySQL==1.2.0  # MySQL 驱动
-langchain-openai==1.4.2  # LangChain
+# blog-system 依赖（由 SpringBootAI 脚手架生成）
+springbootAI==2.3.2
+PyMySQL==1.2.0                 # MySQL 驱动
+langchain-openai==1.4.2        # AI OpenAI 适配器（按需）
+langchain-core==1.5.4          # AI 核心类型（按需）
 ```
 
 ### 3. 查看项目结构
@@ -882,7 +910,7 @@ springbootai docs
 | 特性 | Java Spring Initializr | SpringBootAI CLI |
 |------|------------------------|------------------|
 | **交互方式** | Web 界面（start.spring.io）+ CLI | 命令行（交互式问答 + 非交互 CI 模式） |
-| **创建项目命令** | `spring init --dependencies=web,jpa my-project` | `springbootai init my-project --modules web,orm` |
+| **创建项目命令** | `spring init --dependencies=web,jpa my-project` | `springbootai init my-project`（交互）或追加 `--non-interactive`（脚本） |
 | **项目名** | `--name` 或 `--artifact-id` | 位置参数（项目名/路径） |
 | **包名** | `--package-name`（Java 包名） | `--package`（Python 包名） |
 | **模块选择** | `--dependencies=web,jpa,security` | `--modules=web,orm,ai,redis` |
@@ -997,7 +1025,7 @@ A: 当前支持 5 个模块：`web`、`orm`、`ai`、`cloud`、`redis`。可以�
 
 ```bash
 # 完整示例
-springbootai init my-app --modules web,orm,ai,cloud,redis --database mysql --redis --ai --cloud
+springbootai init my-app --modules web,orm,ai,cloud,redis --database mysql --redis --ai --cloud --non-interactive
 ```
 
 不支持的模块名会报错。
@@ -1008,16 +1036,16 @@ A: 通过 `--database` 参数，支持 4 种选项：
 
 ```bash
 # SQLite（默认，无需额外配置）
-springbootai init my-app --modules web,orm
+springbootai init my-app --modules web,orm --non-interactive
 
 # MySQL
-springbootai init my-app --modules web,orm --database mysql
+springbootai init my-app --modules web,orm --database mysql --non-interactive
 
 # PostgreSQL
-springbootai init my-app --modules web,orm --database postgresql
+springbootai init my-app --modules web,orm --database postgresql --non-interactive
 
 # 不使用数据库
-springbootai init my-app --modules web --database none
+springbootai init my-app --modules web --database none --non-interactive
 ```
 
 **Q2b: 如何在 CI/CD 中使用脚手架？**
@@ -1038,7 +1066,7 @@ springbootai init my-app \
 **Q3: 生成的项目端口怎么改？**
 
 A: 两种方式：
-1. 创建时指定：`springbootai init my-app --port 9000`
+1. 交互式问答时填写端口，或脚本创建时指定：`springbootai init my-app --port 9000 --non-interactive`
 2. 创建后修改 `config/application.yml` 中的 `server.port`
 
 **Q4: 包名能包含连字符吗？**
@@ -1047,7 +1075,7 @@ A: 不能。Python 包名必须是合法标识符（只能含字母、数字、�
 
 - 项目名 `my-project` → 包名 `my_project`
 
-也可以手动指定：`springbootai init my-project --package my_pkg`
+也可以手动指定：`springbootai init my-project --package my_pkg --non-interactive`
 
 **Q5: 能在已有项目里追加模块吗？**
 
@@ -1062,7 +1090,7 @@ A: 功能等价。`springbootai run` 会自动把应用文件所在目录加入 
 
 **Q7: 生成的 `Application.py` 里的 `sys.path.insert` 是干什么的？**
 
-A: 把项目的 `src/` 目录加入 Python 路径，这样 `from my_project.controllers import *` 才能正确导入。因为脚手架把 Python 包放在 `src/` 下（类似 Java 的 `src/main/java/` 结构），需要告诉 Python 去哪里找包。
+A: 把项目的 `src/` 目录加入 Python 路径，让启动入口可以导入项目包、全局异常处理器和控制器。脚手架把 Python 包放在 `src/` 下（类似 Java 的 `src/main/java/` 结构），因此需要显式加入搜索路径。
 
 **Q8: `springbootai docs` 生成文档失败怎么办？**
 
@@ -1107,7 +1135,7 @@ A: 包含：
 
 ## 改进记录
 
-### v2.3.1 — CLI 交互式脚手架
+### v2.3.2 — CLI 交互式脚手架
 
 - `init` 命令新增**中文交互式问答**模式，逐步引导创建项目
 - `init` 命令新增 **`--non-interactive`** 模式，支持 CI/CD 自动化

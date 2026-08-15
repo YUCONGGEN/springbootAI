@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # 发行名 springbootAI（PyPI 包名，pip install springbootAI）；导入包名仍为 spring
 name = "springbootAI"
-version = "2.3.1"
+version = "2.3.2"
 description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
 readme = "README.md"
 license = "MIT"
@@ -288,8 +288,8 @@ Issues = "https://github.com/YUCONGGEN/springbootAI/issues"
 
 [project.scripts]
 springbootai = "spring.main:run_cli"
-# 项目脚手架工具（类似 Spring Initializr），初始化符合 SpringBootAI 风格的新项目
-# 用法：springbootai-init my-project --modules web,orm
+# 项目脚手架工具（类似 Spring Initializr）。真实终端默认中文问答；
+# CI/脚本请显式使用：springbootai-init my-project --modules web,orm --non-interactive
 springbootai-init = "spring.cli.scaffold:main"
 
 [tool.setuptools.packages.find]

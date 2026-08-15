@@ -23,7 +23,7 @@ author = 'YuConggen'
 try:
     from spring import __version__ as version
 except ImportError:
-    version = '2.3.1'
+    version = '2.3.2'
 
 release = version
 
