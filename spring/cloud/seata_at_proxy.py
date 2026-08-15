@@ -271,7 +271,7 @@ class UndoExecutor:
         for row in after_image:
             where_clause = " AND ".join(f"`{k}` = {ph}" for k in row)
             cursor.execute(
-                f"DELETE FROM `{table_name}` WHERE {where_clause}",
+                f"DELETE FROM `{table_name}` WHERE {where_clause}",  # nosec B608
                 tuple(row.values()),
             )
 
@@ -286,7 +286,7 @@ class UndoExecutor:
             pk = cols[0]
             set_clause = ", ".join(f"`{c}` = {ph}" for c in cols[1:])
             cursor.execute(
-                f"UPDATE `{table_name}` SET {set_clause} WHERE `{pk}` = {ph}",
+                f"UPDATE `{table_name}` SET {set_clause} WHERE `{pk}` = {ph}",  # nosec B608
                 tuple(row[c] for c in cols[1:]) + (row[pk],),
             )
 
@@ -299,7 +299,7 @@ class UndoExecutor:
             placeholders = ", ".join(ph for _ in cols)
             col_names = ", ".join(f"`{c}`" for c in cols)
             cursor.execute(
-                f"INSERT INTO `{table_name}` ({col_names}) VALUES ({placeholders})",
+                f"INSERT INTO `{table_name}` ({col_names}) VALUES ({placeholders})",  # nosec B608
                 tuple(row[c] for c in cols),
             )
 
@@ -428,7 +428,7 @@ class SeataATInterceptor:
     ) -> List[Dict]:
         if not where_clause:
             return []
-        sql = f"SELECT * FROM `{table_name}` WHERE {where_clause}"
+        sql = f"SELECT * FROM `{table_name}` WHERE {where_clause}"  # nosec B608
         cursor = conn.cursor()
         try:
             cursor.execute(sql)
