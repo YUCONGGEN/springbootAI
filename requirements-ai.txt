@@ -30,7 +30,8 @@ langchain-text-splitters==1.1.2
 langchain-community==0.4.2
 
 # 向量相似度计算（cosine_similarity 等，未安装时降级内置 math.sqrt 实现）
-numpy==2.3.0
+# 锁定 2.2.6 以保持 Python 3.10 兼容性（numpy 2.3+ 要求 Python >=3.11）
+numpy==2.2.6
 
 # 数据校验（pydantic v2，OutputParser 结构化输出依赖）
 pydantic==2.13.4

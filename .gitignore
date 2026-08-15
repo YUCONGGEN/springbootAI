@@ -34,3 +34,6 @@ Thumbs.db
 
 # Reference repos (not part of the framework)
 langchain-master/
+
+# Security scan reports (generated locally by bandit, uploaded as CI artifacts)
+bandit-report.json

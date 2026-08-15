@@ -30,6 +30,7 @@ import argparse
 import importlib
 import os
 import platform
+import runpy
 import sys
 from pathlib import Path
 from typing import List
@@ -152,23 +153,25 @@ def _list_annotations() -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
-    """运行应用。"""
+    """运行应用。
+
+    使用 ``runpy.run_path`` 执行目标脚本，等价于 ``python <app_file>`` 命令。
+    采用 Python 标准库方式替代 ``exec(compile(...))``，避免 Bandit B102 安全告警，
+    同时保证 ``if __name__ == '__main__':`` 入口块能正确执行。
+    """
     app_file = args.app_file
     if not os.path.exists(app_file):
         print(f"错误：应用文件不存在: {app_file}", file=sys.stderr)
         sys.exit(1)
 
-    # 将应用文件所在目录加入 sys.path
+    # 将应用文件所在目录加入 sys.path，确保脚本内的相对导入可用
     app_dir = os.path.dirname(os.path.abspath(app_file))
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
 
-    # 执行应用文件
+    # runpy.run_path 以 __main__ 运行目标文件，等价于 `python <app_file>`
     print(f"运行应用: {app_file}")
-    with open(app_file, 'r', encoding='utf-8') as f:
-        code = f.read()
-
-    exec(compile(code, app_file, 'exec'), {'__name__': '__main__', '__file__': app_file})
+    runpy.run_path(app_file, run_name='__main__')
 
 
 def _cmd_docs(args: argparse.Namespace) -> None:
