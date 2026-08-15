@@ -1,4 +1,4 @@
-﻿# SpringBootAI 性能与容量测试
+# SpringBootAI 性能与容量测试
 
 这套测试使用固定版本的 k6，通过 Docker 运行，不需要在本机安装 k6。默认会构建并启动一个双 worker 基准服务，覆盖异步/同步 Controller、请求体解析、内嵌 Gateway、Bean Validation、缓存增强、CSV、JPA 乐观锁和条件装配。
 

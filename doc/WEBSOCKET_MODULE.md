@@ -1,4 +1,4 @@
-﻿# WebSocket —— 像微信一样实时通信
+# WebSocket —— 像微信一样实时通信
 
 > 框架版本：SpringBootAI 2.2.6
 > 返回 [README 模块导航](../README.md#模块文档导航)

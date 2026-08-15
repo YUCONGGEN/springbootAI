@@ -1,4 +1,4 @@
-﻿# GitHub 与 PyPI 发布检查清单
+# GitHub 与 PyPI 发布检查清单
 
 这份清单用于发布 SpringBootAI。第一次发布时从上到下执行，不要跳过失败项。
 

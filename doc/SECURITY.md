@@ -1,4 +1,4 @@
-﻿# SpringBootAI 安全模块 —— 小白也能看懂的 Web 安全指南
+# SpringBootAI 安全模块 —— 小白也能看懂的 Web 安全指南
 
 > 框架版本：SpringBootAI 2.2.6
 

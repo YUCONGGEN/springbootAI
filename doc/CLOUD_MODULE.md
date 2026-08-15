@@ -1,4 +1,4 @@
-﻿# SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
+# SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
 
 > 框架版本：SpringBootAI 2.2.6
 

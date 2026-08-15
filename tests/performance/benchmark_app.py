@@ -1,4 +1,4 @@
-﻿"""A deterministic SpringBootAI application used by the k6 load profiles."""
+"""A deterministic SpringBootAI application used by the k6 load profiles."""
 
 import asyncio
 import hashlib

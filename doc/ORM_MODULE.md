@@ -1,4 +1,4 @@
-﻿# SpringBootAI 数据库操作（ORM）—— 使用指南
+# SpringBootAI 数据库操作（ORM）—— 使用指南
 
 > 框架版本：SpringBootAI 2.2.6 / 内嵌 PyMyBatis 2.2.6
 

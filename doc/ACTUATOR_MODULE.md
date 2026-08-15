@@ -1,4 +1,4 @@
-﻿# Actuator —— 系统健康检查面板
+# Actuator —— 系统健康检查面板
 
 > 框架版本：SpringBootAI 2.2.6
 > 返回 [README 模块导航](../README.md#模块文档导航)

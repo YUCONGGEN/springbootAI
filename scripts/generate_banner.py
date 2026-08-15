@@ -1,4 +1,4 @@
-﻿"""生成 SpringBootAI README 顶部 banner 图片（v2 优化版）。
+"""生成 SpringBootAI README 顶部 banner 图片（v2 优化版）。
 
 输出：doc/images/hero-banner.png
 尺寸：1600x500
