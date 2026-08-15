@@ -640,6 +640,80 @@ class Demo:
 
 ---
 
+## 进阶：复用已有实体类
+
+上面的示例都是"从头定义一个专门的导出类"。但很多时候你**已经有实体类了**（比如 ORM 模型、API 返回的数据类），不想再写一遍。
+
+框架支持 3 种复用方式，**不需要 `@ExcelSheet` 装饰器，不需要重写类**：
+
+### 方式一：零改造，直接用
+
+已有类有 `__init__`，框架自动扫描 `__init__` 参数建列，表头按参数名生成：
+
+```python
+# 已有的实体类，完全不改
+class User:
+    def __init__(self, id=None, name=None, age=None, email=None):
+        self.id = id
+        self.name = name
+        self.age = age
+        self.email = email
+
+# 直接导出，不需要 @ExcelSheet
+from spring.excel import EasyExcel
+EasyExcel.write("users.xlsx").doWrite(users)
+# Excel 表头自动生成为：Id / Name / Age / Email
+```
+
+### 方式二：加注解控制列名和顺序
+
+在已有类的属性上加 `@ExcelProperty`，只改你想控制的列：
+
+```python
+from spring.excel import ExcelProperty, ExcelIgnore
+
+class User:
+    id = ExcelProperty("用户ID", order=1)      # 自定义表头和顺序
+    name = ExcelProperty("姓名", order=2)
+    age = ExcelProperty("年龄", order=3)
+    email = ExcelProperty("邮箱", order=4)
+    password = ExcelIgnore()                    # 不导出
+
+    def __init__(self, id=None, name=None, age=None, email=None, password=None):
+        self.id = id
+        self.name = name
+        self.age = age
+        self.email = email
+        self.password = password
+```
+
+### 方式三：ORM 风格，类型注解自动建列
+
+用类型注解声明字段，未标注 `@ExcelProperty` 的字段也会自动建列：
+
+```python
+from spring.excel import ExcelProperty, ExcelSheet
+
+@ExcelSheet("用户列表")
+class User:
+    id: int = ExcelProperty("用户ID", order=1)  # 显式标注
+    name: str = ""                                # 自动建列，表头 "Name"
+    age: int = 0                                  # 自动建列，表头 "Age"
+    # 不需要手写 __init__，@ExcelSheet 自动生成
+```
+
+### 三种方式对比
+
+| 方式 | 需要装饰器 | 需要改类 | 表头控制 | 适用场景 |
+|------|-----------|---------|---------|---------|
+| 零改造直接用 | 不需要 | 不需要 | 按参数名自动生成 | 快速导出，不在意表头 |
+| 加注解控制 | 不需要 | 加 `@ExcelProperty` | 完全自定义 | 生产环境导出 |
+| ORM 风格 | `@ExcelSheet` | 类型注解 | 标注的自定义，其他自动 | 新建导出类 |
+
+> **底层原理**：框架解析列模型时按 3 级回退——先找 `@ExcelProperty` 标注的属性，再扫描类型注解自动建列，最后回退到 `__init__` 参数列表。所以已有类不需要任何改造也能导出。
+
+---
+
 ## API 速查
 
 ```python
