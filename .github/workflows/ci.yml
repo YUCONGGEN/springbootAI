@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 # ====================================================================
 # CI 工作流：核心 + AI + LangChain + LangGraph + MCP 全量测试
@@ -142,7 +142,7 @@ jobs:
 
     - name: Upload coverage report
       if: matrix.python-version == '3.12'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-report-${{ matrix.python-version }}
         path: coverage.xml
