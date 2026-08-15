@@ -96,6 +96,30 @@ class WebApplicationContext:
         self._register_health_endpoints()
         self._register_shutdown_handlers()
         self._configure_swagger()
+        # 静态文件通配路由 /{full_path:path} 先于 actuator/health 路由注册，
+        # FastAPI 0.141+ 的 include_router 以 _IncludedRouter 懒加载对象追加，
+        # 通配路由会先匹配 /actuator/* 等路径并返回 404。
+        # 将通配路由移到路由表末尾，确保 API 与 Actuator 端点优先匹配。
+        self._move_wildcard_static_route_to_end()
+
+    def _move_wildcard_static_route_to_end(self) -> None:
+        """将 ``/{full_path:path}`` 通配路由移到路由表末尾。
+
+        静态文件通配路由若在 actuator/API 路由之前注册，会拦截所有未匹配路径，
+        导致后注册的 ``/actuator/*`` 等端点返回 404。此方法在所有路由注册
+        完成后统一调整顺序，保证通配路由仅作为兜底匹配。
+        """
+        routes = self.fastapi_app.router.routes
+        wildcard_idx = next(
+            (
+                i for i, r in enumerate(routes)
+                if hasattr(r, "path") and r.path == "/{full_path:path}"
+            ),
+            None,
+        )
+        if wildcard_idx is not None and wildcard_idx != len(routes) - 1:
+            wildcard_route = routes.pop(wildcard_idx)
+            routes.append(wildcard_route)
 
     def _configure_swagger(self) -> None:
         """在路由注册完成后，自定义 ``app.openapi()`` 注入全局 securitySchemes、
