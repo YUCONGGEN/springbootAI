@@ -2,7 +2,7 @@
 消息队列注解
 提供RabbitMQ消息消费和发送功能
 """
-from typing import Any, Callable
+from typing import Any, Callable, Dict, Optional
 import functools
 from .core import SpringAnnotation
 
@@ -105,3 +105,85 @@ def register_rabbit_listener(annotation: RabbitListener, callback: Callable) -> 
 
 # 创建全局RabbitMQ模板实例
 rabbit_template = RabbitTemplate()
+
+
+# ==================== Kafka 注解 ====================
+
+
+class KafkaListener(SpringAnnotation):
+    """Kafka 消息监听注解
+
+    使用示例：
+    @KafkaListener(topics=["order-events"], groupId="order-service")
+    def handle_order_event(self, message):
+        print(f"Received: {message['value']}")
+
+    与 @RabbitListener 的差异：
+    - Kafka 监听 topics（数组），Rabbit 监听 queue（单个）
+    - Kafka 需要 groupId（消费者组），Rabbit 不需要
+    - Kafka 消息包含 partition/offset，Rabbit 只有 body
+    """
+
+    _annotation_type = "messaging"
+
+    def __init__(self, topics, groupId: str = ""):
+        # topics 支持单个字符串或列表
+        if isinstance(topics, str):
+            topics = [topics]
+        super().__init__(
+            topics=topics,
+            groupId=groupId,
+        )
+
+
+class KafkaTemplate:
+    """Kafka 消息发送模板
+
+    使用示例：
+    kafka_template = KafkaTemplate()
+    kafka_template.send("order-events", {"order_id": 1})
+    kafka_template.send("order-events", value={"order_id": 1}, key="order-1")
+    """
+
+    def send(self, topic: str, value: Any = None, key: Optional[str] = None,
+             headers: Optional[Dict[str, str]] = None):
+        """发送消息到 Kafka topic
+
+        Args:
+            topic: Kafka 主题
+            value: 消息体（自动 JSON 序列化）
+            key: 分区键（可选）
+            headers: 消息头（可选）
+        """
+        from spring.messaging.kafka import kafka_client
+        return kafka_client.send(topic=topic, value=value, key=key, headers=headers)
+
+    def send_and_wait(self, topic: str, value: Any = None, key: Optional[str] = None,
+                      timeout: float = 10.0):
+        """同步发送消息并等待确认"""
+        from spring.messaging.kafka import kafka_client
+        return kafka_client.send_and_wait(topic=topic, value=value, key=key, timeout=timeout)
+
+
+def kafka_listener_decorator(annotation: KafkaListener):
+    """KafkaListener 注解切面"""
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def register_kafka_listener(annotation: KafkaListener, callback: Callable) -> None:
+    """注册 Kafka 消费者"""
+    from spring.messaging.kafka import kafka_client
+    kafka_client.register_listener(
+        topics=annotation.topics,
+        callback=callback,
+        group_id=annotation.groupId or None,
+    )
+
+
+# 全局 Kafka 模板实例
+kafka_template = KafkaTemplate()

@@ -8,6 +8,15 @@ from spring.utils.logger import SpringLogger
 from spring.logging.loguru_logger import init_logging, LoggingConfigError
 from spring.orm.mybatis_integration import init_mybatis
 from spring.annotations.cloud import EnableDiscoveryClient
+from spring.annotations.security import EnableOAuth2, EnableCsrf
+from spring.annotations.enterprise import (
+    EnableDevTools,
+    EnableConfigServer,
+    EnableBus,
+    EnableBatchProcessing,
+    EnableDataRest,
+)
+from spring.annotations.data import RepositoryRestResource
 
 
 class ComponentInitError(RuntimeError):
@@ -139,6 +148,73 @@ class SpringApplication:
             file=sys.stderr,
         )
 
+    def _find_annotation(self, annotation_class):
+        """在主类上查找指定类型的注解。
+
+        扫描 ``self.main_class`` 上的 ``__spring_annotations__`` 列表，
+        返回第一个匹配类型的注解实例，没有则返回 None。
+
+        Args:
+            annotation_class: 注解类（如 EnableOAuth2）
+
+        Returns:
+            注解实例或 None
+        """
+        annotations = getattr(self.main_class, '__spring_annotations__', [])
+        for item in annotations:
+            if isinstance(item, annotation_class):
+                return item
+        return None
+
+    def _register_repository_rest_resources(self, base_path: str) -> None:
+        """扫描 IoC 容器中标记了 @RepositoryRestResource 的 Bean，
+        自动注册 CRUD REST 端点。
+
+        Args:
+            base_path: REST 端点基础路径（如 '/api'）
+        """
+        if not self.application_context:
+            return
+        from spring.data.rest import RepositoryRestController
+        registry = self.application_context.bean_registry
+        if not registry:
+            return
+        registered = 0
+        for bean_name, bean_instance in registry.beans.items():
+            bean_class = type(bean_instance)
+            rest_annotations = [
+                ann for ann in getattr(bean_class, '__spring_annotations__', [])
+                if isinstance(ann, RepositoryRestResource) and ann.exported
+            ]
+            for ann in rest_annotations:
+                entity_class = ann.entity_class
+                if entity_class is None:
+                    # 尝试从 Bean 类的 entity_class 属性获取
+                    entity_class = getattr(bean_class, 'entity_class', None)
+                if entity_class is None:
+                    self.logger.warning(
+                        f"Repository '{bean_name}' has @RepositoryRestResource but no entity_class"
+                    )
+                    continue
+                path = ann.path
+                if base_path and not path.startswith('/'):
+                    path = f'{base_path}/{path}'
+                controller = RepositoryRestController(
+                    repository=bean_instance,
+                    path=path,
+                    entity_class=entity_class,
+                    id_type=ann.id_type,
+                )
+                # 注册到 FastAPI app（延迟到 web_context 初始化后）
+                self._pending_rest_controllers = getattr(self, '_pending_rest_controllers', [])
+                self._pending_rest_controllers.append(controller)
+                registered += 1
+                self.logger.info(
+                    f"Registered REST resource: {path} -> {bean_name} ({entity_class.__name__})"
+                )
+        if registered:
+            self.logger.info(f"Registered {registered} Repository REST resources")
+
     def _init_enterprise_components(self) -> None:
         """初始化企业级组件
 
@@ -221,6 +297,56 @@ class SpringApplication:
             except Exception as e:
                 self._handle_init_error('Seata', config.get('seata', {}), e, fail_fast)
 
+        # 初始化Spring Cloud Config配置中心（延迟导入）
+        # 支持两种启用方式：配置文件 spring.cloud.config.enabled=true 或 @EnableConfigServer 注解
+        config_center_cfg = config.get('spring', {}).get('cloud', {}).get('config', {})
+        config_center_annotation = self._find_annotation(EnableConfigServer)
+        config_center_enabled = config_center_cfg.get('enabled', False) or config_center_annotation is not None
+        if config_center_enabled:
+            try:
+                # 注解参数覆盖配置
+                if config_center_annotation:
+                    merged_config = dict(config)
+                    spring_cfg = merged_config.setdefault('spring', {}).setdefault('cloud', {}).setdefault('config', {})
+                    spring_cfg['enabled'] = True
+                    if config_center_annotation.uri:
+                        spring_cfg['uri'] = config_center_annotation.uri
+                    if config_center_annotation.profile:
+                        spring_cfg.setdefault('profile', config_center_annotation.profile)
+                    if config_center_annotation.backend:
+                        spring_cfg.setdefault('backend', config_center_annotation.backend)
+                    spring_cfg.setdefault('fail-fast', config_center_annotation.fail_fast)
+                    from spring.cloud.config_center import init_config_center
+                    init_config_center(merged_config)
+                else:
+                    from spring.cloud.config_center import init_config_center
+                    init_config_center(config)
+                self.logger.info("Spring Cloud Config center initialized")
+            except Exception as e:
+                self._handle_init_error('ConfigCenter', config_center_cfg, e, fail_fast)
+
+        # 初始化Spring Cloud Bus事件总线（延迟导入）
+        # 支持两种启用方式：配置文件 spring.cloud.bus.enabled=true 或 @EnableBus 注解
+        bus_cfg = config.get('spring', {}).get('cloud', {}).get('bus', {})
+        bus_annotation = self._find_annotation(EnableBus)
+        bus_enabled = bus_cfg.get('enabled', False) or bus_annotation is not None
+        if bus_enabled:
+            try:
+                if bus_annotation:
+                    merged_config = dict(config)
+                    bus_merged = merged_config.setdefault('spring', {}).setdefault('cloud', {}).setdefault('bus', {})
+                    bus_merged['enabled'] = True
+                    bus_merged.setdefault('destination', bus_annotation.destination)
+                    bus_merged.setdefault('backend', bus_annotation.backend)
+                    from spring.cloud.bus import init_bus
+                    init_bus(merged_config)
+                else:
+                    from spring.cloud.bus import init_bus
+                    init_bus(config)
+                self.logger.info("Spring Cloud Bus event bus initialized")
+            except Exception as e:
+                self._handle_init_error('CloudBus', bus_cfg, e, fail_fast)
+
         # 初始化RabbitMQ（延迟导入）
         if config.get('rabbitmq', {}).get('enabled', False):
             try:
@@ -230,6 +356,72 @@ class SpringApplication:
             except Exception as e:
                 self._handle_init_error('RabbitMQ', config.get('rabbitmq', {}), e, fail_fast)
 
+        # 初始化Kafka（延迟导入，配置 key 为 spring.kafka）
+        kafka_config = config.get('spring', {}).get('kafka', {})
+        if kafka_config:
+            try:
+                from spring.messaging.kafka import init_kafka
+                init_kafka(config)
+                self.logger.info("Kafka initialized")
+            except Exception as e:
+                self._handle_init_error('Kafka', kafka_config, e, fail_fast)
+
+        # 初始化OAuth2资源服务器（延迟导入）
+        # 支持两种启用方式：配置文件 spring.security.oauth2.* 或 @EnableOAuth2 注解
+        oauth2_config = config.get('spring', {}).get('security', {}).get('oauth2', {})
+        oauth2_annotation = self._find_annotation(EnableOAuth2)
+        oauth2_enabled = bool(oauth2_config) or oauth2_annotation is not None
+        if oauth2_enabled:
+            try:
+                if oauth2_annotation:
+                    merged_config = dict(config)
+                    oauth2_merged = merged_config.setdefault('spring', {}).setdefault('security', {}).setdefault('oauth2', {})
+                    oauth2_merged['enabled'] = True
+                    if oauth2_annotation.issuer:
+                        oauth2_merged['issuer'] = oauth2_annotation.issuer
+                    if oauth2_annotation.audiences:
+                        oauth2_merged['audiences'] = oauth2_annotation.audiences
+                    if oauth2_annotation.jwks_uri:
+                        oauth2_merged['jwks_uri'] = oauth2_annotation.jwks_uri
+                    if oauth2_annotation.algorithms:
+                        oauth2_merged['algorithms'] = oauth2_annotation.algorithms
+                    if oauth2_annotation.secret_key:
+                        oauth2_merged['secret-key'] = oauth2_annotation.secret_key
+                    from spring.security.oauth2 import init_oauth2
+                    init_oauth2(merged_config)
+                else:
+                    from spring.security.oauth2 import init_oauth2
+                    init_oauth2(config)
+                self.logger.info("OAuth2 resource server initialized")
+            except Exception as e:
+                self._handle_init_error('OAuth2', oauth2_config, e, fail_fast)
+
+        # 初始化CSRF防护（延迟导入）
+        # 支持两种启用方式：配置文件 server.csrf.enabled=true 或 @EnableCsrf 注解
+        csrf_config = config.get('server', {}).get('csrf', {})
+        csrf_annotation = self._find_annotation(EnableCsrf)
+        csrf_enabled = csrf_config.get('enabled', False) or csrf_annotation is not None
+        if csrf_enabled:
+            try:
+                if csrf_annotation:
+                    merged_config = dict(config)
+                    csrf_merged = merged_config.setdefault('server', {}).setdefault('csrf', {})
+                    csrf_merged['enabled'] = True
+                    csrf_merged.setdefault('token_length', csrf_annotation.token_length)
+                    csrf_merged.setdefault('token_ttl', csrf_annotation.token_ttl)
+                    csrf_merged.setdefault('cookie_name', csrf_annotation.cookie_name)
+                    csrf_merged.setdefault('header_name', csrf_annotation.header_name)
+                    csrf_merged.setdefault('secure_cookie', csrf_annotation.secure_cookie)
+                    csrf_merged.setdefault('same_site', csrf_annotation.same_site)
+                    from spring.web.csrf import init_csrf
+                    init_csrf(merged_config)
+                else:
+                    from spring.web.csrf import init_csrf
+                    init_csrf(config)
+                self.logger.info("CSRF protection initialized")
+            except Exception as e:
+                self._handle_init_error('CSRF', csrf_config, e, fail_fast)
+
         # 初始化Prometheus监控（延迟导入）
         if config.get('prometheus', {}).get('enabled', False):
             try:
@@ -238,6 +430,50 @@ class SpringApplication:
                 self.logger.info("Prometheus monitoring initialized")
             except Exception as e:
                 self._handle_init_error('Prometheus', config.get('prometheus', {}), e, fail_fast)
+
+        # 初始化DevTools热重载（仅开发环境）
+        # 支持两种启用方式：配置文件 spring.devtools.restart.enabled=true 或 @EnableDevTools 注解
+        devtools_config = config.get('spring', {}).get('devtools', {}).get('restart', {})
+        devtools_annotation = self._find_annotation(EnableDevTools)
+        devtools_enabled = devtools_config.get('enabled', False) or devtools_annotation is not None
+        if devtools_enabled:
+            try:
+                if devtools_annotation:
+                    merged_config = dict(config)
+                    dt_merged = merged_config.setdefault('spring', {}).setdefault('devtools', {}).setdefault('restart', {})
+                    dt_merged['enabled'] = True
+                    if devtools_annotation.watch_dirs:
+                        dt_merged['watch_dirs'] = devtools_annotation.watch_dirs
+                    dt_merged['poll_interval'] = devtools_annotation.poll_interval
+                    if devtools_annotation.exclude_dirs:
+                        dt_merged['exclude_dirs'] = devtools_annotation.exclude_dirs
+                    config_for_devtools = merged_config
+                else:
+                    config_for_devtools = config
+                from spring.devtools import create_devtools_watcher
+                watcher = create_devtools_watcher(
+                    config_for_devtools,
+                    restart_callback=lambda changed: self.logger.info(
+                        f"DevTools detected file changes: {changed}"
+                    ),
+                )
+                if watcher is not None:
+                    self.logger.info("DevTools hot reload enabled")
+            except Exception as e:
+                self._handle_init_error('DevTools', devtools_config, e, fail_fast)
+
+        # 初始化Spring Data REST（扫描 @RepositoryRestResource 标记的 Repository）
+        # 支持两种启用方式：配置文件 spring.data.rest.enabled=true 或 @EnableDataRest 注解
+        data_rest_cfg = config.get('spring', {}).get('data', {}).get('rest', {})
+        data_rest_annotation = self._find_annotation(EnableDataRest)
+        data_rest_enabled = data_rest_cfg.get('enabled', False) or data_rest_annotation is not None
+        if data_rest_enabled:
+            try:
+                base_path = (data_rest_annotation.base_path if data_rest_annotation else data_rest_cfg.get('base_path', '')) or ''
+                self._register_repository_rest_resources(base_path)
+                self.logger.info(f"Spring Data REST enabled (base_path={base_path or '/api'})")
+            except Exception as e:
+                self._handle_init_error('DataRest', data_rest_cfg, e, fail_fast)
 
         self.logger.info("Enterprise components initialization completed")
 
@@ -279,6 +515,13 @@ class SpringApplication:
                 rabbitmq_client.start_consuming_background()
             except Exception as exc:
                 self._handle_init_error('RabbitMQ Consumer', config.get('rabbitmq', {}), exc, fail_fast)
+        # 启动 Kafka 消费者后台线程（延迟导入）
+        if config.get('spring', {}).get('kafka', {}):
+            try:
+                from spring.messaging.kafka import kafka_client
+                kafka_client.start_consuming()
+            except Exception as exc:
+                self._handle_init_error('Kafka Consumer', config.get('spring', {}).get('kafka', {}), exc, fail_fast)
         port = config.get('server', {}).get('port', 8080)
         self._register_discovery_service(port)
         self._background_started = True
@@ -342,6 +585,28 @@ class SpringApplication:
         self.web_context.init()
         self._configure_web_lifecycle()
 
+        # 注册 CSRF 中间件（如已通过 init_csrf 启用）
+        try:
+            from spring.web.csrf import get_csrf_token_manager, CSRFMiddleware
+            token_manager = get_csrf_token_manager()
+            if token_manager is not None:
+                self.web_context.fastapi_app.add_middleware(
+                    CSRFMiddleware, token_manager=token_manager
+                )
+                self.logger.info("CSRF middleware registered")
+        except Exception:
+            pass
+
+        # 注册 @RepositoryRestResource 标记的 Repository REST 端点
+        pending_controllers = getattr(self, '_pending_rest_controllers', [])
+        if pending_controllers:
+            for controller in pending_controllers:
+                try:
+                    controller.register(self.web_context.fastapi_app)
+                except Exception as e:
+                    self.logger.warning(f"Failed to register REST controller: {e}")
+            self._pending_rest_controllers = []
+
         # 注册优雅退出信号处理
         try:
             from spring.core.graceful_shutdown import shutdown_handler
@@ -368,6 +633,12 @@ class SpringApplication:
         try:
             from spring.cloud.seata import seata_manager
             seata_manager.stop_recovery_worker()
+        except Exception:
+            pass
+        # 停止 Kafka 消费者线程
+        try:
+            from spring.messaging.kafka import kafka_client
+            kafka_client.stop_consuming()
         except Exception:
             pass
         try:
@@ -448,27 +719,46 @@ def create_app(main_class: Type):
 
 
 def run_cli():
-    """CLI entry point for springboot-python"""
+    """CLI entry point for springboot-python
+
+    支持两种模式：
+    1. 子命令模式：springbootai version / info / list / init / docs
+    2. 传统启动模式：springbootai myapp.Application --port 8080
+
+    自动检测第一个参数：如果是已知子命令则走子命令分发，否则走传统启动。
+    """
+    import sys
+
+    # 已知的 CLI 子命令
+    _KNOWN_SUBCOMMANDS = {'version', 'info', 'list', 'init', 'run', 'docs', '--help', '-h'}
+
+    if len(sys.argv) > 1 and sys.argv[1] in _KNOWN_SUBCOMMANDS:
+        # 子命令模式：委托给 spring.cli.main
+        from spring.cli.main import main as cli_main
+        cli_main()
+        return
+
+    # 传统启动模式：springbootai myapp.Application --port 8080
     import argparse
     import importlib
-    
+
     parser = argparse.ArgumentParser(description="SpringBoot-Python CLI")
     parser.add_argument('module', help='Application module path (e.g., myapp.Application)')
     parser.add_argument('--port', type=int, default=8080, help='Server port')
     parser.add_argument('--host', default='0.0.0.0', help='Server host')  # nosec B104 - CLI server bind
-    
+
     args = parser.parse_args()
-    
+
     # Split module path
     if '.' in args.module:
         module_name, class_name = args.module.rsplit('.', 1)
     else:
         module_name = args.module
         class_name = 'Application'
-    
+
     # Import module and get class
     module = importlib.import_module(module_name)
     main_class = getattr(module, class_name)
-    
+
     # Run application
     run(main_class, port=args.port, host=args.host)

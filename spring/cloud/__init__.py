@@ -56,6 +56,20 @@ from spring.cloud.gateway import (
     LoggingFilter,
     get_gateway,
 )
+from spring.cloud.config_center import (
+    ConfigCenterClient,
+    ConfigCenterError,
+    config_client,
+    init_config_center,
+    create_config_refresh_endpoint,
+)
+from spring.cloud.bus import (
+    BusEvent,
+    EventBus,
+    event_bus,
+    init_bus,
+    create_bus_refresh_endpoint,
+)
 
 try:
     from spring.messaging.rabbitmq import rabbitmq_client, RabbitMQClient
@@ -82,6 +96,11 @@ __all__ = [
     # 网关
     'GatewayRouter', 'Route', 'GatewayFilter',
     'AuthenticationFilter', 'RateLimitFilter', 'TracingFilter', 'LoggingFilter', 'get_gateway',
+    # 配置中心
+    'ConfigCenterClient', 'ConfigCenterError', 'config_client', 'init_config_center',
+    'create_config_refresh_endpoint',
+    # 事件总线
+    'BusEvent', 'EventBus', 'event_bus', 'init_bus', 'create_bus_refresh_endpoint',
     # 消息队列
     'rabbitmq_client', 'RabbitMQClient',
 ]

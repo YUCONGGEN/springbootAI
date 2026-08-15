@@ -1,0 +1,144 @@
+"""Spring CLI 命令行工具测试"""
+import os
+import subprocess
+import sys
+from io import StringIO
+from unittest.mock import patch
+
+import pytest
+
+from spring.cli.main import (
+    create_parser,
+    main as cli_main,
+    _cmd_version,
+    _cmd_info,
+    _cmd_list,
+    _list_modules,
+    _list_annotations,
+)
+
+
+class TestParser:
+    """参数解析器测试"""
+
+    def test_create_parser(self):
+        parser = create_parser()
+        assert parser.prog == 'springbootai'
+
+    def test_no_command_prints_help(self):
+        """无子命令时打印帮助"""
+        with patch('sys.stdout', new=StringIO()) as fake_out:
+            cli_main([])
+            output = fake_out.getvalue()
+            assert 'springbootai' in output
+            assert 'usage' in output.lower()
+
+
+class TestVersionCommand:
+    """version 子命令测试"""
+
+    def test_version_prints_info(self):
+        with patch('sys.stdout', new=StringIO()) as fake_out:
+            cli_main(['version'])
+            output = fake_out.getvalue()
+            assert 'SpringBootAI' in output
+            assert 'Python' in output
+
+    def test_version_contains_framework_version(self):
+        import spring
+        with patch('sys.stdout', new=StringIO()) as fake_out:
+            cli_main(['version'])
+            output = fake_out.getvalue()
+            assert spring.__version__ in output
+
+
+class TestInfoCommand:
+    """info 子命令测试"""
+
+    def test_info_prints_environment(self):
+        with patch('sys.stdout', new=StringIO()) as fake_out:
+            cli_main(['info'])
+            output = fake_out.getvalue()
+            assert 'Python 版本' in output
+            assert '操作系统' in output
+            assert '已安装的依赖' in output
+
+
+class TestListCommand:
+    """list 子命令测试"""
+
+    def test_list_modules(self):
+        with patch('sys.stdout', new=StringIO()) as fake_out:
+            cli_main(['list', 'modules'])
+            output = fake_out.getvalue()
+            assert '可用模块' in output
+            assert 'annotations' in output
+            assert 'web' in output
+            assert 'orm' in output
+
+    def test_list_annotations(self):
+        with patch('sys.stdout', new=StringIO()) as fake_out:
+            cli_main(['list', 'annotations'])
+            output = fake_out.getvalue()
+            assert '可用注解' in output
+            assert '@' in output  # 注解以 @ 开头
+
+    def test_list_invalid_what(self):
+        """无效的列表类型"""
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(['list', 'invalid'])
+
+
+class TestInitCommand:
+    """init 子命令测试（通过 scaffold 复用）"""
+
+    def test_init_creates_project(self, tmp_path):
+        project_dir = tmp_path / "test-project"
+        cli_main(['init', str(project_dir), '--modules', 'web', '--port', '9000'])
+
+        assert project_dir.exists()
+        assert (project_dir / "Application.py").exists()
+        assert (project_dir / "config" / "application.yml").exists()
+        assert (project_dir / "requirements.txt").exists()
+        assert (project_dir / "README.md").exists()
+
+    def test_init_with_package(self, tmp_path):
+        project_dir = tmp_path / "my-app"
+        cli_main(['init', str(project_dir), '--package', 'myapp', '--modules', 'web'])
+
+        assert (project_dir / "src" / "myapp").exists()
+        assert (project_dir / "src" / "myapp" / "__init__.py").exists()
+
+    def test_init_multiple_modules(self, tmp_path):
+        project_dir = tmp_path / "multi-app"
+        cli_main(['init', str(project_dir), '--modules', 'web,orm'])
+
+        # orm 模块应创建 models 目录
+        pkg = (project_dir / "src" / "multi_app")
+        assert (pkg / "models").exists()
+
+
+class TestRunCliIntegration:
+    """run_cli 集成测试（验证子命令检测）"""
+
+    def test_run_cli_dispatches_to_subcommand(self):
+        """验证 run_cli 能正确分发子命令"""
+        from spring.main import run_cli
+
+        with patch('sys.argv', ['springbootai', 'version']):
+            with patch('sys.stdout', new=StringIO()):
+                run_cli()  # 应该不抛异常
+
+    def test_run_cli_traditional_mode(self):
+        """验证传统启动模式不会被误判为子命令"""
+        from spring.main import run_cli
+
+        # 传统模式：springbootai myapp.Application
+        # 这个测试只验证参数解析，不实际运行应用
+        with patch('sys.argv', ['springbootai', 'myapp.Application', '--port', '8080']):
+            with patch('spring.main.run') as mock_run:
+                with patch('importlib.import_module') as mock_import:
+                    mock_import.side_effect = ImportError("test module not found")
+                    with pytest.raises(ImportError):
+                        run_cli()

@@ -1,5 +1,54 @@
 # Changelog
 
+## [2.3.0] - 2026-08-15
+
+### 新增
+
+- **企业级注解驱动**：新增 10 个注解，将 16 项企业级功能改造为注解驱动模式。标记在 `@SpringBootApplication` 主类上即可启用，注解参数优先于配置文件。
+  - `@EnableOAuth2` — 启用 OAuth2 资源服务器（支持 HS256/RS256、issuer/audience/scope 校验）
+  - `@EnableCsrf` — 启用 CSRF 防护（Double Submit Cookie 模式）
+  - `@EnableDevTools` — 启用开发环境热重载（文件变更自动重启）
+  - `@EnableConfigServer` — 启用 Spring Cloud Config 配置中心客户端
+  - `@EnableBus` — 启用 Spring Cloud Bus 事件总线
+  - `@EnableBatchProcessing` — 启用 Spring Batch 批处理
+  - `@EnableDataRest` — 启用 Spring Data REST（自动暴露 Repository 为 CRUD API）
+  - `@BatchJob` / `@BatchStep` — 标记批处理作业和步骤
+  - `@RepositoryRestResource` — 标记 Repository 为 REST 资源
+- **OAuth2 资源服务器**：新增 `spring/security/oauth2.py`，支持 JWT Access Token 验证，HS256 对称密钥和 RS256 公钥（JWKS）两种算法。
+- **CSRF 防护**：新增 `spring/web/csrf.py`，实现 Double Submit Cookie 模式中间件。
+- **Kafka 支持**：新增 `spring/messaging/kafka.py`，提供 `KafkaClient`（生产者+消费者管理）和 `@KafkaListener`/`KafkaTemplate` 注解。
+- **DevTools 热重载**：新增 `spring/devtools.py`，提供 `FileWatcher`（轮询文件变更）和 `RestartTrigger`（静默期防抖）。
+- **数据库迁移完善**：新增 Undo 回滚迁移（U{version}__{desc}.sql）、迁移锁（MySQL/PostgreSQL/SQLite）、变量替换（${var}）、validate 校验方法。
+- **Actuator /heapdump 端点**：返回 tracemalloc 内存分配快照 + GC 统计（JSON 格式），对齐 Spring Boot /actuator/heapdump。
+- **配置元数据**：新增 `spring/config/spring-configuration-metadata.json`，IDE 可读取提供配置自动补全。
+- **项目脚手架**：新增 `spring/cli/scaffold.py`，支持 `springbootai init` 命令创建新项目。
+- **Spring CLI**：新增 `spring/cli/main.py`，提供 `springbootai` 统一命令入口（version/info/list/init/run/docs）。
+- **Starter 机制**：pyproject.toml 新增 `web`/`cloud`/`all` 组合 Starter extras。
+- **Spring Cloud Config**：新增 `spring/cloud/config_center.py`，支持 HTTP 和本地文件后端。
+- **Spring Cloud Bus**：新增 `spring/cloud/bus.py`，支持进程内和 MQ 后端事件总线。
+- **Spring Batch**：新增 `spring/batch/`，支持 Job/Step/Reader/Processor/Writer 组件。
+- **Spring Data REST**：新增 `spring/data/rest.py`，自动生成 Repository CRUD REST 端点。
+- **Spring HATEOAS**：新增 `spring/web/hateoas.py`，包含 Link/EntityModel/CollectionModel/PagedModel。
+- **Sphinx API 文档**：新增 `docs/conf.py` 和 `docs/index.rst`。
+
+### 测试
+
+- 新增 7 个测试文件，共 198 个测试用例：
+  - `test_kafka.py`（75）、`test_migration.py`（44）、`test_oauth2.py`（21）、`test_csrf.py`（19）、`test_devtools.py`（16）、`test_starter.py`（13）、`test_metadata.py`（10）
+- 新增 `test_new_annotations.py`（37 个注解测试）
+- 完整测试套件 **2821 passed, 11 skipped, 0 failed**
+
+### 文档
+
+- 新增 `doc/ENTERPRISE_ANNOTATIONS.md` — 10 个企业级注解完整教程
+- 新增 `doc/MIGRATION_MODULE.md` — 数据库迁移模块文档（10 章节）
+- 新增 `doc/STARTER_MODULE.md` — Starter 机制文档（8 章节）
+- 新增 `doc/CLI_MODULE.md` — CLI 和脚手架文档（10 章节）
+- `doc/MESSAGING_MODULE.md` 追加 Kafka 章节
+- `doc/WEB_MODULE.md` 追加 HATEOAS 章节
+- `doc/CONFIG_BINDING_MODULE.md` 追加配置元数据章节
+- 35 个文件版本号从 2.2.6 更新到 2.3.0
+
 ## [2.2.6] - 2026-08-15
 
 ### 新增

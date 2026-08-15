@@ -38,7 +38,7 @@ _SENSITIVE_KEYS = (
 # admin 端点仅返回静态 HTML（无敏感数据），保持开放但页面内 JS 调用的端点受鉴权保护
 _SENSITIVE_ENDPOINTS = frozenset({
     "env", "loggers", "metrics", "beans", "configprops", "mappings", "threaddump",
-    "prometheus", "sysmetrics",
+    "heapdump", "prometheus", "sysmetrics",
 })
 
 # Actuator 鉴权开关（由 configure_actuator 从配置读取）
@@ -133,6 +133,7 @@ def get_endpoint_directory() -> dict:
         "configprops": {"href": "/actuator/configprops", "methods": ["GET"]},
         "mappings": {"href": "/actuator/mappings", "methods": ["GET"]},
         "threaddump": {"href": "/actuator/threaddump", "methods": ["GET"]},
+        "heapdump": {"href": "/actuator/heapdump", "methods": ["GET"]},
         "prometheus": {"href": "/actuator/prometheus", "methods": ["GET"]},
         "sysmetrics": {"href": "/actuator/sysmetrics", "methods": ["GET"]},
         "alert": {"href": "/actuator/alert", "methods": ["POST"]},
@@ -337,6 +338,82 @@ def get_threaddump() -> dict:
     return {"threads": threads}
 
 
+# ==================== /heapdump 内存快照 ====================
+
+def get_heapdump(limit: int = 50) -> dict:
+    """返回 Python 进程内存分配快照（对齐 Spring Boot /actuator/heapdump）。
+
+    使用 ``tracemalloc`` 模块获取内存分配统计，返回 JSON 格式。
+
+    与 Java heapdump 的差异：
+    - Java dump 整个 JVM 堆（HPROF 二进制格式），可用 MAT/jhat 分析
+    - Python 返回 tracemalloc 统计快照（JSON），展示按文件/行号聚合的内存分配 Top-N
+
+    安全说明：仅返回文件路径和行号，不返回变量值，避免敏感数据泄露。
+    """
+    import os
+    import sys
+
+    result: Dict[str, Any] = {
+        "pid": os.getpid(),
+        "python": sys.version,
+        "tracemalloc_active": False,
+        "top_allocations": [],
+        "gc_stats": {},
+    }
+
+    # tracemalloc 内存分配快照
+    try:
+        import tracemalloc
+        if not tracemalloc.is_tracing():
+            # 如果没启动，临时启动并立即取样（开销极小）
+            tracemalloc.start(1)
+            result["tracemalloc_active"] = False
+            result["_note"] = "tracemalloc was not active; started temporarily with frames=1"
+        else:
+            result["tracemalloc_active"] = True
+
+        snapshot = tracemalloc.take_snapshot()
+        stats = snapshot.statistics("lineno")
+        top = []
+        for stat in stats[:limit]:
+            frame = stat.traceback[0]
+            top.append({
+                "file": frame.filename,
+                "line": frame.lineno,
+                "size_bytes": stat.size,
+                "size_mb": round(stat.size / 1024 / 1024, 2),
+                "count": stat.count,
+            })
+        result["top_allocations"] = top
+        result["total_allocated_bytes"] = sum(s.size for s in stats)
+        result["total_allocated_mb"] = round(sum(s.size for s in stats) / 1024 / 1024, 2)
+
+        # 如果是临时启动的，停止
+        if not result["tracemalloc_active"]:
+            tracemalloc.stop()
+    except Exception as e:
+        result["tracemalloc_error"] = str(e)
+
+    # GC 统计
+    try:
+        import gc
+        gc_stats = gc.get_stats()  # [{collections, collected, uncollectable}, ...]
+        result["gc_stats"] = {
+            "generations": [
+                {"collections": s["collections"], "collected": s["collected"], "uncollectable": s["uncollectable"]}
+                for s in gc_stats
+            ],
+            "garbage_count": len(gc.garbage),
+            "thresholds": list(gc.get_threshold()),
+        }
+        result["gc_stats"]["object_count"] = len(gc.get_objects())
+    except Exception as e:
+        result["gc_stats"]["error"] = str(e)
+
+    return result
+
+
 # ==================== HTTP 端点（薄包装） ====================
 
 @actuator_router.get('')
@@ -355,6 +432,7 @@ _beans_auth = _create_actuator_dependency("beans")
 _configprops_auth = _create_actuator_dependency("configprops")
 _mappings_auth = _create_actuator_dependency("mappings")
 _threaddump_auth = _create_actuator_dependency("threaddump")
+_heapdump_auth = _create_actuator_dependency("heapdump")
 _prometheus_auth = _create_actuator_dependency("prometheus")
 _sysmetrics_auth = _create_actuator_dependency("sysmetrics")
 
@@ -412,6 +490,16 @@ def mappings_endpoint(_: None = Depends(_mappings_auth)):
 @actuator_router.get('/threaddump')
 def threaddump_endpoint(_: None = Depends(_threaddump_auth)):
     return JSONResponse(content=get_threaddump(), status_code=200)
+
+
+@actuator_router.get('/heapdump')
+def heapdump_endpoint(limit: int = 50, _: None = Depends(_heapdump_auth)):
+    """内存快照端点（对齐 Spring Boot /actuator/heapdump）。
+
+    返回 tracemalloc 内存分配统计 + GC 统计的 JSON。
+    可选 query 参数 ``?limit=100`` 控制返回的 Top-N 行数（默认 50）。
+    """
+    return JSONResponse(content=get_heapdump(limit=limit), status_code=200)
 
 
 # ==================== /prometheus Prometheus 指标端点 ====================

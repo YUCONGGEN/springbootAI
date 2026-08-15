@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # 发行名 springbootAI（PyPI 包名，pip install springbootAI）；导入包名仍为 spring
 name = "springbootAI"
-version = "2.2.6"
+version = "2.3.0"
 description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
 readme = "README.md"
 license = "MIT"
@@ -71,6 +71,7 @@ redis = ["redis==8.1.0"]
 # 消息队列 - 类似 Spring Boot Starter AMQP
 # ========================================
 rabbitmq = ["pika==1.4.4"]
+kafka = ["kafka-python==2.0.2"]
 
 # ========================================
 # 服务发现 - 类似 Spring Cloud Alibaba Nacos
@@ -106,7 +107,7 @@ ai = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==2.2.6",
+    "numpy==2.3.0",
     "pydantic==2.13.4",
 ]
 
@@ -122,7 +123,7 @@ langchain = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==2.2.6",
+    "numpy==2.3.0",
     "pydantic==2.13.4",
     # 默认装上的向量库/文档/工具依赖（安全：全部锁定已知安全版本）
     "faiss-cpu>=1.7.4,<2",
@@ -156,6 +157,40 @@ langgraph = [
 # Install with: pip install springbootAI[mcp]
 mcp = [
     "mcp==2.0.0",
+]
+
+# ========================================
+# 组合 Starter - 类似 Spring Boot Starter Web/Cloud/All
+# 安装：pip install springbootAI[web] / springbootAI[cloud] / springbootAI[all]
+# ========================================
+web = [
+    "fastapi==0.115.6",
+    "uvicorn==0.34.0",
+    "pydantic==2.13.4",
+    "python-multipart==0.0.20",
+]
+cloud = [
+    "springbootAI[web]",
+    "springbootAI[redis]",
+    "springbootAI[rabbitmq]",
+    "springbootAI[kafka]",
+    "httpx==0.28.1",
+]
+all = [
+    "springbootAI[web]",
+    "springbootAI[mysql]",
+    "springbootAI[redis]",
+    "springbootAI[rabbitmq]",
+    "springbootAI[kafka]",
+    "springbootAI[prometheus]",
+    "springbootAI[logging]",
+    "springbootAI[excel]",
+    "springbootAI[ai]",
+    "springbootAI[langchain]",
+    "springbootAI[langgraph]",
+    "springbootAI[mcp]",
+    "httpx==0.28.1",
+    "psutil==6.1.1",
 ]
 
 # ========================================
@@ -196,7 +231,7 @@ full = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==2.2.6",
+    "numpy==2.3.0",
     "pydantic==2.13.4",
     # LangChain 模块增强（对齐 springbootAI[langchain]）
     "faiss-cpu>=1.7.4,<2",
@@ -253,6 +288,9 @@ Issues = "https://github.com/YUCONGGEN/springbootAI/issues"
 
 [project.scripts]
 springbootai = "spring.main:run_cli"
+# 项目脚手架工具（类似 Spring Initializr），初始化符合 SpringBootAI 风格的新项目
+# 用法：springbootai-init my-project --modules web,orm
+springbootai-init = "spring.cli.scaffold:main"
 
 [tool.setuptools.packages.find]
 include = ["spring*"]

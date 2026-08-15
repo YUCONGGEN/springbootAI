@@ -7,21 +7,29 @@
 - 支持 checksum 校验防止篡改
 - 支持 MySQL/PostgreSQL/SQLite
 - 迁移文件命名: V{version}__{description}.sql
+- 支持 Undo 回滚迁移: U{version}__{description}.sql
+- 支持迁移锁防止并发执行
+- 支持变量替换 ${var_name}
 """
 
 import re
 import hashlib
 import logging
 import time
-from typing import List, Dict, Tuple
+import threading
+from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
 logger = logging.getLogger("Spring.ORM.Migration")
 
 # 迁移文件命名模式: V1__init.sql, V2__add_users_table.sql
 _MIGRATION_PATTERN = re.compile(r'^V(\d+(?:\.\d+)?)__(.+)\.sql$', re.IGNORECASE)
+# Undo 迁移文件命名模式: U1__rollback_init.sql
+_UNDO_PATTERN = re.compile(r'^U(\d+(?:\.\d+)?)__(.+)\.sql$', re.IGNORECASE)
 # 版本号分隔符
 _VERSION_SPLIT = re.compile(r'[._]')
+# 变量替换模式: ${var_name}
+_VAR_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
 
 class MigrationError(Exception):
@@ -60,16 +68,23 @@ class MigrationManager:
     Usage:
         manager = MigrationManager(connection_pool, migrations_dir="sql/migrations")
         manager.migrate()  # 执行所有待执行迁移
+        manager.rollback("2")  # 回滚到 V2 之前（执行 U2）
+        manager.validate()  # 仅校验不执行
     """
 
     def __init__(self, connection_pool, migrations_dir: str,
-                 dialect: str = "mysql", table_name: str = "schema_version"):
+                 dialect: str = "mysql", table_name: str = "schema_version",
+                 variables: Optional[Dict[str, str]] = None):
         self.pool = connection_pool
         self.migrations_dir = Path(migrations_dir)
         self.dialect = dialect.lower()
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", str(table_name)):
             raise ValueError("migration table_name must be a simple SQL identifier")
         self.table_name = str(table_name)
+        # 变量替换字典（用于 ${var_name} 替换）
+        self.variables: Dict[str, str] = variables or {}
+        # 进程级迁移锁（防止同一进程并发迁移）
+        self._lock = threading.Lock()
         self._ensure_version_table()
 
     def _ensure_version_table(self) -> None:
@@ -232,24 +247,11 @@ class MigrationManager:
             conn = pooled.connection
             cursor = conn.cursor()
 
-            # 按分号分割语句（简单分割，不处理存储过程中的分号）
-            statements = []
-            current = []
-            for line in sql_content.split('\n'):
-                stripped = line.strip()
-                # 跳过注释
-                if stripped.startswith('--') or stripped.startswith('#'):
-                    continue
-                current.append(line)
-                if stripped.endswith(';'):
-                    stmt = '\n'.join(current).strip().rstrip(';')
-                    if stmt:
-                        statements.append(stmt)
-                    current = []
-            # 最后一条可能没有分号
-            remaining = '\n'.join(current).strip()
-            if remaining:
-                statements.append(remaining)
+            # 变量替换
+            sql_content = self._substitute_variables(sql_content)
+
+            # 按分号分割语句
+            statements = self._split_sql_statements(sql_content)
 
             for stmt in statements:
                 stmt = stmt.strip()
@@ -418,3 +420,252 @@ class MigrationManager:
                 except Exception:
                     pass
             raise MigrationError(f"Repair failed: {e}") from e
+
+    # ==================== 变量替换 ====================
+
+    def _substitute_variables(self, sql: str) -> str:
+        """替换 SQL 中的 ${var_name} 变量。
+
+        安全说明：变量值仅做字符串替换，不执行 SQL 解析。
+        变量值不能包含分号（;），防止 SQL 注入。
+        """
+        if not self.variables:
+            return sql
+
+        def _replacer(match):
+            var_name = match.group(1)
+            if var_name not in self.variables:
+                raise MigrationError(f"Undefined migration variable: ${{{var_name}}}")
+            value = str(self.variables[var_name])
+            # 防止 SQL 注入：变量值不能包含分号
+            if ';' in value:
+                raise MigrationError(
+                    f"Migration variable '{var_name}' contains semicolon ';', "
+                    f"which is not allowed for security reasons"
+                )
+            return value
+
+        return _VAR_PATTERN.sub(_replacer, sql)
+
+    # ==================== 迁移锁 ====================
+
+    def _acquire_db_lock(self, conn) -> bool:
+        """获取数据库级迁移锁（防止多实例并发迁移）。
+
+        MySQL: GET_LOCK('migration_lock', 10)
+        PostgreSQL: pg_advisory_lock(123456)
+        SQLite: 使用进程级锁（SQLite 单写入者）
+        """
+        if self.dialect == 'mysql':
+            cursor = conn.cursor()
+            cursor.execute("SELECT GET_LOCK('springbootai_migration', 10)")  # nosec B608
+            result = cursor.fetchone()
+            return bool(result[0] if result and isinstance(result, (tuple, list)) else result)
+        elif self.dialect == 'postgresql':
+            cursor = conn.cursor()
+            cursor.execute("SELECT pg_advisory_lock(123456789)")  # nosec B608
+            return True
+        else:
+            # SQLite 使用进程级锁
+            return self._lock.acquire(timeout=30)
+
+    def _release_db_lock(self, conn) -> None:
+        """释放数据库级迁移锁。"""
+        if self.dialect == 'mysql':
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT RELEASE_LOCK('springbootai_migration')")  # nosec B608
+                cursor.close()
+            except Exception:
+                pass
+        elif self.dialect == 'postgresql':
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT pg_advisory_unlock(123456789)")  # nosec B608
+                cursor.close()
+            except Exception:
+                pass
+        else:
+            # SQLite 进程级锁
+            try:
+                self._lock.release()
+            except RuntimeError:
+                pass  # 锁已被释放
+
+    # ==================== Undo 回滚迁移 ====================
+
+    def _discover_undo_migrations(self) -> Dict[str, Tuple[str, str, str]]:
+        """发现 Undo 迁移文件，返回 {version: (description, filename, content)}"""
+        if not self.migrations_dir.exists():
+            return {}
+
+        undos = {}
+        for f in sorted(self.migrations_dir.iterdir()):
+            if not f.is_file():
+                continue
+            match = _UNDO_PATTERN.match(f.name)
+            if not match:
+                continue
+            version = match.group(1)
+            description = match.group(2).replace('_', ' ')
+            undos[version] = (description, f.name, f.read_text(encoding='utf-8'))
+        return undos
+
+    def rollback(self, target_version: str = None) -> List[MigrationRecord]:
+        """回滚迁移（执行 Undo 脚本）。
+
+        Args:
+            target_version: 回滚到指定版本（不包含该版本）。
+                           如 rollback("3") 会执行 U3、U2（回滚到 V1 状态）。
+                           如果为 None，则只回滚最后一个版本。
+
+        Returns:
+            本次回滚的迁移记录列表
+
+        注意：Undo 脚本文件命名为 U{version}__{description}.sql，
+              与正向迁移 V{version}__{description}.sql 一一对应。
+        """
+        applied = self._get_applied_versions()
+        if not applied:
+            logger.info("No migrations to rollback")
+            return []
+
+        undo_scripts = self._discover_undo_migrations()
+
+        # 按版本号降序排列已应用的迁移
+        sorted_versions = sorted(applied.keys(), key=self._version_tuple, reverse=True)
+
+        # 确定回滚范围
+        if target_version:
+            target_tuple = self._version_tuple(target_version)
+            to_rollback = [v for v in sorted_versions if self._version_tuple(v) > target_tuple]
+        else:
+            to_rollback = [sorted_versions[0]]  # 只回滚最后一个
+
+        if not to_rollback:
+            logger.info("No migrations to rollback")
+            return []
+
+        rolled_back = []
+        conn = None
+        try:
+            pooled = self.pool.get_connection()
+            conn = pooled.connection
+
+            # 获取迁移锁
+            if not self._acquire_db_lock(conn):
+                raise MigrationError("Failed to acquire migration lock (another migration may be running)")
+
+            try:
+                for version in to_rollback:
+                    if version not in undo_scripts:
+                        raise MigrationError(
+                            f"Undo script U{version}__*.sql not found. "
+                            f"Cannot rollback migration V{version} without undo script."
+                        )
+
+                    desc, script_name, sql_content = undo_scripts[version]
+                    # 变量替换
+                    sql_content = self._substitute_variables(sql_content)
+
+                    start = time.monotonic()
+                    cursor = conn.cursor()
+
+                    # 执行 Undo SQL
+                    statements = self._split_sql_statements(sql_content)
+                    for stmt in statements:
+                        stmt = stmt.strip()
+                        if stmt:
+                            logger.debug(f"Executing undo SQL: {stmt[:100]}...")
+                            cursor.execute(stmt)
+
+                    # 删除迁移记录
+                    if self.dialect == 'mysql':
+                        cursor.execute(
+                            f"DELETE FROM `{self.table_name}` WHERE version = %s",  # nosec B608
+                            (version,)
+                        )
+                    else:
+                        ph = '?' if self.dialect == 'sqlite' else '%s'
+                        cursor.execute(
+                            f'DELETE FROM "{self.table_name}" WHERE version = {ph}',  # nosec B608
+                            (version,)
+                        )
+
+                    elapsed = time.monotonic() - start
+                    conn.commit()
+                    cursor.close()
+
+                    record = MigrationRecord(version, f"UNDO: {desc}", script_name, "", elapsed, True)
+                    rolled_back.append(record)
+                    logger.info(f"Rollback U{version} ({desc}) completed in {elapsed:.2f}s")
+
+            finally:
+                self._release_db_lock(conn)
+
+            self.pool.return_connection(pooled)
+            return rolled_back
+
+        except Exception as e:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            logger.error(f"Rollback failed: {e}")
+            raise MigrationError(f"Rollback failed: {e}") from e
+
+    # ==================== 校验 ====================
+
+    def validate(self) -> bool:
+        """校验已执行迁移的 checksum 是否一致（不执行任何 SQL）。
+
+        Returns:
+            True 如果所有已执行迁移的 checksum 一致
+            False 如果存在 checksum 不匹配
+
+        Raises:
+            MigrationError 如果读取失败
+        """
+        applied = self._get_applied_versions()
+        discovered = self._discover_migrations()
+
+        for version, rec in applied.items():
+            found = False
+            for disc_ver, desc, script, checksum in discovered:
+                if disc_ver == version:
+                    found = True
+                    if rec.checksum != checksum:
+                        logger.error(
+                            f"Checksum mismatch for migration V{version}: "
+                            f"applied={rec.checksum}, current={checksum}"
+                        )
+                        return False
+                    break
+            if not found:
+                logger.warning(f"Applied migration V{version} not found in migrations directory")
+                return False
+
+        logger.info(f"Validation passed: {len(applied)} migrations OK")
+        return True
+
+    # ==================== SQL 分割（公共方法） ====================
+
+    def _split_sql_statements(self, sql_content: str) -> List[str]:
+        """按分号分割 SQL 语句，跳过注释行。"""
+        statements = []
+        current = []
+        for line in sql_content.split('\n'):
+            stripped = line.strip()
+            if stripped.startswith('--') or stripped.startswith('#'):
+                continue
+            current.append(line)
+            if stripped.endswith(';'):
+                stmt = '\n'.join(current).strip().rstrip(';')
+                if stmt:
+                    statements.append(stmt)
+                current = []
+        remaining = '\n'.join(current).strip()
+        if remaining:
+            statements.append(remaining)
+        return statements

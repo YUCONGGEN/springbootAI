@@ -98,16 +98,22 @@ from .conditional import (
     ConditionalOnClass,
 )
 
-# 可选导入：消息队列注解（需要pika）
+# 可选导入：消息队列注解（RabbitMQ 需要 pika，Kafka 需要 kafka-python）
 try:
     from .messaging import (
         RabbitListener,
         RabbitTemplate,
+        KafkaListener,
+        KafkaTemplate,
+        kafka_template,
     )
 except ImportError:
-    # pika未安装，这些注解不可用
+    # 依赖未安装，这些注解不可用
     RabbitListener = None
     RabbitTemplate = None
+    KafkaListener = None
+    KafkaTemplate = None
+    kafka_template = None
 
 # Optional MCP annotations are dependency-safe until MCP is enabled.
 from spring.mcp.annotations import (
@@ -120,6 +126,24 @@ from spring.mcp.annotations import (
 )
 from .langchain import LangChainCall, LangChainClient
 from .langgraph import GraphEdge, GraphInvoke, GraphNode, GraphRoute, LangGraph
+
+# 安全启用型注解（@EnableOAuth2 / @EnableCsrf）
+from .security import EnableOAuth2, EnableCsrf
+
+# 企业级启用型注解（@EnableDevTools / @EnableConfigServer / @EnableBus / @EnableBatchProcessing / @EnableDataRest）
+from .enterprise import (
+    EnableDevTools,
+    EnableConfigServer,
+    EnableBus,
+    EnableBatchProcessing,
+    EnableDataRest,
+)
+
+# 批处理注解（@BatchJob / @BatchStep）
+from .batch import BatchJob, BatchStep
+
+# 数据 REST 注解（@RepositoryRestResource）
+from .data import RepositoryRestResource
 
 __all__ = [
     "SpringBootApplication",
@@ -215,6 +239,9 @@ __all__ = [
     # 消息队列注解
     "RabbitListener",
     "RabbitTemplate",
+    "KafkaListener",
+    "KafkaTemplate",
+    "kafka_template",
     # Model Context Protocol
     "MCPCall",
     "MCPClient",
@@ -231,4 +258,18 @@ __all__ = [
     "GraphNode",
     "GraphRoute",
     "LangGraph",
+    # 安全启用型注解
+    "EnableOAuth2",
+    "EnableCsrf",
+    # 企业级启用型注解
+    "EnableDevTools",
+    "EnableConfigServer",
+    "EnableBus",
+    "EnableBatchProcessing",
+    "EnableDataRest",
+    # 批处理注解
+    "BatchJob",
+    "BatchStep",
+    # 数据 REST 注解
+    "RepositoryRestResource",
 ]
