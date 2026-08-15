@@ -34,6 +34,12 @@ database:
   leak_detection_enabled: false
   mapper_locations:
     - example_all/mappers
+  # DDL 自动建表（JPA hibernate.ddl-auto 风格）
+  # mode: none(跳过) / create(每次启动重建) / update(只加不减) / validate(只校验) / create-drop(建表+关闭删除)
+  ddl-auto:
+    mode: update
+    entity_packages:
+      - example_all.models
   security:
     block_ddl: false
     sql_injection_detection: false
