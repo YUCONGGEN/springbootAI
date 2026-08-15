@@ -117,15 +117,15 @@ python -m pip install springbootAI
 
 > **@CsvProperty 是什么？** 给 Python 类属性贴标签，告诉框架"这个属性对应 CSV 文件的第几列、表头叫什么"。和 Excel 模块的 `@ExcelProperty` 一样的概念。  
 > **@CsvIgnore 是什么？** 告诉框架"这一列跳过，不读也不写"。  
-> **@csv_file 是什么？** 设置 CSV 文件的全局配置——编码、分隔符、有没有表头行。
+> **@CsvFile 是什么？** 设置 CSV 文件的全局配置——编码、分隔符、有没有表头行。
 
 ```python
 # demo/csv_entity.py
 from datetime import datetime
-from spring.csv import CsvProperty, CsvIgnore, csv_file
+from spring.csv import CsvProperty, CsvIgnore, CsvFile
 
 
-@csv_file("用户列表", delimiter=",", encoding="utf-8-sig")
+@CsvFile("用户列表", delimiter=",", encoding="utf-8-sig")
 class UserCsv:
     # order=1：排在第 1 列
     id = CsvProperty("用户ID", order=1)
@@ -151,7 +151,7 @@ class UserCsv:
         self.remark = remark
 ```
 
-① `@csv_file("用户列表", delimiter=",", encoding="utf-8-sig")`：文件名标注"用户列表"，用逗号分隔，编码带 BOM。  
+① `@CsvFile("用户列表", delimiter=",", encoding="utf-8-sig")`：文件名标注"用户列表"，用逗号分隔，编码带 BOM。  
 ② `@CsvProperty("用户ID", order=1)`：告诉框架第 1 列的表头是"用户ID"。  
 ③ `@CsvIgnore()`：`remark` 不参与读写。
 
@@ -225,7 +225,7 @@ rows2 = read_csv("users.csv", UserCsv)
 | `from spring.excel import ...` | `from spring.csv import ...` |
 | `@ExcelProperty` | `@CsvProperty` |
 | `@ExcelIgnore` | `@CsvIgnore` |
-| `@excel_sheet` | `@csv_file` |
+| `@ExcelSheet` | `@CsvFile` |
 | `EasyExcel` | `EasyCsv` |
 | `read_excel` / `write_excel` | `read_csv` / `write_csv` |
 
@@ -233,9 +233,9 @@ rows2 = read_csv("users.csv", UserCsv)
 
 ```python
 # Excel 版本
-from spring.excel import ExcelProperty, ExcelIgnore, excel_sheet
+from spring.excel import ExcelProperty, ExcelIgnore, ExcelSheet
 
-@excel_sheet("用户列表")
+@ExcelSheet("用户列表")
 class UserExcel:
     id = ExcelProperty("用户ID", order=1)
     name = ExcelProperty("姓名", order=2)
@@ -244,9 +244,9 @@ class UserExcel:
 
 ```python
 # CSV 版本（只需改 3 行）
-from spring.csv import CsvProperty, CsvIgnore, csv_file
+from spring.csv import CsvProperty, CsvIgnore, CsvFile
 
-@csv_file("用户列表", encoding="utf-8-sig")
+@CsvFile("用户列表", encoding="utf-8-sig")
 class UserCsv:
     id = CsvProperty("用户ID", order=1)
     name = CsvProperty("姓名", order=2)
@@ -271,10 +271,10 @@ CSV 本身就是纯文本，理论上不存在精度丢失。Excel 会把 `76543
 
 ```python
 from decimal import Decimal
-from spring.csv import CsvProperty, csv_file
+from spring.csv import CsvProperty, CsvFile
 
 # 方式 1：用 big_number=True，强制按字符串读写
-@csv_file("data")
+@CsvFile("data")
 class Data1:
     uid = CsvProperty("UID", order=1, big_number=True)
     # uid=12345678901234567890 → 原样写入，原样读取
@@ -282,7 +282,7 @@ class Data1:
         self.uid = uid
 
 # 方式 2：字段类型用 Decimal（自动用 BigDecimalConverter）
-@csv_file("data")
+@CsvFile("data")
 class Data2:
     uid = CsvProperty("UID", order=1)
     def __init__(self, uid: Decimal = None):
@@ -309,7 +309,7 @@ CSV 模块**复用 Excel 模块的转换器**（`spring.excel.converters`）。�
 自定义转换器示例：
 
 ```python
-from spring.csv import Converter, CsvProperty, csv_file
+from spring.csv import Converter, CsvProperty, CsvFile
 
 
 # 自定义转换器：列表 ↔ 分号分隔的字符串
@@ -325,7 +325,7 @@ class TagsConverter(Converter):
         # "python;java" → ["python", "java"]
 
 
-@csv_file("文章")
+@CsvFile("文章")
 class Article:
     title = CsvProperty("标题", order=1)
     tags = CsvProperty("标签", order=2, converter=TagsConverter())
@@ -359,10 +359,10 @@ class Article:
 
 ```python
 # ❌ 乱码风险
-@csv_file(encoding="utf-8")  # Windows Excel 打开可能乱码
+@CsvFile(encoding="utf-8")  # Windows Excel 打开可能乱码
 
 # ✅ 推荐
-@csv_file(encoding="utf-8-sig")  # Windows Excel 能正确显示中文
+@CsvFile(encoding="utf-8-sig")  # Windows Excel 能正确显示中文
 ```
 
 ---
@@ -392,7 +392,7 @@ rows = read_csv("data.csv", User, encoding="utf-8-sig")  # 一致
 ✅ **实际情况**：CSV 模块有转换器，会根据字段的**类型注解**自动转换。`age: int` 读回来就是 `int`，`created_at: datetime` 读回来就是 `datetime` 对象。不需要手动转。
 
 ```python
-@csv_file("data")
+@CsvFile("data")
 class User:
     age = CsvProperty("年龄", order=1)
     def __init__(self, age: int = 0):  # 类型注解 = int
@@ -412,13 +412,13 @@ print(type(rows[0].age))  # 输出: <class 'int'> —— 自动转好了！
 
 ```python
 # Tab 分隔的 CSV（也叫 TSV）
-@csv_file("data", delimiter="\t")
+@CsvFile("data", delimiter="\t")
 class Data:
     name = CsvProperty("姓名", order=1)
     ...
 
 # 分号分隔
-@csv_file("data", delimiter=";")
+@CsvFile("data", delimiter=";")
 class Data:
     ...
 ```
@@ -444,7 +444,7 @@ class Data:
 **解决**：编码使用 `utf-8-sig`（带 BOM 标记，Excel 能识别）：
 
 ```python
-@csv_file(encoding="utf-8-sig")
+@CsvFile(encoding="utf-8-sig")
 class User:
     ...
 
@@ -511,9 +511,9 @@ rows = EasyCsv.read("file.csv", head=User).has_header(True).doRead()
 **解决**：
 
 ```python
-@csv_file(line_terminator="\r\n")  # Windows 换行（默认）
+@CsvFile(line_terminator="\r\n")  # Windows 换行（默认）
 # 或
-@csv_file(line_terminator="\n")    # Linux 换行
+@CsvFile(line_terminator="\n")    # Linux 换行
 ```
 
 ---
@@ -560,7 +560,7 @@ class Demo:
     def remark(self): ...
 ```
 
-### `@csv_file` —— 设置 CSV 文件的全局配置
+### `@CsvFile` —— 设置 CSV 文件的全局配置
 
 | 参数 | 默认 | 大白话 |
 |------|------|--------|
@@ -571,10 +571,10 @@ class Demo:
 | `quote_char` | `"` | 引用字符，字段含逗号时自动加引号包裹 |
 | `line_terminator` | `\r\n` | 行终止符，Windows 默认 `\r\n` |
 
-> **`@CsvFile` 和 `@csv_file` 有什么区别？** 完全等价。`CsvFile` 是类（既可作装饰器也可作元数据类），`csv_file` 是它的函数别名（向后兼容）。推荐用 `@CsvFile`（大写，与 `@ExcelSheet` / ORM `@Table` 风格一致）。
+> **提示：** `CsvFile` 是类级装饰器（也可作元数据类使用），与 ORM `@Table` 风格一致。框架还提供了小写函数别名向后兼容，推荐统一用大写。
 >
 > ```python
-> from spring.csv import CsvFile  # 等价于 csv_file
+> from spring.csv import CsvFile
 >
 > @CsvFile("用户列表", delimiter=",", encoding="utf-8-sig")
 > class DemoData:
@@ -587,7 +587,7 @@ class Demo:
 
 | 文件 | 职责 |
 |------|------|
-| `spring/csv/annotations.py` | `@CsvProperty` / `@CsvIgnore` / `@CsvFile` / `@csv_file` 注解定义 |
+| `spring/csv/annotations.py` | `@CsvProperty` / `@CsvIgnore` / `@CsvFile` 注解定义 |
 | `spring/csv/converters.py` | 复用 Excel 模块的 `Converter` 接口和内置转换器 |
 | `spring/csv/reader.py` | `CsvReader` 读取引擎 |
 | `spring/csv/writer.py` | `CsvWriter` 写入引擎 |
@@ -603,7 +603,7 @@ class Demo:
 ```python
 from spring.csv import (
     # 注解
-    CsvProperty, CsvIgnore, CsvFile, csv_file,
+    CsvProperty, CsvIgnore, CsvFile,
     # 引擎
     EasyCsv, read_csv, write_csv,
     # 转换器（复用 Excel 模块，也可从 spring.csv 导入）
@@ -657,7 +657,7 @@ A: 必须一致。用 `utf-8-sig` 写就用 `utf-8-sig` 读，用 `utf-8` 写就
 
 **Q: CSV 模块和 Excel 模块的代码可以共用吗？**
 
-A: 几乎可以。把 `spring.excel` 改成 `spring.csv`，`ExcelProperty` 改成 `CsvProperty`，`@excel_sheet` 改成 `@csv_file` 就行。功能上会少掉样式和多 Sheet。
+A: 几乎可以。把 `spring.excel` 改成 `spring.csv`，`ExcelProperty` 改成 `CsvProperty`，`@ExcelSheet` 改成 `@CsvFile` 就行。功能上会少掉样式和多 Sheet。
 
 **Q: CSV 模块和 ORM 模块有什么关系？**
 
@@ -668,7 +668,7 @@ A: 没有直接关系。CSV 管文件读写，ORM 管数据库操作。你可以
 A: 只需三步：
 1. `from spring.excel` → `from spring.csv`
 2. `ExcelProperty` → `CsvProperty`、`ExcelIgnore` → `CsvIgnore`
-3. `@excel_sheet` → `@csv_file`
+3. `@ExcelSheet` → `@CsvFile`
 
 ---
 

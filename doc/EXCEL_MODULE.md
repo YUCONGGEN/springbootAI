@@ -112,16 +112,16 @@ python -m pip install "springbootAI[excel]"
 
 > **@ExcelProperty 是什么？** 给 Python 类属性贴标签，告诉框架"这个属性对应 Excel 里哪一列、表头叫什么"。好比你在箱子上贴快递单——"这个箱子里装的是姓名，放在第 2 个位置"。  
 > **@ExcelIgnore 是什么？** 告诉框架"这一列跳过，不导入也不导出"。好比快递单上有个"内部备注"你不希望寄件人看到。  
-> **@excel_sheet 是什么？** 设置这个 Excel 文件的全局配置——工作表的名称、表头在第几行、要不要冻结表头。
+> **@ExcelSheet 是什么？** 设置这个 Excel 文件的全局配置——工作表的名称、表头在第几行、要不要冻结表头。
 
 ```python
 # demo/excel_entity.py
 from datetime import datetime
 from decimal import Decimal
-from spring.excel import ExcelProperty, ExcelIgnore, excel_sheet, BigDecimalConverter
+from spring.excel import ExcelProperty, ExcelIgnore, ExcelSheet, BigDecimalConverter
 
 
-@excel_sheet("用户列表", freeze_head=True, auto_width=True)
+@ExcelSheet("用户列表", freeze_head=True, auto_width=True)
 class UserExport:
     # 长 ID：big_number=True 强制按文本写入，防止 Excel 把 76543210987654321 变成 7.65432E+16
     id = ExcelProperty("用户ID", order=1, big_number=True)
@@ -155,7 +155,7 @@ class UserExport:
         self.remark = remark
 ```
 
-① `@excel_sheet("用户列表")` 设置 Sheet 名字叫"用户列表"，冻结表头（滚动时表头始终可见），自动列宽。  
+① `@ExcelSheet("用户列表")` 设置 Sheet 名字叫"用户列表"，冻结表头（滚动时表头始终可见），自动列宽。  
 ② `@ExcelProperty("用户ID", order=1, big_number=True)` 告诉框架：第 1 列表头叫"用户ID"，内容按文本写入。  
 ③ `@ExcelIgnore()` 告诉框架：`remark` 这个字段不参与读写。
 
@@ -371,7 +371,7 @@ id = ExcelProperty("用户ID", order=1, big_number=True)
 
 ```python
 # demo/custom_converter.py
-from spring.excel import Converter, ExcelProperty, excel_sheet
+from spring.excel import Converter, ExcelProperty, ExcelSheet
 
 
 # 自定义转换器：列表 ↔ 分号分隔的字符串
@@ -387,7 +387,7 @@ class TagsConverter(Converter):
         # "python;java" → ["python", "java"]
 
 
-@excel_sheet("文章列表")
+@ExcelSheet("文章列表")
 class Article:
     title = ExcelProperty("标题", order=1)
     tags = ExcelProperty("标签", order=2, converter=TagsConverter())
@@ -606,7 +606,7 @@ class Demo:
     def remark(self): ...
 ```
 
-### `@excel_sheet` —— 设置工作表的全局配置
+### `@ExcelSheet` —— 设置工作表的全局配置
 
 | 参数 | 默认 | 大白话 |
 |------|------|--------|
@@ -615,10 +615,10 @@ class Demo:
 | `freeze_head` | `True` | 冻结表头（滚动时表头始终可见） |
 | `auto_width` | `True` | 自动列宽 |
 
-> **`@ExcelSheet` 和 `@excel_sheet` 有什么区别？** 完全等价。`ExcelSheet` 是类（既可作装饰器也可作元数据类），`excel_sheet` 是它的函数别名（向后兼容）。推荐用 `@ExcelSheet`（大写，与 `@CsvFile` / ORM `@Table` 风格一致）。
+> **提示：** `ExcelSheet` 是类级装饰器（也可作元数据类使用），与 ORM `@Table` 风格一致。框架还提供了小写函数别名向后兼容，推荐统一用大写。
 >
 > ```python
-> from spring.excel import ExcelSheet  # 等价于 excel_sheet
+> from spring.excel import ExcelSheet
 >
 > @ExcelSheet("用户列表", freeze_head=True, auto_width=True)
 > class DemoData:
@@ -645,7 +645,7 @@ class Demo:
 ```python
 from spring.excel import (
     # 注解
-    ExcelProperty, ExcelIgnore, ExcelSheet, excel_sheet,
+    ExcelProperty, ExcelIgnore, ExcelSheet,
     # 转换器
     Converter, StringConverter, IntegerConverter, FloatConverter,
     BooleanConverter, DateStringConverter, BigDecimalConverter,
