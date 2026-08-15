@@ -615,6 +615,16 @@ class Demo:
 | `freeze_head` | `True` | 冻结表头（滚动时表头始终可见） |
 | `auto_width` | `True` | 自动列宽 |
 
+> **`@ExcelSheet` 和 `@excel_sheet` 有什么区别？** 完全等价。`ExcelSheet` 是类（既可作装饰器也可作元数据类），`excel_sheet` 是它的函数别名（向后兼容）。推荐用 `@ExcelSheet`（大写，与 `@CsvFile` / ORM `@Table` 风格一致）。
+>
+> ```python
+> from spring.excel import ExcelSheet  # 等价于 excel_sheet
+>
+> @ExcelSheet("用户列表", freeze_head=True, auto_width=True)
+> class DemoData:
+>     id = ExcelProperty("ID", order=1)
+> ```
+
 ---
 
 ## 内置转换器
@@ -635,7 +645,7 @@ class Demo:
 ```python
 from spring.excel import (
     # 注解
-    ExcelProperty, ExcelIgnore, excel_sheet,
+    ExcelProperty, ExcelIgnore, ExcelSheet, excel_sheet,
     # 转换器
     Converter, StringConverter, IntegerConverter, FloatConverter,
     BooleanConverter, DateStringConverter, BigDecimalConverter,

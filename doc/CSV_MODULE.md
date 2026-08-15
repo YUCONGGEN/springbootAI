@@ -571,13 +571,23 @@ class Demo:
 | `quote_char` | `"` | 引用字符，字段含逗号时自动加引号包裹 |
 | `line_terminator` | `\r\n` | 行终止符，Windows 默认 `\r\n` |
 
+> **`@CsvFile` 和 `@csv_file` 有什么区别？** 完全等价。`CsvFile` 是类（既可作装饰器也可作元数据类），`csv_file` 是它的函数别名（向后兼容）。推荐用 `@CsvFile`（大写，与 `@ExcelSheet` / ORM `@Table` 风格一致）。
+>
+> ```python
+> from spring.csv import CsvFile  # 等价于 csv_file
+>
+> @CsvFile("用户列表", delimiter=",", encoding="utf-8-sig")
+> class DemoData:
+>     id = CsvProperty("ID", order=1)
+> ```
+
 ---
 
 ## 模块组成
 
 | 文件 | 职责 |
 |------|------|
-| `spring/csv/annotations.py` | `@CsvProperty` / `@CsvIgnore` / `@csv_file` 注解定义 |
+| `spring/csv/annotations.py` | `@CsvProperty` / `@CsvIgnore` / `@CsvFile` / `@csv_file` 注解定义 |
 | `spring/csv/converters.py` | 复用 Excel 模块的 `Converter` 接口和内置转换器 |
 | `spring/csv/reader.py` | `CsvReader` 读取引擎 |
 | `spring/csv/writer.py` | `CsvWriter` 写入引擎 |
@@ -593,7 +603,7 @@ class Demo:
 ```python
 from spring.csv import (
     # 注解
-    CsvProperty, CsvIgnore, csv_file,
+    CsvProperty, CsvIgnore, CsvFile, csv_file,
     # 引擎
     EasyCsv, read_csv, write_csv,
     # 转换器（复用 Excel 模块，也可从 spring.csv 导入）
