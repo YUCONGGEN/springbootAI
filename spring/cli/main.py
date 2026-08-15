@@ -235,11 +235,27 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     # init 命令（复用 scaffold）
-    init_parser = subparsers.add_parser('init', help='初始化新项目（类似 Spring Initializr）')
-    init_parser.add_argument('project', help='项目名称/目标目录')
+    init_parser = subparsers.add_parser(
+        'init', help='初始化新项目（中文问答向导；可用 --non-interactive 关闭问答）'
+    )
+    init_parser.add_argument('project', nargs='?', help='项目名称/目标目录；交互模式可留空')
     init_parser.add_argument('--package', default=None, help='Python 包名')
-    init_parser.add_argument('--modules', default='web', help='启用的模块，逗号分隔')
-    init_parser.add_argument('--port', type=int, default=8080, help='服务端口')
+    init_parser.add_argument('--modules', default=None, help='模块：web,orm,ai,cloud,redis')
+    # Keep the unified command in sync with ``spring.cli.scaffold`` (8000).
+    init_parser.add_argument('--port', type=int, default=8000, help='服务端口（默认 8000）')
+    init_parser.add_argument('--database', choices=['none', 'sqlite', 'mysql', 'postgresql'], default=None, help='数据库类型')
+    init_parser.add_argument('--redis', dest='redis', action='store_true', default=None, help='启用 Redis')
+    init_parser.add_argument('--no-redis', dest='redis', action='store_false', help='关闭 Redis')
+    init_parser.add_argument('--ai', dest='ai', action='store_true', default=None, help='启用 AI 配置')
+    init_parser.add_argument('--no-ai', dest='ai', action='store_false', help='关闭 AI 配置')
+    init_parser.add_argument('--cloud', dest='cloud', action='store_true', default=None, help='启用 Cloud 配置')
+    init_parser.add_argument('--no-cloud', dest='cloud', action='store_false', help='关闭 Cloud 配置')
+    init_parser.add_argument('--docker', dest='docker', action='store_true', default=None, help='生成 Docker 文件')
+    init_parser.add_argument('--no-docker', dest='docker', action='store_false', help='不生成 Docker 文件')
+    init_parser.add_argument('--sample-crud', dest='sample_crud', action='store_true', default=None, help='生成 CRUD 示例')
+    init_parser.add_argument('--no-sample-crud', dest='sample_crud', action='store_false', help='不生成 CRUD 示例')
+    init_parser.add_argument('--interactive', action='store_true', help='强制进入中文问答')
+    init_parser.add_argument('--non-interactive', action='store_true', help='禁用问答，适合 CI')
 
     # run 命令
     run_parser = subparsers.add_parser('run', help='运行应用')
@@ -253,7 +269,7 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: List[str] | None = None) -> None:
+def main(argv: List[str] | None = None) -> int:
     """CLI 主入口（注册为 console_script: springbootai）。
 
     Args:
@@ -264,7 +280,7 @@ def main(argv: List[str] | None = None) -> None:
 
     if args.command is None:
         parser.print_help()
-        return
+        return 0
 
     if args.command == 'version':
         _cmd_version(args)
@@ -275,19 +291,49 @@ def main(argv: List[str] | None = None) -> None:
     elif args.command == 'init':
         # 复用 scaffold 的 main 函数
         from spring.cli.scaffold import main as scaffold_main
-        scaffold_argv = [args.project]
+        scaffold_argv = []
+        if args.project:
+            scaffold_argv.append(args.project)
         if args.package:
             scaffold_argv.extend(['--package', args.package])
-        if args.modules:
+        if args.modules is not None:
             scaffold_argv.extend(['--modules', args.modules])
-        if args.port:
+        if args.port is not None:
             scaffold_argv.extend(['--port', str(args.port)])
-        scaffold_main(scaffold_argv)
+        if args.database is not None:
+            scaffold_argv.extend(['--database', args.database])
+        if args.redis is True:
+            scaffold_argv.append('--redis')
+        elif args.redis is False:
+            scaffold_argv.append('--no-redis')
+        if args.ai is True:
+            scaffold_argv.append('--ai')
+        elif args.ai is False:
+            scaffold_argv.append('--no-ai')
+        if args.cloud is True:
+            scaffold_argv.append('--cloud')
+        elif args.cloud is False:
+            scaffold_argv.append('--no-cloud')
+        if args.docker is True:
+            scaffold_argv.append('--docker')
+        elif args.docker is False:
+            scaffold_argv.append('--no-docker')
+        if args.sample_crud is True:
+            scaffold_argv.append('--sample-crud')
+        elif args.sample_crud is False:
+            scaffold_argv.append('--no-sample-crud')
+        if args.interactive:
+            scaffold_argv.append('--interactive')
+        if args.non_interactive:
+            scaffold_argv.append('--non-interactive')
+        return scaffold_main(scaffold_argv)
     elif args.command == 'run':
         _cmd_run(args)
     elif args.command == 'docs':
         _cmd_docs(args)
 
+    return 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

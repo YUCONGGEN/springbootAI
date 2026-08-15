@@ -1,7 +1,7 @@
 from typing import Optional, Type, Any, List, Dict, get_type_hints
 import os
 import sys
-from spring.context.bean_factory import BeanFactory
+from spring.context.bean_factory import BeanFactory, MissingBeanDependencyError
 from spring.context.bean_definition import BeanDefinition
 from spring.context.scanner import ComponentScanner
 from spring.annotations.core import (
@@ -34,8 +34,40 @@ import inspect
 class ApplicationContext:
     _current_context: Optional['ApplicationContext'] = None
 
+    # These integrations expose connection failures through their own exception
+    # hierarchies instead of the built-in ``ConnectionError``/``TimeoutError``.
+    # Keep this deliberately narrow: a lifecycle fallback must not hide generic
+    # driver, validation, or application errors merely because they originate
+    # in an optional third-party package.
+    _EXTERNAL_CONNECTIVITY_ERROR_TYPES = frozenset({
+        ('redis.exceptions', 'ConnectionError'),
+        ('redis.exceptions', 'TimeoutError'),
+        ('pika.exceptions', 'AMQPConnectionError'),
+        ('pika.exceptions', 'AMQPHeartbeatTimeout'),
+        ('pika.exceptions', 'ConnectionClosedByBroker'),
+        ('kafka.errors', 'NoBrokersAvailable'),
+        ('kafka.errors', 'KafkaConnectionError'),
+        ('kafka.errors', 'KafkaTimeoutError'),
+        ('pymysql.err', 'InterfaceError'),
+        ('pymysql.err', 'OperationalError'),
+        ('psycopg2', 'InterfaceError'),
+        ('psycopg2', 'OperationalError'),
+        ('psycopg', 'InterfaceError'),
+        ('psycopg', 'OperationalError'),
+        ('sqlalchemy.exc', 'DisconnectionError'),
+        ('sqlalchemy.exc', 'InvalidatePoolError'),
+        ('sqlalchemy.exc', 'OperationalError'),
+        ('sqlalchemy.exc', 'TimeoutError'),
+        ('requests.exceptions', 'ConnectionError'),
+        ('requests.exceptions', 'ConnectTimeout'),
+        ('requests.exceptions', 'ReadTimeout'),
+        ('httpx', 'ConnectError'),
+        ('httpx', 'ConnectTimeout'),
+        ('httpx', 'ReadTimeout'),
+        ('httpx', 'PoolTimeout'),
+    })
+
     def __init__(self, main_class: Type, config_loader: Optional[ConfigLoader] = None):
-        self.main_class = main_class
         ApplicationContext._current_context = self
         
         # 确保main_class是一个类
@@ -46,10 +78,25 @@ class ApplicationContext:
                     if hasattr(annotation, '_original_class'):
                         main_class = annotation._original_class
                         break
-        
-        main_class_file = inspect.getfile(main_class)
-        main_class_dir = os.path.dirname(os.path.abspath(main_class_file))
-        context_config_loader = config_loader or ConfigLoader(base_path=main_class_dir)
+
+        # Keep the normalized class on the context.  Decorators may expose a
+        # callable wrapper carrying ``_original_class``; retaining the wrapper
+        # here makes package scanning and annotation lookup inconsistent.
+        self.main_class = main_class
+
+        if config_loader is not None:
+            context_config_loader = config_loader
+        else:
+            # ``inspect.getfile`` raises for built-in/dynamically-created
+            # classes.  Such classes are valid in tests and in embedding
+            # scenarios; fall back to the process working directory so the
+            # context can still start with the normal ConfigLoader defaults.
+            try:
+                main_class_file = inspect.getfile(main_class)
+            except (TypeError, OSError):
+                main_class_file = os.path.join(os.getcwd(), "__main__.py")
+            main_class_dir = os.path.dirname(os.path.abspath(main_class_file))
+            context_config_loader = ConfigLoader(base_path=main_class_dir)
         self.config_loader = set_global_config_loader(context_config_loader)
         self.bean_factory = BeanFactory(self.config_loader)
         self.event_publisher = ApplicationEventPublisher()
@@ -83,6 +130,11 @@ class ApplicationContext:
         self.scanner = ComponentScanner(self)
         self._scheduler = None
         self._started = False
+        # Beans whose optional dependencies could not be created while the
+        # application is running in non-fail-fast mode.  Lifecycle scanners
+        # consult this set so one unavailable integration does not prevent
+        # unrelated web endpoints from starting.
+        self._unavailable_beans: Dict[str, Exception] = {}
         from spring.utils.logger import SpringLogger
         self.logger = SpringLogger()
 
@@ -91,12 +143,101 @@ class ApplicationContext:
         """Return the currently active application context, if any."""
         return cls._current_context
 
+    def _startup_fail_fast(self) -> bool:
+        """Return whether lifecycle bean failures should abort startup."""
+        try:
+            config = self.config_loader.get_config()
+        except Exception:
+            config = {}
+        if not isinstance(config, dict):
+            return False
+
+        startup = config.get('startup')
+        if isinstance(startup, dict) and 'fail_fast' in startup:
+            value = startup.get('fail_fast')
+            if isinstance(value, str):
+                return value.strip().lower() in {'true', '1', 'yes', 'on'}
+            return bool(value)
+
+        spring = config.get('spring')
+        profiles = spring.get('profiles') if isinstance(spring, dict) else {}
+        active = profiles.get('active', 'default') if isinstance(profiles, dict) else 'default'
+        return str(active).strip().lower() in {'prod', 'production'}
+
+    def _get_lifecycle_bean(self, bean_name: str, phase: str):
+        """Resolve a bean for startup bookkeeping, honoring ``fail_fast``.
+
+        Enterprise integrations are often optional (for example a MySQL
+        mapper when the local developer has no MySQL server).  In tolerant
+        mode, remember only dependency/import/connection failures and let
+        other lifecycle phases proceed; application logic errors still
+        propagate.  In production/fail-fast mode every failure propagates.
+        """
+        unavailable_beans = getattr(self, '_unavailable_beans', None)
+        if unavailable_beans is None:
+            unavailable_beans = self._unavailable_beans = {}
+        if bean_name in unavailable_beans:
+            return None
+        try:
+            return self.bean_factory.get_bean(bean_name)
+        except Exception as exc:
+            if self._startup_fail_fast():
+                raise
+            if not self._is_tolerable_lifecycle_error(exc):
+                # ``fail_fast=false`` is intended for unavailable optional
+                # integrations, not for hiding arbitrary application bugs in
+                # constructors, post-construct hooks, or validation.
+                raise
+            unavailable_beans[bean_name] = exc
+            logger = getattr(self, 'logger', None)
+            if logger is not None:
+                logger.warning(f"Skipping bean '{bean_name}' during {phase}: {exc}")
+            return None
+
+    @classmethod
+    def _is_tolerable_lifecycle_error(cls, exc: Exception) -> bool:
+        """Return whether a lifecycle failure is an optional dependency outage.
+
+        Client libraries often wrap the actual network exception in a generic
+        ``RuntimeError`` or a framework-specific outer exception.  Walk the
+        explicit exception chain, but classify only built-in connection errors
+        and a small, module-and-type whitelist for supported integrations.
+        """
+        seen = set()
+        current = exc
+        while isinstance(current, Exception) and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, (
+                MissingBeanDependencyError,
+                ImportError,
+                ConnectionError,
+                TimeoutError,
+            )):
+                return True
+
+            for error_type in type(current).__mro__:
+                if (
+                    error_type.__module__, error_type.__name__
+                ) in cls._EXTERNAL_CONNECTIVITY_ERROR_TYPES:
+                    return True
+
+            next_error = current.__cause__
+            if next_error is None and not current.__suppress_context__:
+                next_error = current.__context__
+            current = next_error
+        return False
+
+    def is_bean_unavailable(self, bean_name: str) -> bool:
+        """Return whether tolerant startup skipped ``bean_name``."""
+        return bean_name in self._unavailable_beans
+
     def refresh(self) -> None:
         if self._started:
             return
 
         # 记录刷新前的 Bean 名快照，失败时回滚到该状态，避免部分 Bean 已注册导致不一致
         snapshot = set(self.bean_factory.get_bean_names()) if hasattr(self.bean_factory, 'get_bean_names') else set()
+        self._unavailable_beans.clear()
         try:
             self._load_config()
             self._scan_components()
@@ -123,26 +264,60 @@ class ApplicationContext:
         - 关闭已初始化的连接池等资源
         """
         try:
-            # 停止定时任务（若已启动）
-            if self._scheduler is not None:
-                try:
-                    self._scheduler.shutdown(wait=False)
-                except Exception:
-                    pass
-                self._scheduler = None
+            # 停止定时任务（若已启动）。Spring's local scheduler exposes
+            # ``stop_all``; retain the ``shutdown`` fallback for custom
+            # schedulers supplied by integrations.
+            self._stop_scheduler()
 
             # 移除本次新增的 Bean
             current_names = set(self.bean_factory.get_bean_names()) if hasattr(self.bean_factory, 'get_bean_names') else set()
             for name in current_names - snapshot:
                 try:
+                    # Destroy before removing the definition; BeanFactory's
+                    # normal destroy path needs the definition to locate
+                    # custom close methods and @PreDestroy hooks.
+                    self.bean_factory.destroy_bean(name)
+                except Exception:
+                    # A broken destructor must not prevent the remaining
+                    # newly-created beans from being cleaned up.
+                    pass
+                try:
                     if hasattr(self.bean_factory, 'remove_bean_definition'):
                         self.bean_factory.remove_bean_definition(name)
                     elif hasattr(self.bean_factory, '_bean_definitions'):
                         self.bean_factory._bean_definitions.pop(name, None)
+                        if hasattr(self.bean_factory, '_bean_instances'):
+                            self.bean_factory._bean_instances.pop(name, None)
+                        if hasattr(self.bean_factory, '_type_to_name'):
+                            for bean_type, mapped_name in list(self.bean_factory._type_to_name.items()):
+                                if mapped_name == name:
+                                    self.bean_factory._type_to_name.pop(bean_type, None)
                 except Exception:
                     pass
         except Exception:
             pass  # 回滚失败不应掩盖原始异常
+
+    def _stop_scheduler(self) -> None:
+        """Stop scheduled work without letting teardown mask the root error."""
+        scheduler = self._scheduler
+        self._scheduler = None
+        if scheduler is None:
+            return
+
+        try:
+            stop_all = getattr(scheduler, 'stop_all', None)
+            if callable(stop_all):
+                stop_all()
+                return
+
+            shutdown = getattr(scheduler, 'shutdown', None)
+            if callable(shutdown):
+                try:
+                    shutdown(wait=False)
+                except TypeError:
+                    shutdown()
+        except Exception as exc:
+            self.logger.warning(f"Failed to stop scheduled tasks: {exc}")
 
     def _load_config(self) -> None:
         self.config_loader.load_config()
@@ -341,7 +516,9 @@ class ApplicationContext:
         for bean_name in self.bean_factory.get_bean_names():
             definition = self.bean_factory.get_bean_definition(bean_name)
             if definition and Configuration._annotation_type in definition.annotations:
-                config_instance = self.bean_factory.get_bean(bean_name)
+                config_instance = self._get_lifecycle_bean(bean_name, 'configuration')
+                if config_instance is None:
+                    continue
                 self._register_beans_from_configuration(config_instance, definition)
 
     def _register_beans_from_configuration(self, config_instance: Any, config_definition: BeanDefinition) -> None:
@@ -396,7 +573,9 @@ class ApplicationContext:
                 lazy_annotations = definition.annotations.get(Lazy._annotation_type, [])
                 if any(annotation.value for annotation in lazy_annotations):
                     continue
-                instance = self.bean_factory.get_bean(bean_name)
+                instance = self._get_lifecycle_bean(bean_name, 'configuration-properties')
+                if instance is None:
+                    continue
                 self._apply_configuration_properties(instance, definition)
 
     def _apply_configuration_properties(self, instance: Any, definition: BeanDefinition) -> None:
@@ -434,7 +613,15 @@ class ApplicationContext:
                     lazy_annotations = definition.annotations.get(Lazy._annotation_type, [])
                     if any(annotation.value for annotation in lazy_annotations):
                         continue
-                instance = self.bean_factory.get_bean(bean_name)
+                resolver = getattr(self, '_get_lifecycle_bean', None)
+                if callable(resolver):
+                    instance = resolver(bean_name, 'value-injection')
+                else:
+                    # Keep lightweight test/embedding stubs compatible when
+                    # they provide only a BeanFactory-like object.
+                    instance = self.bean_factory.get_bean(bean_name)
+                if instance is None:
+                    continue
                 bean_class = instance.__class__
 
                 # 处理构造函数参数中的@Value注解
@@ -487,9 +674,25 @@ class ApplicationContext:
                                             None,
                                         ),
                                     )
-            except Exception:
-                # 跳过无法实例化的bean（如配置类等）
-                continue
+            except Exception as exc:
+                # Configuration expression errors and application lifecycle
+                # bugs must remain visible.  Only dependency/import/connection
+                # failures are degradable in tolerant startup mode.
+                tolerable = getattr(self, '_is_tolerable_lifecycle_error', None)
+                if (
+                    callable(tolerable)
+                    and not self._startup_fail_fast()
+                    and tolerable(exc)
+                ):
+                    unavailable = getattr(self, '_unavailable_beans', None)
+                    if unavailable is not None:
+                        unavailable[bean_name] = exc
+                    continue
+                # Preserve the historical best-effort behavior for minimal
+                # BeanFactory stubs that do not expose lifecycle helpers.
+                if not callable(tolerable):
+                    continue
+                raise
 
     def _register_scheduled_tasks(self) -> None:
         from spring.scheduling.scheduler import Scheduler
@@ -502,7 +705,9 @@ class ApplicationContext:
             if not definition:
                 continue
             
-            instance = self.bean_factory.get_bean(bean_name)
+            instance = self._get_lifecycle_bean(bean_name, 'scheduled-task')
+            if instance is None:
+                continue
             bean_class = instance.__class__
             
             for name, method in inspect.getmembers(bean_class):
@@ -531,7 +736,9 @@ class ApplicationContext:
             _TxEventListener = None
 
         for bean_name in self.bean_factory.get_bean_names():
-            instance = self.bean_factory.get_bean(bean_name)
+            instance = self._get_lifecycle_bean(bean_name, 'event-listener')
+            if instance is None:
+                continue
             for name, method in inspect.getmembers(instance.__class__):
                 if name.startswith('_') or not inspect.isfunction(method):
                     continue
@@ -622,9 +829,12 @@ class ApplicationContext:
         return refreshed
 
     def destroy(self) -> None:
-        self.bean_factory.destroy_all()
-        self.event_publisher.clear()
-        if self.tx_event_publisher is not None:
-            self.tx_event_publisher.clear()
-        if ApplicationContext._current_context is self:
-            ApplicationContext._current_context = None
+        self._stop_scheduler()
+        try:
+            self.bean_factory.destroy_all()
+        finally:
+            self.event_publisher.clear()
+            if self.tx_event_publisher is not None:
+                self.tx_event_publisher.clear()
+            if ApplicationContext._current_context is self:
+                ApplicationContext._current_context = None

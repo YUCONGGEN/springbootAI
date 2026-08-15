@@ -353,6 +353,11 @@ class MyBatisConfigurer:
                 bean_class=SqlSessionFactory,
                 bean_name='sqlSessionFactory',
                 scope='singleton',
+                # The factory owns the connection pool.  Register its close
+                # method with the container so ApplicationContext.destroy()
+                # releases SQLite/MySQL connections even when no ASGI
+                # shutdown event is involved (tests, reloaders, embedding).
+                destroy_method='close',
             )
         )
         bean_factory.register_instance('sqlSessionFactory', self.sql_session_factory)

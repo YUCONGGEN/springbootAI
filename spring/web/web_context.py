@@ -53,6 +53,26 @@ class _SyncHandlerOverloaded(RuntimeError):
 
 
 class WebApplicationContext:
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        """安全转换整数，兼容 dict 格式的配置值。"""
+        if isinstance(value, dict):
+            value = value.get('value') or value.get('size') or default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        """安全转换浮点数，兼容 dict 格式的配置值。"""
+        if isinstance(value, dict):
+            value = value.get('value') or value.get('timeout') or default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
     def __init__(self, application_context: ApplicationContext, static_dir: str = None,
                  interceptor_registry: Any = None):
         self.application_context = application_context
@@ -75,10 +95,10 @@ class WebApplicationContext:
         self._interceptor_registry = interceptor_registry
         self._interceptors_registered = False
         thread_pool = self._get_thread_pool_config()
-        self._sync_max_workers = max(1, int(thread_pool.get('max_workers', 40)))
-        self._sync_max_queue = max(0, int(thread_pool.get('max_queue', 100)))
+        self._sync_max_workers = max(1, self._safe_int(thread_pool.get('max_workers', 40)))
+        self._sync_max_queue = max(0, self._safe_int(thread_pool.get('max_queue', 100)))
         self._sync_queue_timeout = max(
-            0.001, float(thread_pool.get('queue_timeout', 0.1))
+            0.001, self._safe_float(thread_pool.get('queue_timeout', 0.1))
         )
         self._sync_capacity = asyncio.Semaphore(
             self._sync_max_workers + self._sync_max_queue
@@ -231,7 +251,20 @@ class WebApplicationContext:
                 continue
 
             self._logger.info(f"Found controller: {bean_name}")
-            controller_instance = self.application_context.get_bean(bean_name)
+            resolver = getattr(self.application_context, '_get_lifecycle_bean', None)
+            if callable(resolver):
+                controller_instance = resolver(bean_name, 'controller')
+            else:
+                try:
+                    controller_instance = self.application_context.get_bean(bean_name)
+                except Exception:
+                    self._logger.warning(
+                        "Skipping unavailable controller bean '%s'", bean_name,
+                        exc_info=True,
+                    )
+                    continue
+            if controller_instance is None:
+                continue
             controller_class = controller_instance.__class__
             self._controller_classes.append(controller_class)
 
@@ -246,7 +279,12 @@ class WebApplicationContext:
             for method_name in self._iter_handler_names(controller_class):
                 method = getattr(controller_instance, method_name)
                 self._logger.info(f"Registering method: {method_name}")
-                self._register_handler(controller_instance, method.__func__, class_path)
+                # Bound instance methods expose ``__func__``; static methods are
+                # plain callables and do not.  Keep the underlying function when
+                # available, otherwise pass the callable directly so controller
+                # registration cannot fail on a valid ``@staticmethod`` handler.
+                handler = getattr(method, "__func__", method)
+                self._register_handler(controller_instance, handler, class_path)
 
     @staticmethod
     def _iter_handler_names(controller_class: Type):
@@ -260,6 +298,12 @@ class WebApplicationContext:
             for name, member in vars(klass).items():
                 if name.startswith('_') or name in seen:
                     continue
+                # ``vars(cls)`` exposes ``staticmethod``/``classmethod`` as
+                # descriptor objects rather than plain functions.  Unwrap the
+                # descriptor before checking it so valid annotated handlers
+                # are not silently omitted during route registration.
+                if isinstance(member, (staticmethod, classmethod)):
+                    member = member.__func__
                 if inspect.isfunction(member) or inspect.ismethod(member):
                     seen.add(name)
                     yield name
@@ -518,14 +562,26 @@ class WebApplicationContext:
                     
                     handler = self._find_exception_handler(e)
                     if handler is not None:
-                        handler_result = handler(e)
-                        if inspect.iscoroutine(handler_result):
-                            handler_result = await handler_result
-                        if isinstance(handler_result, Result):
-                            return self._result_response(handler_result)
-                        return self._result_response(
-                            Result.error(message="Internal server error", code=500)
-                        )
+                        try:
+                            handler_result = handler(e)
+                            if inspect.isawaitable(handler_result):
+                                handler_result = await handler_result
+                            if isinstance(handler_result, Result):
+                                return self._result_response(handler_result)
+                            return self._result_response(
+                                Result.error(message="Internal server error", code=500)
+                            )
+                        except Exception:
+                            # An exception handler is application code; a bug in
+                            # it must not escape the endpoint and take down the
+                            # request task.  Preserve the original failure in logs
+                            # while returning the same generic response policy.
+                            self._logger.exception(
+                                "Exception handler failed for %s", type(e).__name__
+                            )
+                            return self._result_response(
+                                Result.error(message="Internal server error", code=500)
+                            )
                     status_code = getattr(e, 'status_code', None)
                     if status_code == 401:
                         return self._result_response(Result.unauthorized(message=str(e)))
@@ -617,7 +673,21 @@ class WebApplicationContext:
                 continue
 
             if ControllerAdvice._annotation_type in definition.annotations:
-                advice_instance = self.application_context.get_bean(bean_name)
+                resolver = getattr(self.application_context, '_get_lifecycle_bean', None)
+                if callable(resolver):
+                    advice_instance = resolver(bean_name, 'exception-handler')
+                else:
+                    try:
+                        advice_instance = self.application_context.get_bean(bean_name)
+                    except Exception:
+                        self._logger.warning(
+                            "Skipping unavailable exception handler bean '%s'",
+                            bean_name,
+                            exc_info=True,
+                        )
+                        continue
+                if advice_instance is None:
+                    continue
                 advice_class = advice_instance.__class__
 
                 for method_name, method in inspect.getmembers(advice_class):
@@ -632,6 +702,14 @@ class WebApplicationContext:
         from fastapi.middleware.cors import CORSMiddleware
 
         configured_cors = self.application_context.get_value('server.cors', {}) or {}
+        # Invalid/null CORS sections should not prevent the application from
+        # starting.  Treat non-mapping values as an empty configuration and let
+        # the framework defaults apply.
+        if not isinstance(configured_cors, dict):
+            self._logger.warning(
+                "Ignoring invalid server.cors configuration (expected an object)"
+            )
+            configured_cors = {}
         cors_config = {
             "allow_origins": configured_cors.get('allow_origins', []),
             "allow_credentials": configured_cors.get('allow_credentials', False),
@@ -746,27 +824,32 @@ class WebApplicationContext:
     def _register_shutdown_handlers(self) -> None:
         def close_resources() -> None:
             try:
-                session_factory = self.application_context.get_bean('sqlSessionFactory')
-            except Exception:
-                session_factory = None
-            if session_factory is not None:
-                close = getattr(session_factory, 'close', None)
-                if callable(close):
-                    close()
-
-            try:
                 from spring.messaging.rabbitmq import rabbitmq_client
                 rabbitmq_client.close()
             except ImportError:
                 pass
+            except Exception as exc:
+                self._logger.warning("RabbitMQ cleanup failed during shutdown: %s", exc)
 
             try:
                 from spring.cloud.feign import FeignClientFactory
                 FeignClientFactory.close_all()
             except ImportError:
                 pass
+            except Exception as exc:
+                self._logger.warning("Feign cleanup failed during shutdown: %s", exc)
 
-            self.application_context.bean_factory.destroy_all()
+            # ApplicationContext owns more than BeanFactory instances: it also
+            # owns scheduled tasks, event listeners, and the active-context
+            # reference.  Calling destroy_all() directly leaves those resources
+            # alive after an ASGI lifespan shutdown.
+            destroy_context = getattr(self.application_context, 'destroy', None)
+            if callable(destroy_context):
+                destroy_context()
+            else:
+                # Preserve compatibility with lightweight test/embedding
+                # contexts that only provide a BeanFactory-like object.
+                self.application_context.bean_factory.destroy_all()
 
         self.fastapi_app.router.add_event_handler('shutdown', close_resources)
 

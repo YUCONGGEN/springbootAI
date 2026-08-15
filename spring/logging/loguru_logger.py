@@ -112,7 +112,14 @@ class SpringLogger:
                  rotation: str = "100 MB"):
         if hasattr(self, '_initialized'):
             return
-        self.level = level.upper()
+        # 兼容 dict 格式的 level（Spring Boot 风格）
+        if isinstance(level, dict):
+            level = level.get('root') or next(
+                (v for v in level.values() if isinstance(v, str)), 'INFO')
+        if isinstance(level, str):
+            self.level = level.upper()
+        else:
+            self.level = 'INFO'
         self.log_dir = log_dir
         self.retention = retention
         self.rotation = rotation
@@ -155,7 +162,14 @@ class SpringLogger:
             LoggingConfigError: 日志目录不可创建或不可写入（strict 模式）
         """
         if level is not None:
-            self.level = level.upper()
+            # 兼容两种配置格式：
+            # 1) 字符串：logging.level: INFO
+            # 2) dict（Spring Boot 风格）：logging.level: {root: INFO, spring: DEBUG}
+            if isinstance(level, dict):
+                level = level.get('root') or next(
+                    (v for v in level.values() if isinstance(v, str)), None)
+            if isinstance(level, str):
+                self.level = level.upper()
         if log_format is not None:
             self.log_format = log_format
         # 记录是否是用户显式配置了 log_dir：

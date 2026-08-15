@@ -59,6 +59,60 @@ class ConfigLoader:
     _INNER_ENV_VAR_PATTERN = re.compile(r'\$\{([^${}]*)\}')
     _VALUE_EXPRESSION_PATTERN = re.compile(r'^\$\{([^}:]+)(?::(.*))?\}$')
     _MISSING = object()
+
+    # Framework-owned sections are consumed as mappings during startup.  A
+    # minimal YAML file may leave one as ``null`` (``database:``), while a
+    # typo can make it a scalar/list.  Normalize those values once so callers
+    # consistently fall back to defaults instead of raising AttributeError.
+    _MAPPING_SECTIONS = (
+        'spring', 'startup', 'redis', 'jwt', 'database', 'discovery',
+        'seata', 'rabbitmq', 'prometheus', 'logging', 'server', 'retry',
+        'skywalking', 'ai',
+    )
+
+    # Nested sections read directly by startup/auto-configuration code.  Keep
+    # malformed values from leaking into ``section.get(...)`` calls.
+    _NESTED_MAPPING_PATHS = (
+        ('spring', 'profiles'), ('spring', 'ai'), ('spring', 'cloud'),
+        ('spring', 'security'), ('spring', 'kafka'), ('spring', 'devtools'),
+        ('spring', 'data'), ('spring', 'batch'), ('spring', 'messages'),
+        ('spring', 'swagger'), ('spring', 'mcp'), ('spring', 'langchain'),
+        ('spring', 'cloud', 'config'), ('spring', 'cloud', 'bus'),
+        ('spring', 'security', 'oauth2'), ('spring', 'devtools', 'restart'),
+        ('spring', 'data', 'rest'), ('spring', 'mcp', 'server'),
+        ('spring', 'mcp', 'clients'), ('spring', 'ai', 'openai'),
+        ('spring', 'ai', 'ollama'), ('spring', 'ai', 'vector-store'),
+        ('spring', 'ai', 'memory'), ('spring', 'ai', 'circuit-breaker'),
+        ('spring', 'langchain', 'vector-store'),
+        ('spring', 'langchain', 'retriever'),
+        ('spring', 'langchain', 'memory'), ('spring', 'langchain', 'agents'),
+        ('spring', 'langchain', 'chains'), ('spring', 'langchain', 'partners'),
+        ('server', 'cors'), ('server', 'csrf'), ('server', 'thread_pool'),
+        ('database', 'security'), ('database', 'cache'), ('database', 'pool'),
+        ('database', 'batch'), ('database', 'ddl-auto'),
+    )
+
+    @staticmethod
+    def _mapping(value: Any) -> Dict[str, Any]:
+        """Return a configuration section as a mutable mapping.
+
+        YAML permits an empty section (``server:``) to deserialize as ``None``
+        and users occasionally provide a scalar/list by mistake.  Treat those
+        values as an empty section so environment defaults can still be
+        applied and the eventual validation can report only meaningful errors.
+        """
+        return value if isinstance(value, dict) else {}
+
+    def _ensure_section(self, name: str) -> Dict[str, Any]:
+        """Normalize a top-level section and return the mutable mapping."""
+        if not isinstance(self._config, dict):
+            self._config = {}
+        section = self._mapping(self._config.get(name))
+        if self._config.get(name) is not section:
+            if name in self._config and self._config.get(name) is not None:
+                logger.warning("Ignoring invalid configuration section %s (expected an object)", name)
+            self._config[name] = section
+        return section
     
     def __init__(self, config_path: str = "application.yml", base_path: str = None, _test_mode: bool = False):
         if base_path is None and config_path == "application.yml":
@@ -72,6 +126,32 @@ class ConfigLoader:
             self.config_path = config_path
         self._config: Dict[str, Any] = {}
         self._load_config()
+
+    def _normalize_section_mappings(self) -> None:
+        """Coerce known configuration sections to dictionaries in-place.
+
+        Unknown application keys are left untouched; only sections owned by
+        the framework are normalized because startup code relies on their
+        mapping contract.
+        """
+        if not isinstance(self._config, dict):
+            self._config = {}
+
+        for section in self._MAPPING_SECTIONS:
+            if not isinstance(self._config.get(section), dict):
+                self._config[section] = {}
+
+        for path in self._NESTED_MAPPING_PATHS:
+            node = self._config
+            for key in path[:-1]:
+                child = node.get(key)
+                if not isinstance(child, dict):
+                    child = {}
+                    node[key] = child
+                node = child
+            leaf = path[-1]
+            if not isinstance(node.get(leaf), dict):
+                node[leaf] = {}
     
     @staticmethod
     def _is_single_placeholder(value: str) -> bool:
@@ -200,8 +280,44 @@ class ConfigLoader:
         candidate = os.path.join(config_dir, profile_file)
         return candidate if os.path.exists(candidate) else None
 
+    def _load_project_dotenv(self) -> None:
+        """Load the generated project's optional ``.env`` without overriding OS values.
+
+        The scaffold documents ``.env.example`` as the local configuration
+        entry point.  Loading it here makes that promise true for both
+        ``Application.py`` and ASGI factory startup.  Process environment
+        variables remain higher priority, which is important for Docker and
+        production deployment platforms.
+        """
+        config_dir = os.path.dirname(os.path.abspath(self.config_path))
+        project_dir = (
+            os.path.dirname(config_dir)
+            if os.path.basename(config_dir).lower() == 'config'
+            else config_dir
+        )
+        dotenv_path = os.path.join(project_dir, '.env')
+        if not os.path.isfile(dotenv_path):
+            return
+
+        try:
+            from dotenv import load_dotenv
+        except ImportError:
+            logger.warning(
+                "Found .env at %s but python-dotenv is not installed; ignoring it",
+                dotenv_path,
+            )
+            return
+
+        load_dotenv(dotenv_path=dotenv_path, override=False)
+        logger.debug("Loaded project environment from %s", dotenv_path)
+
     def _load_config(self):
         """加载配置"""
+        # Read .env before resolving YAML placeholders.  This keeps the
+        # generated project's documented local setup working while preserving
+        # explicitly supplied process environment variables.
+        self._load_project_dotenv()
+
         # 1. 尝试从YAML文件加载主配置
         if os.path.exists(self.config_path):
             try:
@@ -214,13 +330,20 @@ class ConfigLoader:
                 logger.error(f"Failed to load config from {self.config_path}: {e}")
                 raise ConfigurationError(f"无法加载配置文件 {self.config_path}") from e
 
+        # Profile discovery below reads nested sections before environment
+        # binding.  Normalize immediately after loading the main YAML so a
+        # null/list section cannot break profile lookup.
+        self._normalize_section_mappings()
+
         # 1.5 加载 profile 特定配置文件并深度合并（application-{profile}.yml 覆盖主配置）
         #     profile 来自主配置的 spring.profiles.active 或 SPRING_PROFILES_ACTIVE 环境变量。
         #     在占位符解析之前合并，使 profile 文件中的占位符也能被解析。
-        profile = (
-            os.getenv('SPRING_PROFILES_ACTIVE')
-            or self._config.get('spring', {}).get('profiles', {}).get('active', 'default')
-        )
+        spring_config = self._mapping(self._config.get('spring'))
+        profiles_config = self._mapping(spring_config.get('profiles'))
+        profile = os.getenv('SPRING_PROFILES_ACTIVE') or profiles_config.get('active', 'default')
+        # 兼容 dict 格式的 profile.active（如 spring.profiles.active: {name: prod}）
+        if isinstance(profile, dict):
+            profile = profile.get('name') or profile.get('active') or 'default'
         if profile:
             profile = str(profile).strip()
         profile_path = self._resolve_profile_path(profile) if profile else None
@@ -234,6 +357,10 @@ class ConfigLoader:
             except Exception as e:
                 logger.warning(f"Failed to load profile config {profile_path}: {e}")
 
+        # A profile may replace a whole section with null/list/scalar.  Restore
+        # the mapping contract before resolving placeholders and overrides.
+        self._normalize_section_mappings()
+
         # 2. 解析配置中的环境变量占位符
         self._config = self._resolve_config_recursive(self._config)
 
@@ -241,6 +368,9 @@ class ConfigLoader:
         self._override_with_env()
         # 4. 从命令行参数覆盖配置（优先级最高）
         self._override_with_cli_args()
+        # CLI may replace a complete section (for example ``--server=[]``).
+        # Re-apply the mapping contract before validation and application use.
+        self._normalize_section_mappings()
         self._validate_config()
     
     @staticmethod
@@ -258,152 +388,219 @@ class ConfigLoader:
         return default
 
     @staticmethod
-    def _get_env_int(name: str, default: int) -> int:
-        """读取整型环境变量，转换失败抛 ``ConfigurationError`` 提示友好错误。"""
+    def _get_env_int(name: str, default: Any, fallback: int = 0) -> int:
+        """读取整型环境变量。
+
+        An invalid *environment* override remains a configuration error, but
+        a malformed value from an optional YAML field falls back to the
+        caller-provided safe default so startup is not taken down by a typo.
+        """
         raw = os.getenv(name)
         if raw is None:
-            return default
+            # 兼容 default 为 dict 的情况（YAML 嵌套写法如 port: {value: 6379}）
+            if isinstance(default, dict):
+                default = default.get('value') or default.get('port') or fallback
+            try:
+                return int(default)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Ignoring invalid default for %s (%r); using %s",
+                    name, default, fallback,
+                )
+                return fallback
         try:
             return int(raw)
         except (ValueError, TypeError):
             raise ConfigurationError(f"环境变量 {name} 必须是整数，实际值: {raw!r}")
 
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        """安全转换浮点数，兼容 dict 格式的配置值。"""
+        if isinstance(value, dict):
+            value = value.get('value') or value.get('timeout') or default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
     def _override_with_env(self):
         """使用环境变量覆盖配置"""
-        self._config.setdefault('spring', {})
-        self._config['spring'].setdefault('profiles', {})
-        self._config['spring']['profiles']['active'] = os.getenv(
+        spring_config = self._ensure_section('spring')
+        profiles_config = self._mapping(spring_config.get('profiles'))
+        spring_config['profiles'] = profiles_config
+        profiles_config['active'] = os.getenv(
             'SPRING_PROFILES_ACTIVE',
-            self._config['spring']['profiles'].get('active', 'default'),
+            profiles_config.get('active') or 'default',
         )
 
-        self._config.setdefault('startup', {})
+        startup_config = self._ensure_section('startup')
         fail_fast_env = os.getenv('STARTUP_FAIL_FAST')
-        configured_fail_fast = self._config['startup'].get('fail_fast')
+        configured_fail_fast = startup_config.get('fail_fast')
         if fail_fast_env is not None:
-            self._config['startup']['fail_fast'] = _to_bool(fail_fast_env)
+            startup_config['fail_fast'] = _to_bool(fail_fast_env)
         elif configured_fail_fast is None:
-            self._config['startup'].pop('fail_fast', None)
+            startup_config.pop('fail_fast', None)
         else:
-            self._config['startup']['fail_fast'] = bool(configured_fail_fast)
+            startup_config['fail_fast'] = _to_bool(configured_fail_fast)
 
         # Redis配置
-        self._config.setdefault('redis', {})
-        self._config['redis']['host'] = os.getenv('REDIS_HOST', self._config['redis'].get('host', 'localhost'))
-        self._config['redis']['port'] = self._get_env_int('REDIS_PORT', self._config['redis'].get('port', 6379))
-        self._config['redis']['db'] = self._get_env_int('REDIS_DB', self._config['redis'].get('db', 0))
-        self._config['redis']['password'] = os.getenv('REDIS_PASSWORD', self._config['redis'].get('password'))
-        self._config['redis']['enabled'] = _to_bool(
-            os.getenv('REDIS_ENABLED', self._config['redis'].get('enabled', False)), False)
+        redis_config = self._ensure_section('redis')
+        redis_config['host'] = os.getenv('REDIS_HOST', redis_config.get('host', 'localhost'))
+        redis_config['port'] = self._get_env_int(
+            'REDIS_PORT', redis_config.get('port', 6379), 6379
+        )
+        redis_config['db'] = self._get_env_int(
+            'REDIS_DB', redis_config.get('db', 0), 0
+        )
+        raw_redis_password = os.getenv('REDIS_PASSWORD', redis_config.get('password'))
+        redis_config['password'] = (
+            raw_redis_password if raw_redis_password is None or isinstance(raw_redis_password, str)
+            else str(raw_redis_password)
+        )
+        redis_config['enabled'] = _to_bool(os.getenv('REDIS_ENABLED', redis_config.get('enabled', False)), False)
 
         # JWT配置
-        self._config.setdefault('jwt', {})
-        self._config['jwt']['secret_key'] = os.getenv('JWT_SECRET_KEY', self._config['jwt'].get('secret_key', 'spring-python-secret-key-change-in-production'))
-        self._config['jwt']['algorithm'] = os.getenv('JWT_ALGORITHM', self._config['jwt'].get('algorithm', 'HS256'))
+        jwt_config = self._ensure_section('jwt')
+        raw_jwt_secret = os.getenv('JWT_SECRET_KEY', jwt_config.get('secret_key', ''))
+        # Keep an absent development secret empty.  JwtUtils then generates a
+        # per-process random key and reports the accurate "not configured"
+        # warning instead of pretending the removed legacy default was used.
+        jwt_config['secret_key'] = raw_jwt_secret if isinstance(raw_jwt_secret, str) else ''
+        raw_algorithm = os.getenv('JWT_ALGORITHM', jwt_config.get('algorithm', 'HS256'))
+        jwt_config['algorithm'] = raw_algorithm if isinstance(raw_algorithm, str) else 'HS256'
 
         # 数据库配置
-        self._config.setdefault('database', {})
-        self._config['database']['url'] = os.getenv('DB_URL', self._config['database'].get('url', 'sqlite:///./test.db'))
-        self._config['database']['echo'] = _to_bool(
-            os.getenv('DB_ECHO', self._config['database'].get('echo', False)), False)
+        database_config = self._ensure_section('database')
+        database_config['url'] = os.getenv('DB_URL', database_config.get('url', 'sqlite:///./test.db'))
+        database_config['echo'] = _to_bool(os.getenv('DB_ECHO', database_config.get('echo', False)), False)
         # database.enabled 默认 True（对齐 application.yml 占位符 ${DB_ENABLED:true}）
-        self._config['database']['enabled'] = _to_bool(
-            os.getenv('DB_ENABLED', self._config['database'].get('enabled', True)), True)
+        database_config['enabled'] = _to_bool(os.getenv('DB_ENABLED', database_config.get('enabled', True)), True)
         # PyMyBatis原生数据源配置（host/port/driver等）
-        self._config['database']['driver'] = os.getenv('DB_DRIVER', self._config['database'].get('driver', 'sqlite'))
-        self._config['database']['host'] = os.getenv('DB_HOST', self._config['database'].get('host', 'localhost'))
-        self._config['database']['port'] = self._get_env_int('DB_PORT', self._config['database'].get('port', 3306))
-        self._config['database']['database'] = os.getenv('DB_NAME', self._config['database'].get('database', 'test'))
-        self._config['database']['username'] = os.getenv('DB_USERNAME', self._config['database'].get('username', ''))
-        self._config['database']['password'] = os.getenv('DB_PASSWORD', self._config['database'].get('password', ''))
+        database_config['driver'] = os.getenv('DB_DRIVER', database_config.get('driver', 'sqlite'))
+        database_config['host'] = os.getenv('DB_HOST', database_config.get('host', 'localhost'))
+        database_config['port'] = self._get_env_int(
+            'DB_PORT', database_config.get('port', 3306), 3306
+        )
+        raw_database = os.getenv('DB_NAME', database_config.get('database', 'test'))
+        database_config['database'] = raw_database if isinstance(raw_database, str) else 'test'
+        raw_username = os.getenv('DB_USERNAME', database_config.get('username', ''))
+        database_config['username'] = raw_username if isinstance(raw_username, str) else ''
+        raw_password = os.getenv('DB_PASSWORD', database_config.get('password', ''))
+        database_config['password'] = raw_password if isinstance(raw_password, str) else ''
 
         # 服务发现配置
         # 兼容占位符风格（NACOS_*）与显式覆盖风格（DISCOVERY_*）两套环境变量命名
-        self._config.setdefault('discovery', {})
-        self._config['discovery']['server_addr'] = self._get_env_any(
+        discovery_config = self._ensure_section('discovery')
+        discovery_config['server_addr'] = self._get_env_any(
             'NACOS_SERVER', 'DISCOVERY_SERVER_ADDR',
-            default=self._config['discovery'].get('server_addr', 'localhost:8848'))
-        self._config['discovery']['namespace'] = self._get_env_any(
+            default=discovery_config.get('server_addr', 'localhost:8848'))
+        discovery_config['namespace'] = self._get_env_any(
             'NACOS_NAMESPACE', 'DISCOVERY_NAMESPACE',
-            default=self._config['discovery'].get('namespace', ''))
-        self._config['discovery']['group'] = self._get_env_any(
+            default=discovery_config.get('namespace', ''))
+        discovery_config['group'] = self._get_env_any(
             'NACOS_GROUP', 'DISCOVERY_GROUP',
-            default=self._config['discovery'].get('group', 'DEFAULT_GROUP'))
-        self._config['discovery']['username'] = os.getenv('NACOS_USERNAME', self._config['discovery'].get('username', ''))
-        self._config['discovery']['password'] = os.getenv('NACOS_PASSWORD', self._config['discovery'].get('password', ''))
-        self._config['discovery']['enabled'] = _to_bool(
-            os.getenv('DISCOVERY_ENABLED', self._config['discovery'].get('enabled', False)), False)
+            default=discovery_config.get('group', 'DEFAULT_GROUP'))
+        discovery_config['username'] = os.getenv('NACOS_USERNAME', discovery_config.get('username', ''))
+        discovery_config['password'] = os.getenv('NACOS_PASSWORD', discovery_config.get('password', ''))
+        discovery_config['enabled'] = _to_bool(os.getenv('DISCOVERY_ENABLED', discovery_config.get('enabled', False)), False)
 
         # Seata配置
         # 兼容占位符风格（SEATA_SERVER/SEATA_APP_ID/SEATA_TX_GROUP）与显式覆盖风格
-        self._config.setdefault('seata', {})
-        self._config['seata']['server_addr'] = self._get_env_any(
+        seata_config = self._ensure_section('seata')
+        seata_config['server_addr'] = self._get_env_any(
             'SEATA_SERVER', 'SEATA_SERVER_ADDR',
-            default=self._config['seata'].get('server_addr', 'localhost:8091'))
-        self._config['seata']['application_id'] = self._get_env_any(
+            default=seata_config.get('server_addr', 'localhost:8091'))
+        seata_config['application_id'] = self._get_env_any(
             'SEATA_APP_ID', 'SEATA_APPLICATION_ID',
-            default=self._config['seata'].get('application_id', ''))
-        self._config['seata']['transaction_group'] = self._get_env_any(
+            default=seata_config.get('application_id', ''))
+        seata_config['transaction_group'] = self._get_env_any(
             'SEATA_TX_GROUP', 'SEATA_TRANSACTION_GROUP',
-            default=self._config['seata'].get('transaction_group', 'my_tx_group'))
-        self._config['seata']['mode'] = os.getenv(
-            'SEATA_MODE', self._config['seata'].get('mode', 'local'))
-        self._config['seata']['bridge_url'] = os.getenv(
+            default=seata_config.get('transaction_group', 'my_tx_group'))
+        seata_config['mode'] = os.getenv('SEATA_MODE', seata_config.get('mode', 'local'))
+        seata_config['bridge_url'] = os.getenv(
             'SEATA_BRIDGE_URL',
-            self._config['seata'].get('bridge_url', 'http://localhost:18091'))
-        self._config['seata']['bridge_token'] = os.getenv(
-            'SEATA_BRIDGE_TOKEN', self._config['seata'].get('bridge_token', ''))
-        self._config['seata']['bridge_timeout_s'] = float(os.getenv(
-            'SEATA_BRIDGE_TIMEOUT_S',
-            self._config['seata'].get('bridge_timeout_s', 5.0)))
-        self._config['seata']['enabled'] = _to_bool(
-            os.getenv('SEATA_ENABLED', self._config['seata'].get('enabled', False)), False)
+            seata_config.get('bridge_url', 'http://localhost:18091'))
+        seata_config['bridge_token'] = os.getenv('SEATA_BRIDGE_TOKEN', seata_config.get('bridge_token', ''))
+        seata_config['bridge_timeout_s'] = self._safe_float(
+            os.getenv('SEATA_BRIDGE_TIMEOUT_S')
+            or seata_config.get('bridge_timeout_s', 5.0), 5.0)
+        seata_config['enabled'] = _to_bool(os.getenv('SEATA_ENABLED', seata_config.get('enabled', False)), False)
 
         # RabbitMQ配置
         # 兼容占位符风格（RABBITMQ_VHOST）与显式覆盖风格（RABBITMQ_VIRTUAL_HOST）
-        self._config.setdefault('rabbitmq', {})
-        self._config['rabbitmq']['host'] = os.getenv('RABBITMQ_HOST', self._config['rabbitmq'].get('host', 'localhost'))
-        self._config['rabbitmq']['port'] = self._get_env_int('RABBITMQ_PORT', self._config['rabbitmq'].get('port', 5672))
-        self._config['rabbitmq']['username'] = os.getenv('RABBITMQ_USERNAME', self._config['rabbitmq'].get('username', 'guest'))
-        self._config['rabbitmq']['password'] = os.getenv('RABBITMQ_PASSWORD', self._config['rabbitmq'].get('password', 'guest'))
-        self._config['rabbitmq']['virtual_host'] = self._get_env_any(
+        rabbitmq_config = self._ensure_section('rabbitmq')
+        rabbitmq_config['host'] = os.getenv('RABBITMQ_HOST', rabbitmq_config.get('host', 'localhost'))
+        rabbitmq_config['port'] = self._get_env_int(
+            'RABBITMQ_PORT', rabbitmq_config.get('port', 5672), 5672
+        )
+        rabbitmq_config['username'] = os.getenv('RABBITMQ_USERNAME', rabbitmq_config.get('username', 'guest'))
+        rabbitmq_config['password'] = os.getenv('RABBITMQ_PASSWORD', rabbitmq_config.get('password', 'guest'))
+        rabbitmq_config['virtual_host'] = self._get_env_any(
             'RABBITMQ_VHOST', 'RABBITMQ_VIRTUAL_HOST',
-            default=self._config['rabbitmq'].get('virtual_host', '/'))
-        self._config['rabbitmq']['enabled'] = _to_bool(
-            os.getenv('RABBITMQ_ENABLED', self._config['rabbitmq'].get('enabled', False)), False)
+            default=rabbitmq_config.get('virtual_host', '/'))
+        rabbitmq_config['enabled'] = _to_bool(os.getenv('RABBITMQ_ENABLED', rabbitmq_config.get('enabled', False)), False)
 
         # Prometheus配置
-        self._config.setdefault('prometheus', {})
-        self._config['prometheus']['namespace'] = os.getenv('PROMETHEUS_NAMESPACE', self._config['prometheus'].get('namespace', 'spring'))
-        self._config['prometheus']['subsystem'] = os.getenv('PROMETHEUS_SUBSYSTEM', self._config['prometheus'].get('subsystem', 'python'))
-        self._config['prometheus']['port'] = self._get_env_int('PROMETHEUS_PORT', self._config['prometheus'].get('port', 8000))
-        self._config['prometheus']['enabled'] = _to_bool(
-            os.getenv('PROMETHEUS_ENABLED', self._config['prometheus'].get('enabled', False)), False)
+        prometheus_config = self._ensure_section('prometheus')
+        prometheus_config['namespace'] = os.getenv('PROMETHEUS_NAMESPACE', prometheus_config.get('namespace', 'spring'))
+        prometheus_config['subsystem'] = os.getenv('PROMETHEUS_SUBSYSTEM', prometheus_config.get('subsystem', 'python'))
+        prometheus_config['port'] = self._get_env_int(
+            'PROMETHEUS_PORT', prometheus_config.get('port', 8000), 8000
+        )
+        prometheus_config['enabled'] = _to_bool(os.getenv('PROMETHEUS_ENABLED', prometheus_config.get('enabled', False)), False)
 
         # 日志配置
-        self._config.setdefault('logging', {})
-        self._config['logging']['level'] = os.getenv('LOG_LEVEL', self._config['logging'].get('level', 'INFO'))
-        self._config['logging']['log_dir'] = os.getenv('LOG_DIR', self._config['logging'].get('log_dir'))
-        self._config['logging']['retention'] = os.getenv('LOG_RETENTION', self._config['logging'].get('retention', '30 days'))
-        self._config['logging']['rotation'] = os.getenv('LOG_ROTATION', self._config['logging'].get('rotation', '100 MB'))
+        logging_config = self._ensure_section('logging')
+        # 兼容 logging.level 为 dict 的情况（Spring Boot 风格）：
+        # logging.level: {root: INFO, spring: DEBUG} → 提取 root 级别或第一个字符串值
+        raw_level = logging_config.get('level', 'INFO')
+        if isinstance(raw_level, dict):
+            raw_level = raw_level.get('root') or next(
+                (v for v in raw_level.values() if isinstance(v, str)), 'INFO')
+        raw_level = os.getenv('LOG_LEVEL', raw_level)
+        logging_config['level'] = raw_level if isinstance(raw_level, str) and raw_level else 'INFO'
+        # 兼容 logging.log_dir 为 dict 的情况
+        raw_log_dir = logging_config.get('log_dir')
+        if isinstance(raw_log_dir, dict):
+            raw_log_dir = None
+        raw_log_dir = os.getenv('LOG_DIR', raw_log_dir)
+        logging_config['log_dir'] = raw_log_dir if isinstance(raw_log_dir, str) and raw_log_dir else None
+        raw_retention = os.getenv('LOG_RETENTION', logging_config.get('retention', '30 days'))
+        logging_config['retention'] = raw_retention if isinstance(raw_retention, str) else '30 days'
+        raw_rotation = os.getenv('LOG_ROTATION', logging_config.get('rotation', '100 MB'))
+        logging_config['rotation'] = raw_rotation if isinstance(raw_rotation, str) else '100 MB'
 
         # 服务器配置
-        self._config.setdefault('server', {})
-        self._config['server']['port'] = self._get_env_int('SERVER_PORT', self._config['server'].get('port', 8080))
-        default_server_host = '0.0.0.0'  # nosec B104 - framework server default
-        self._config['server']['host'] = os.getenv(
-            'SERVER_HOST', self._config['server'].get('host', default_server_host)
+        server_config = self._ensure_section('server')
+        server_config['port'] = self._get_env_int(
+            'SERVER_PORT', server_config.get('port', 8080), 8080
         )
+        default_server_host = '0.0.0.0'  # nosec B104 - framework server default
+        raw_server_host = os.getenv(
+            'SERVER_HOST', server_config.get('host', default_server_host)
+        )
+        server_config['host'] = raw_server_host if isinstance(raw_server_host, str) and raw_server_host else default_server_host
 
-        self._config['server'].setdefault('cors', {})
-        cors_config = self._config['server']['cors']
+        cors_config = self._mapping(server_config.get('cors'))
+        server_config['cors'] = cors_config
         origins_env = os.getenv('CORS_ALLOW_ORIGINS')
         if origins_env is not None:
             cors_config['allow_origins'] = [
                 origin.strip() for origin in origins_env.split(',') if origin.strip()
             ]
         else:
-            cors_config.setdefault('allow_origins', [])
+            origins = cors_config.get('allow_origins', [])
+            if isinstance(origins, str):
+                origins = [item.strip() for item in origins.split(',') if item.strip()]
+            cors_config['allow_origins'] = origins if isinstance(origins, list) else []
+        for key, default in (
+            ('allow_methods', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']),
+            ('allow_headers', ['Content-Type', 'Authorization']),
+        ):
+            value = cors_config.get(key, default)
+            if isinstance(value, str):
+                value = [item.strip() for item in value.split(',') if item.strip()]
+            cors_config[key] = value if isinstance(value, list) else list(default)
         cors_config['allow_credentials'] = _to_bool(
             os.getenv('CORS_ALLOW_CREDENTIALS', cors_config.get('allow_credentials', False)), False)
 
@@ -452,11 +649,17 @@ class ConfigLoader:
         logger.debug(f"CLI override: {dotted_key}={parsed!r}")
 
     def _validate_config(self) -> None:
-        algorithm = str(self._config.get('jwt', {}).get('algorithm', 'HS256')).upper()
+        jwt_config = self._mapping(self._config.get('jwt'))
+        raw_algorithm = jwt_config.get('algorithm', 'HS256')
+        # 兼容 dict 格式的 algorithm
+        if isinstance(raw_algorithm, dict):
+            raw_algorithm = raw_algorithm.get('value') or raw_algorithm.get('name') or 'HS256'
+        algorithm = str(raw_algorithm).upper()
         if algorithm not in {'HS256', 'HS384', 'HS512'}:
             raise ConfigurationError(f"不允许的 JWT 算法: {algorithm}")
 
-        cors = self._config.get('server', {}).get('cors', {})
+        server_config = self._mapping(self._config.get('server'))
+        cors = self._mapping(server_config.get('cors'))
         if cors.get('allow_credentials') and '*' in cors.get('allow_origins', []):
             raise ConfigurationError("CORS 开启凭证时不能使用通配来源 *")
 
@@ -468,12 +671,12 @@ class ConfigLoader:
         if profile not in {'prod', 'production'}:
             return
 
-        secret = self._config.get('jwt', {}).get('secret_key')
+        secret = jwt_config.get('secret_key')
         insecure_secret = 'spring-python-secret-key-change-in-production'
         if not secret or secret == insecure_secret or len(str(secret)) < 32:
             raise ConfigurationError("生产环境 JWT_SECRET_KEY 必须设置为至少 32 个字符的随机密钥")
 
-        seata_config = self._config.get('seata', {}) or {}
+        seata_config = self._mapping(self._config.get('seata'))
         if seata_config.get('enabled'):
             seata_mode = str(seata_config.get('mode', 'local')).lower()
             if seata_mode != 'distributed':
@@ -493,8 +696,9 @@ class ConfigLoader:
         # (1) 强制 AI_ALLOW_FAKE=false，使 autoconfig 缺 key 时抛 ValueError；
         # (2) 在此显式校验默认 provider 的 api-key 已配置，给出清晰错误。
         os.environ['AI_ALLOW_FAKE'] = 'false'
-        ai_config = self._config.get('ai', {}) or {}
-        spring_ai = self._config.get('spring', {}).get('ai', {}) or {}
+        ai_config = self._mapping(self._config.get('ai'))
+        spring_config = self._mapping(self._config.get('spring'))
+        spring_ai = self._mapping(spring_config.get('ai'))
         # AI 模块默认启用（未显式 enabled=false 即视为启用）
         ai_enabled = ai_config.get('enabled', spring_ai.get('enabled', True))
         if _to_bool(ai_enabled, True):
@@ -507,11 +711,13 @@ class ConfigLoader:
             # ollama 本地部署无需 api-key；其余 provider 必须配置 api-key
             if provider != 'ollama':
                 # 兼容 spring.ai.<provider>.api-key（kebab）与 ai.<provider>.api_key（snake）
-                provider_cfg = (
-                    spring_ai.get(provider, {})
-                    or ai_config.get(provider, {})
-                    or {}
-                )
+                # Provider sections are user supplied and may be null/list or
+                # scalar.  Pick the first valid mapping and ignore malformed
+                # values so production validation reports the missing key
+                # instead of leaking ``AttributeError``.
+                provider_cfg = self._mapping(spring_ai.get(provider))
+                if not provider_cfg:
+                    provider_cfg = self._mapping(ai_config.get(provider))
                 api_key = (
                     provider_cfg.get('api-key')
                     or provider_cfg.get('api_key')
@@ -602,7 +808,13 @@ class ConfigLoader:
         Returns:
             激活的配置文件名（不含.yml后缀）
         """
-        return self._config.get('spring', {}).get('profiles', {}).get('active', 'default')
+        spring_config = self._mapping(self._config.get('spring'))
+        profiles_config = self._mapping(spring_config.get('profiles'))
+        active = profiles_config.get('active') or 'default'
+        # 兼容 dict 格式（如 spring.profiles.active: {name: prod}）
+        if isinstance(active, dict):
+            active = active.get('name') or active.get('active') or 'default'
+        return str(active)
     
     @staticmethod
     def _lookup_key(mapping: Any, key: str):

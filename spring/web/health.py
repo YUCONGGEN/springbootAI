@@ -8,6 +8,7 @@ import logging
 import concurrent.futures
 import platform
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Mapping
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 from spring.utils.redis_client import redis_client
@@ -27,6 +28,23 @@ _application_context = None
 def configure_health_checks(application_context) -> None:
     global _application_context
     _application_context = application_context
+
+
+def _config_section(name: str) -> dict:
+    """Read a config section defensively for health probes.
+
+    Health endpoints must remain available while configuration is incomplete or
+    malformed.  Treat missing/null/scalar sections as empty mappings instead of
+    letting an incidental ``AttributeError`` turn the probe itself into 500.
+    """
+    try:
+        config = _application_context.get_config() if _application_context is not None else {}
+    except Exception:
+        return {}
+    if not isinstance(config, Mapping):
+        return {}
+    section = config.get(name, {})
+    return dict(section) if isinstance(section, Mapping) else {}
 
 # 单个组件健康检查的最大耗时（秒）。
 # 避免某个组件（如 Nacos/RabbitMQ 未配置但尝试连接默认地址）卡死整个 /actuator/health 端点，
@@ -125,7 +143,9 @@ def _collect_component_health() -> dict:
 def _enabled_down_components(components: dict) -> list:
     return [
         name for name, status in components.items()
-        if status.get('enabled', False) and status.get('status') == 'DOWN'
+        if isinstance(status, Mapping)
+        and status.get('enabled', False)
+        and status.get('status') == 'DOWN'
     ]
 
 
@@ -195,8 +215,7 @@ def readiness_check():
 
 @health_router.get('/prometheus')
 def prometheus_metrics():
-    config = _application_context.get_config() if _application_context is not None else {}
-    if not config.get('prometheus', {}).get('enabled', False):
+    if not _config_section('prometheus').get('enabled', False):
         return JSONResponse({'detail': 'Prometheus metrics are disabled'}, status_code=404)
     from spring.monitoring.prometheus import CONTENT_TYPE_LATEST, prometheus_metrics as metrics
     return Response(
@@ -208,10 +227,15 @@ def prometheus_metrics():
 @health_router.get('/info')
 def info_check():
     """返回不包含密钥和连接凭据的应用基本信息。"""
-    config = _application_context.get_config() if _application_context is not None else {}
-    spring_config = config.get('spring', {}) or {}
-    application_config = spring_config.get('application', {}) or {}
-    profile_config = spring_config.get('profiles', {}) or {}
+    spring_config = _config_section('spring')
+    application_config = (
+        dict(spring_config.get('application', {}))
+        if isinstance(spring_config.get('application', {}), Mapping) else {}
+    )
+    profile_config = (
+        dict(spring_config.get('profiles', {}))
+        if isinstance(spring_config.get('profiles', {}), Mapping) else {}
+    )
     try:
         from spring import __version__ as spring_version
     except ImportError:
@@ -236,10 +260,7 @@ def _check_redis() -> dict:
         # 尊重 application.yml 的 redis.enabled 配置：
         # 未启用时不尝试连接，直接返回 DISABLED，避免拖累整体健康状态
         try:
-            redis_cfg = (
-                _application_context.get_config().get('redis', {})
-                if _application_context is not None else {}
-            ) or {}
+            redis_cfg = _config_section('redis')
             if not redis_cfg.get('enabled', False):
                 return {
                     'status': 'DISABLED',
@@ -278,9 +299,7 @@ def _check_database() -> dict:
     """检查数据库健康状态"""
     try:
         if _application_context is not None:
-            database_config = (
-                _application_context.get_config().get('database', {}) or {}
-            )
+            database_config = _config_section('database')
             if not database_config.get('enabled', False):
                 return {
                     'status': 'DISABLED',
@@ -327,8 +346,7 @@ def _check_database() -> dict:
 def _check_nacos() -> dict:
     """检查Nacos健康状态"""
     try:
-        config = _application_context.get_config() if _application_context is not None else {}
-        if not config.get('discovery', {}).get('enabled', False):
+        if not _config_section('discovery').get('enabled', False):
             return {'status': 'DISABLED', 'enabled': False, 'reason': 'Nacos not configured'}
         if nacos_client.is_healthy():
             services = nacos_client.get_services()
@@ -355,8 +373,7 @@ def _check_nacos() -> dict:
 def _check_rabbitmq() -> dict:
     """检查RabbitMQ健康状态"""
     try:
-        config = _application_context.get_config() if _application_context is not None else {}
-        if not config.get('rabbitmq', {}).get('enabled', False):
+        if not _config_section('rabbitmq').get('enabled', False):
             return {'status': 'DISABLED', 'enabled': False, 'reason': 'RabbitMQ not configured'}
         from spring.messaging.rabbitmq import rabbitmq_client
         channel = rabbitmq_client._channel
@@ -389,8 +406,7 @@ def _check_seata() -> dict:
     """检查Seata健康状态"""
     from spring.cloud.seata import seata_manager
     try:
-        config = _application_context.get_config() if _application_context is not None else {}
-        seata_config = config.get('seata', {}) or {}
+        seata_config = _config_section('seata')
         if not seata_config.get('enabled', False):
             return {'status': 'DISABLED', 'enabled': False, 'reason': 'Seata not configured'}
         mode = str(seata_config.get('mode', 'local')).lower()

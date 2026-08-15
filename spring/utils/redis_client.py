@@ -5,6 +5,7 @@ Redis客户端工具类
 import json
 import time
 import uuid
+import logging
 from typing import Any
 
 try:
@@ -12,6 +13,9 @@ try:
 except ImportError:
     class RedisError(Exception):
         """Fallback used when the optional Redis dependency is unavailable."""
+
+
+logger = logging.getLogger("Spring.Redis")
 
 
 class RedisClient:
@@ -92,13 +96,22 @@ class RedisClient:
             return None
         
         lock_id = str(uuid.uuid4())
-        end_time = time.time() + wait_timeout
-        
-        while time.time() < end_time:
-            # 使用SET NX EX命令获取锁
-            result = client.set(f"lock:{key}", lock_id, nx=True, ex=timeout)
-            if result:
-                return lock_id
+        try:
+            lock_ttl = max(1, int(timeout))
+            wait_seconds = max(0.0, float(wait_timeout))
+        except (TypeError, ValueError):
+            return None
+        end_time = time.monotonic() + wait_seconds
+
+        while time.monotonic() < end_time:
+            try:
+                # 使用SET NX EX命令获取锁
+                result = client.set(f"lock:{key}", lock_id, nx=True, ex=lock_ttl)
+                if result:
+                    return lock_id
+            except (RedisError, TypeError, ValueError) as exc:
+                logger.warning("Redis lock acquisition failed: %s", exc)
+                return None
             time.sleep(0.01)  # 短暂等待后重试
         
         return None
@@ -126,8 +139,15 @@ class RedisClient:
             return 0
         end
         """
-        result = client.eval(script, 1, f"lock:{key}", lock_id)
-        return result == 1
+        try:
+            result = client.eval(script, 1, f"lock:{key}", lock_id)
+            return result == 1
+        except (RedisError, TypeError, ValueError) as exc:
+            # Lock cleanup runs from AOP ``finally`` blocks; a transient Redis
+            # outage must not replace the business exception or crash the
+            # request after the work has completed.
+            logger.warning("Redis lock release failed: %s", exc)
+            return False
     
     # ==================== 持久化存储 ====================
     

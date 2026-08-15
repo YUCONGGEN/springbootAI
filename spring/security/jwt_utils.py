@@ -330,8 +330,11 @@ class JwtUtils:
             return []
 
 
-# 创建全局 JWT 工具实例
-jwt_utils = JwtUtils()
+# 创建全局 JWT 工具实例。模块导入本身不代表应用已经启动；此处预置随机
+# 开发密钥，避免 ``springbootai init --help`` 等纯 CLI 操作输出误导性的安全告警。
+# 真正应用启动时 ``init_jwt`` 会按配置重新调用 configure()，缺少密钥仍会给出
+# 明确警告，并使用新的进程级随机密钥。
+jwt_utils = JwtUtils(secret_key=_generate_random_secret_key())
 
 
 def init_jwt(config: dict) -> None:

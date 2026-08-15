@@ -12,6 +12,7 @@
 - 风险9: discovery / rabbitmq 的 configure() 方法
 - 风险10: redis.timeout 配置生效
 """
+import os
 import sys
 
 import pytest
@@ -134,6 +135,134 @@ class TestProfileConfig:
         assert result == {'a': 1, 'b': {'x': 1, 'y': 20, 'z': 30}, 'c': 3, 'd': 4}
         # 入参不被修改
         assert base['b'] == {'x': 1, 'y': 2}
+
+
+# ==================== Malformed sections ====================
+
+class TestMalformedConfigSections:
+    """Malformed optional sections should degrade to defaults, not crash startup."""
+
+    def test_non_mapping_sections_are_normalized(self, tmp_path):
+        from spring.config.config_loader import ConfigLoader
+
+        config_file = tmp_path / "application.yml"
+        config_file.write_text(
+            "spring:\n  profiles:\n    active: null\n"
+            "server: []\nredis: null\njwt: bad\n",
+            encoding="utf-8",
+        )
+
+        loader = ConfigLoader(config_path=str(config_file))
+
+        assert loader.get("server.port") == 8080
+        assert loader.get("redis.enabled") is False
+        assert loader.get_active_profile() == "default"
+
+    def test_missing_jwt_secret_stays_empty_for_runtime_random_key(self, tmp_path, monkeypatch):
+        """ConfigLoader must not revive the removed hard-coded JWT secret."""
+        from spring.config.config_loader import ConfigLoader
+
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("SPRING_PROFILES_ACTIVE", raising=False)
+        monkeypatch.delenv("APP_ENV", raising=False)
+        config_file = tmp_path / "application.yml"
+        config_file.write_text("jwt:\n  algorithm: HS256\n", encoding="utf-8")
+
+        loader = ConfigLoader(config_path=str(config_file))
+
+        assert loader.get("jwt.secret_key") == ""
+
+    def test_project_dotenv_resolves_placeholders_without_overriding_process_env(self, tmp_path, monkeypatch):
+        """The documented project-root .env is loaded before YAML binding."""
+        from spring.config.config_loader import ConfigLoader
+
+        monkeypatch.delenv("SPRING_PROFILES_ACTIVE", raising=False)
+        monkeypatch.delenv("APP_ENV", raising=False)
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "application.yml"
+        config_file.write_text("server:\n  port: ${SERVER_PORT:8000}\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("SERVER_PORT=9234\n", encoding="utf-8")
+
+        previous = os.environ.get("SERVER_PORT")
+        try:
+            os.environ.pop("SERVER_PORT", None)
+            assert ConfigLoader(config_path=str(config_file)).get("server.port") == 9234
+
+            os.environ["SERVER_PORT"] = "9345"
+            assert ConfigLoader(config_path=str(config_file)).get("server.port") == 9345
+        finally:
+            if previous is None:
+                os.environ.pop("SERVER_PORT", None)
+            else:
+                os.environ["SERVER_PORT"] = previous
+
+    def test_malformed_ai_provider_reports_missing_key(self, tmp_path, monkeypatch):
+        from spring.config.config_loader import ConfigLoader, ConfigurationError
+
+        monkeypatch.setenv("SPRING_PROFILES_ACTIVE", "prod")
+        monkeypatch.setenv("JWT_SECRET_KEY", "x" * 40)
+        config_file = tmp_path / "application.yml"
+        config_file.write_text(
+            "spring:\n  ai:\n    default-provider: openai\n    openai: [invalid]\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigurationError, match="api-key"):
+            ConfigLoader(config_path=str(config_file))
+
+    def test_malformed_scalar_values_use_safe_defaults(self, tmp_path, monkeypatch):
+        from spring.config.config_loader import ConfigLoader
+
+        for name in (
+            "SERVER_PORT", "REDIS_PORT", "REDIS_DB", "DB_PORT",
+            "RABBITMQ_PORT", "PROMETHEUS_PORT", "LOG_LEVEL", "LOG_DIR",
+        ):
+            monkeypatch.delenv(name, raising=False)
+
+        config_file = tmp_path / "application.yml"
+        config_file.write_text(
+            "server:\n  port: invalid\n  host: []\n"
+            "redis:\n  port: []\n  db: bad\n"
+            "database:\n  port: null\n"
+            "rabbitmq:\n  port: bad\n"
+            "prometheus:\n  port: []\n"
+            "logging:\n  level: []\n  log_dir: []\n",
+            encoding="utf-8",
+        )
+
+        loader = ConfigLoader(config_path=str(config_file))
+
+        assert loader.get("server.port") == 8080
+        assert loader.get("server.host") == "0.0.0.0"
+        assert loader.get("redis.port") == 6379
+        assert loader.get("redis.db") == 0
+        assert loader.get("database.port") == 3306
+        assert loader.get("rabbitmq.port") == 5672
+        assert loader.get("prometheus.port") == 8000
+        assert loader.get("logging.level") == "INFO"
+        assert loader.get("logging.log_dir") is None
+
+    @pytest.mark.parametrize(
+        ("configured_value", "expected"),
+        [("false", False), ("0", False), ("true", True), ("yes", True)],
+    )
+    def test_quoted_fail_fast_uses_boolean_parsing(
+        self, tmp_path, monkeypatch, configured_value, expected
+    ):
+        """Quoted YAML booleans must match STARTUP_FAIL_FAST semantics."""
+        from spring.config.config_loader import ConfigLoader
+
+        monkeypatch.delenv("STARTUP_FAIL_FAST", raising=False)
+        config_file = tmp_path / "application.yml"
+        config_file.write_text(
+            f'startup:\n  fail_fast: "{configured_value}"\n',
+            encoding="utf-8",
+        )
+
+        loader = ConfigLoader(config_path=str(config_file))
+
+        assert loader.get("startup.fail_fast") is expected
 
 
 # ==================== Bug 3: 嵌套占位符 ====================

@@ -11,6 +11,62 @@ import threading
 import hashlib
 import concurrent.futures
 import types
+import logging
+
+
+logger = logging.getLogger("Spring.Context.BeanFactory")
+
+
+class BeanDependencyError(ValueError):
+    """Raised when a Bean cannot be built because an injected dependency is unavailable.
+
+    It remains a ``ValueError`` for backwards compatibility with callers that
+    already handle the container's resolution errors, while giving lifecycle
+    startup a precise signal for optional-dependency degradation.
+    """
+
+
+class MissingBeanDependencyError(BeanDependencyError):
+    """A required Bean is absent because an optional integration is unavailable."""
+
+
+def _cleanup_unregistered_instance(definition: BeanDefinition, instance: Any) -> None:
+    """Release an instance whose creation failed before registration.
+
+    ``BeanFactory.get_bean`` only stores a singleton after ``_create_bean``
+    returns.  A factory method or post-construct hook can therefore create a
+    resource and fail before the normal ``destroy_bean`` path can see it.
+    Cleanup is deliberately best effort and never replaces the original error.
+    """
+    try:
+        for name, method in inspect.getmembers(instance.__class__):
+            if not name.startswith('_') and inspect.isfunction(method):
+                annotations = getattr(method, '__spring_annotations__', [])
+                for annotation in annotations:
+                    if isinstance(annotation, PreDestroy):
+                        try:
+                            method(instance)
+                        except Exception:
+                            pass
+
+        if definition.destroy_method and hasattr(instance, definition.destroy_method):
+            destroy_method = getattr(instance, definition.destroy_method)
+            if callable(destroy_method):
+                try:
+                    destroy_method()
+                except Exception:
+                    pass
+
+        destroy = getattr(instance, 'destroy', None)
+        if callable(destroy):
+            try:
+                destroy()
+            except Exception:
+                pass
+    except Exception:
+        # Introspection itself can fail for proxy objects; the original bean
+        # creation exception remains the useful diagnostic in that case.
+        pass
 
 
 # 全局线程池，用于@Async注解的异步执行
@@ -65,8 +121,21 @@ class BeanFactory:
         self._config_loader = config_loader
 
     def register_bean_definition(self, bean_name: str, definition: BeanDefinition) -> None:
+        # A definition may have been marked destroyed during a previous
+        # container teardown.  Registering it again is an explicit lifecycle
+        # boundary, so make the definition usable for the new context.
+        if getattr(definition, '_destroyed', False):
+            definition._destroyed = False
+            definition._initialized = False
         self._bean_definitions[bean_name] = definition
-        if definition.bean_class not in self._type_to_name:
+        mapped_name = self._type_to_name.get(definition.bean_class)
+        mapped_definition = self._bean_definitions.get(mapped_name) if mapped_name else None
+        if (
+            mapped_name is None
+            or mapped_name == bean_name
+            or mapped_definition is None
+            or getattr(mapped_definition, '_destroyed', False)
+        ):
             self._type_to_name[definition.bean_class] = bean_name
     
     def register_instance(self, bean_name: str, instance: Any) -> None:
@@ -79,7 +148,14 @@ class BeanFactory:
         """
         self._bean_instances[bean_name] = instance
         bean_class = instance.__class__
-        if bean_class not in self._type_to_name:
+        mapped_name = self._type_to_name.get(bean_class)
+        mapped_definition = self._bean_definitions.get(mapped_name) if mapped_name else None
+        if (
+            mapped_name is None
+            or mapped_name == bean_name
+            or mapped_definition is None
+            or getattr(mapped_definition, '_destroyed', False)
+        ):
             self._type_to_name[bean_class] = bean_name
 
     def get_bean_definition(self, bean_name: str) -> Optional[BeanDefinition]:
@@ -88,7 +164,12 @@ class BeanFactory:
     def get_bean(self, bean_name: str) -> Any:
         definition = self.get_bean_definition(bean_name)
         if not definition:
-            raise ValueError(f"No bean named '{bean_name}' found")
+            raise MissingBeanDependencyError(f"No bean named '{bean_name}' found")
+        if getattr(definition, '_destroyed', False):
+            # Teardown must be terminal for a definition.  Without this guard
+            # a lazy singleton could recreate a database/Redis connection
+            # after ``ApplicationContext.destroy()`` had already run.
+            raise RuntimeError(f"Bean '{bean_name}' has been destroyed")
 
         if definition.is_singleton:
             if bean_name not in self._bean_instances:
@@ -104,18 +185,31 @@ class BeanFactory:
             # ``Optional[T]`` and ``Annotated[T, ...]`` are typing objects,
             # not valid arguments to issubclass().
             bean_type, _, _ = self._unwrap_dependency_annotation(bean_type)
-        if not isinstance(bean_type, type):
-            raise ValueError(f"Bean 类型不可解析: {bean_type!r}")
+        # ``typing.Any`` can pass an ``isinstance(..., type)`` check on some
+        # Python versions but is still invalid as the second argument to
+        # ``issubclass``.  Treat it as an unresolved dependency so optional
+        # injection can follow its normal fallback path instead of crashing
+        # context refresh with a TypeError.
+        if bean_type is Any or not isinstance(bean_type, type):
+            raise BeanDependencyError(f"Bean 类型不可解析: {bean_type!r}")
         if bean_type in self._type_to_name:
             return self.get_bean(self._type_to_name[bean_type])
 
         matching_definitions = []
         for name, definition in self._bean_definitions.items():
-            if isinstance(definition.bean_class, type) and issubclass(definition.bean_class, bean_type):
+            if not isinstance(definition.bean_class, type):
+                continue
+            try:
+                matches = issubclass(definition.bean_class, bean_type)
+            except TypeError:
+                # Some typing constructs (Protocols, unresolved forward refs)
+                # reject ``issubclass`` even after the outer type check.
+                matches = False
+            if matches:
                 matching_definitions.append((name, definition))
 
         if not matching_definitions:
-            raise ValueError(f"No bean of type '{bean_type.__name__}' found")
+            raise MissingBeanDependencyError(f"No bean of type '{bean_type.__name__}' found")
 
         if len(matching_definitions) == 1:
             return self.get_bean(matching_definitions[0][0])
@@ -126,7 +220,7 @@ class BeanFactory:
         if primary_definitions:
             return self.get_bean(primary_definitions[0][0])
 
-        raise ValueError(f"Multiple beans of type '{bean_type.__name__}' found, use @Qualifier to specify")
+        raise BeanDependencyError(f"Multiple beans of type '{bean_type.__name__}' found, use @Qualifier to specify")
 
     def _create_bean(self, definition: BeanDefinition) -> Any:
         initializing = self._get_initializing()
@@ -134,6 +228,7 @@ class BeanFactory:
             raise RuntimeError(f"Circular dependency detected for bean: {definition.bean_name}")
 
         initializing.add(definition.bean_name)
+        instance = None
 
         try:
             if definition.factory_method:
@@ -155,6 +250,10 @@ class BeanFactory:
             self._initialize_bean(definition, instance)
 
             return instance
+        except Exception:
+            if instance is not None:
+                _cleanup_unregistered_instance(definition, instance)
+            raise
         finally:
             initializing.discard(definition.bean_name)
 
@@ -243,34 +342,34 @@ class BeanFactory:
                 try:
                     args.append(self.get_bean(param_name))
                     continue
-                except (KeyError, ValueError):
+                except (KeyError, BeanDependencyError):
                     pass
                 if not autowired.required:
                     args.append(None)
                     continue
-                raise ValueError(f"Cannot resolve parameter '{param_name}' without type annotation")
+                raise MissingBeanDependencyError(f"Cannot resolve parameter '{param_name}' without type annotation")
 
             qualifier = inline_qualifier or definition.qualifiers.get(param_name)
             if qualifier:
                 try:
                     args.append(self.get_bean(qualifier))
-                except ValueError:
+                except BeanDependencyError:
                     if not autowired.required or optional_type:
                         args.append(None)
                     else:
-                        raise ValueError(f"Cannot resolve parameter '{param_name}'")
+                        raise MissingBeanDependencyError(f"Cannot resolve parameter '{param_name}'")
             else:
                 try:
                     args.append(self.get_bean_by_type(param_type))
-                except ValueError:
+                except BeanDependencyError:
                     # 如果通过类型找不到，尝试通过参数名查找
                     try:
                         args.append(self.get_bean(param_name))
-                    except (KeyError, ValueError):
+                    except (KeyError, BeanDependencyError):
                         if not autowired.required or optional_type:
                             args.append(None)
                             continue
-                        raise ValueError(f"Cannot resolve parameter '{param_name}'")
+                        raise MissingBeanDependencyError(f"Cannot resolve parameter '{param_name}'")
         return args
 
     @staticmethod
@@ -300,15 +399,15 @@ class BeanFactory:
             else:
                 try:
                     dependency = self.get_bean_by_type(field_type)
-                except ValueError:
+                except BeanDependencyError:
                     # 如果通过类型找不到，尝试通过字段名查找
                     try:
                         dependency = self.get_bean(field_name)
-                    except (KeyError, ValueError):
+                    except (KeyError, BeanDependencyError):
                         if not definition.dependency_required.get(field_name, True):
                             setattr(instance, field_name, None)
                             continue
-                        raise ValueError(f"Cannot resolve field '{field_name}'")
+                        raise MissingBeanDependencyError(f"Cannot resolve field '{field_name}'")
             setattr(instance, field_name, dependency)
 
         for name, field in inspect.getmembers(instance.__class__):
@@ -396,33 +495,85 @@ class BeanFactory:
         if not definition or definition._destroyed:
             return
 
+        first_error = None
         if bean_name in self._bean_instances:
             instance = self._bean_instances[bean_name]
 
-            self._invoke_pre_destroy(instance)
-
+            # Run every destruction stage even when an earlier callback is
+            # broken.  ``destroy_all`` can then continue with unrelated beans,
+            # while direct callers still receive the first error afterwards.
+            callbacks = [lambda: self._invoke_pre_destroy(instance)]
             if definition.destroy_method and hasattr(instance, definition.destroy_method):
                 destroy_method = getattr(instance, definition.destroy_method)
                 if callable(destroy_method):
-                    destroy_method()
+                    callbacks.append(destroy_method)
+            destroy = getattr(instance, 'destroy', None)
+            if callable(destroy):
+                callbacks.append(destroy)
 
-            if hasattr(instance, 'destroy') and callable(instance.destroy):
-                instance.destroy()
+            for callback in callbacks:
+                try:
+                    callback()
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = exc
+                    logger.exception(
+                        "Bean '%s' destruction callback failed: %s",
+                        bean_name,
+                        exc,
+                    )
 
-            definition.mark_destroyed()
-            del self._bean_instances[bean_name]
+        # Remove the instance even when a callback failed.  Keeping it in the
+        # singleton map would permit a later teardown to invoke arbitrary user
+        # code a second time.
+        self._bean_instances.pop(bean_name, None)
+        definition.mark_destroyed()
+
+        if first_error is not None:
+            raise first_error
 
     def _invoke_pre_destroy(self, instance: Any) -> None:
+        first_error = None
         for name, method in inspect.getmembers(instance.__class__):
             if not name.startswith('_') and inspect.isfunction(method):
                 annotations = getattr(method, '__spring_annotations__', [])
                 for annotation in annotations:
                     if isinstance(annotation, PreDestroy):
-                        method(instance)
+                        try:
+                            method(instance)
+                        except Exception as exc:
+                            if first_error is None:
+                                first_error = exc
+                            logger.exception(
+                                "@PreDestroy callback '%s' failed: %s",
+                                name,
+                                exc,
+                            )
+        if first_error is not None:
+            raise first_error
 
     def destroy_all(self) -> None:
         for bean_name in list(self._bean_instances.keys()):
-            self.destroy_bean(bean_name)
+            try:
+                self.destroy_bean(bean_name)
+            except Exception as exc:
+                # Teardown is best effort: one faulty user destructor must not
+                # leave every later connection pool alive.
+                logger.error("Failed to destroy bean '%s': %s", bean_name, exc)
+
+        # Mark lazy/prototype definitions as destroyed as well.  They have no
+        # instance to visit, but allowing them to be resolved after shutdown
+        # would recreate external resources from a dead context.
+        for definition in self._bean_definitions.values():
+            if not definition._destroyed:
+                definition.mark_destroyed()
+
+        self._cache.clear()
+        self._cache_metadata.clear()
+
+        # Individual errors are already logged above.  Keep ``destroy_all``
+        # non-throwing so ApplicationContext/ASGI shutdown always reaches its
+        # remaining cleanup steps.
 
     def contains_bean(self, bean_name: str) -> bool:
         return bean_name in self._bean_definitions

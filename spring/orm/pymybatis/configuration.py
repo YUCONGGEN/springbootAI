@@ -14,6 +14,7 @@ import os
 import json
 import yaml
 import re
+from collections.abc import Mapping
 from typing import Dict, List, Optional, Any
 
 
@@ -36,6 +37,72 @@ class Configuration:
 
     # 环境变量替换模式：${ENV_VAR} 或 ${ENV_VAR:default}
     ENV_VAR_PATTERN = re.compile(r'\$\{([^}]+)\}')
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        """安全转换整数，兼容 dict 格式的配置值。"""
+        if isinstance(value, dict):
+            value = value.get('value') or value.get('size') or default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        """安全转换浮点数，兼容 dict 格式的配置值。"""
+        if isinstance(value, dict):
+            value = value.get('value') or value.get('timeout') or default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
+    def _as_mapping(value: Any) -> Dict[str, Any]:
+        """Return a shallow mapping copy, or an empty mapping for malformed sections."""
+        if isinstance(value, Mapping):
+            return dict(value)
+        return {}
+
+    @staticmethod
+    def _as_list(value: Any) -> List[Any]:
+        """Normalize list-like configuration values without treating strings as iterables."""
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return []
+
+    @classmethod
+    def _as_string_list(cls, value: Any) -> List[str]:
+        """Normalize path/name lists and discard entries unsafe for filesystem APIs."""
+        return [item for item in cls._as_list(value) if isinstance(item, str) and item]
+
+    @staticmethod
+    def _as_bool(value: Any, default: bool) -> bool:
+        """Convert common configuration boolean spellings without raising."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {'1', 'true', 'yes', 'on'}:
+                return True
+            if normalized in {'0', 'false', 'no', 'off', ''}:
+                return False
+            return default
+        if value is None:
+            return default
+        return bool(value)
+
+    @staticmethod
+    def _normalize_datasources(value: Any) -> Dict[str, Dict[str, Any]]:
+        """Keep only mapping-shaped datasource entries and normalize their keys."""
+        if not isinstance(value, Mapping):
+            return {}
+        normalized: Dict[str, Dict[str, Any]] = {}
+        for name, datasource in value.items():
+            if isinstance(datasource, Mapping):
+                normalized[name] = {str(key): item for key, item in datasource.items()}
+        return normalized
 
     def __init__(self):
         # 数据源配置
@@ -207,130 +274,175 @@ class Configuration:
         if not isinstance(config, dict):
             raise ConfigurationError("ORM配置根节点必须是对象")
 
-        # 加载数据源配置（支持单数据源和多数据源两种格式）
-        if 'datasource' in config:
-            # 单数据源格式
-            self.datasources = {'default': config['datasource']}
+        # 加载数据源配置（支持单数据源和多数据源两种格式）。错误类型
+        # 只会被忽略并回退到空配置，避免 ``None.get`` 在启动阶段穿透。
+        if 'datasource' in config and isinstance(config.get('datasource'), Mapping):
+            datasource = {
+                str(key): value for key, value in config['datasource'].items()
+            }
+            self.datasources = {'default': datasource}
             self.default_datasource = 'default'
-            
+
             # 根据驱动自动设置方言
-            driver = config['datasource'].get('driver', 'mysql').lower()
-            if driver == 'sqlite':
-                self.dialect = 'sqlite'
-            elif driver == 'postgresql':
-                self.dialect = 'postgresql'
-            elif driver == 'oracle':
-                self.dialect = 'oracle'
+            driver = datasource.get('driver', 'mysql')
+            driver = driver.strip().lower() if isinstance(driver, str) else 'mysql'
+            if driver in {'sqlite', 'postgresql', 'oracle'}:
+                self.dialect = driver
             else:
                 self.dialect = 'mysql'
-
         elif 'datasources' in config:
             # 多数据源格式
-            self.datasources = config['datasources']
+            self.datasources = self._normalize_datasources(config.get('datasources'))
             if 'default' in self.datasources:
                 self.default_datasource = 'default'
+        elif 'datasource' in config:
+            # Explicitly malformed datasource should not leave a stale value
+            # from a previous load.
+            self.datasources = {}
 
         # 加载默认数据源
-        if 'default_datasource' in config:
-            self.default_datasource = config['default_datasource']
+        configured_default = config.get('default_datasource')
+        if isinstance(configured_default, str) and configured_default.strip():
+            self.default_datasource = configured_default
 
         # 加载映射器配置
         if 'mappers' in config:
-            self.mappers = config['mappers']
+            self.mappers = self._as_string_list(config.get('mappers'))
 
         # 加载XML映射文件路径（支持mapper_paths和mapper_locations两种格式）
         if 'mapper_paths' in config:
-            self.mapper_locations = config['mapper_paths']
+            self.mapper_locations = self._as_string_list(config.get('mapper_paths'))
         elif 'mapper_locations' in config:
-            self.mapper_locations = config['mapper_locations']
+            self.mapper_locations = self._as_string_list(config.get('mapper_locations'))
 
         # 加载缓存配置
         if 'cache' in config:
-            cache_config = config['cache']
-            self.cache_enabled = cache_config.get('enabled', True)
-            self.cache_type = cache_config.get('type', 'lru')
-            self.cache_size = cache_config.get('size', 1024)
-            self.cache_ttl = cache_config.get('ttl', 3600)
+            cache_config = self._as_mapping(config.get('cache'))
+            self.cache_enabled = self._as_bool(cache_config.get('enabled', True), True)
+            cache_type = cache_config.get('type', 'lru')
+            self.cache_type = cache_type if isinstance(cache_type, str) and cache_type else 'lru'
+            self.cache_size = self._safe_int(cache_config.get('size', 1024), 1024)
+            self.cache_ttl = self._safe_int(cache_config.get('ttl', 3600), 3600)
 
             # Redis缓存配置
-            if 'redis' in cache_config:
-                redis_config = cache_config['redis']
-                self.redis_cache_enabled = redis_config.get('enabled', False)
-                self.redis_cache_config = redis_config
+            redis_config = self._as_mapping(cache_config.get('redis'))
+            self.redis_cache_enabled = self._as_bool(redis_config.get('enabled', False), False)
+            self.redis_cache_config = {
+                str(key): value for key, value in redis_config.items()
+            }
 
         # 加载事务配置
         if 'transaction' in config:
-            tx_config = config['transaction']
-            self.default_transaction_isolation = tx_config.get('isolation', 'READ_COMMITTED')
-            self.default_fetch_size = tx_config.get('fetch_size', 100)
-            self.default_timeout = tx_config.get('timeout', 30)
+            tx_config = self._as_mapping(config.get('transaction'))
+            isolation = tx_config.get('isolation', 'READ_COMMITTED')
+            self.default_transaction_isolation = (
+                isolation if isinstance(isolation, str) else 'READ_COMMITTED'
+            )
+            self.default_fetch_size = self._safe_int(tx_config.get('fetch_size', 100), 100)
+            self.default_timeout = self._safe_int(tx_config.get('timeout', 30), 30)
 
         # 加载连接池配置
         if 'pool' in config:
-            pool_config = config['pool']
-            self.pool_min_size = int(pool_config.get('min_size', 5))
-            self.pool_max_size = int(pool_config.get('max_size', 20))
-            self.pool_max_idle = float(pool_config.get('max_idle', 10))
-            self.pool_wait_timeout = float(pool_config.get('wait_timeout', 30))
-            self.pool_validation_interval = float(pool_config.get('validation_interval', 300))
-            self.leak_detection_enabled = pool_config.get('leak_detection_enabled', True)
-            self.leak_timeout = float(pool_config.get('leak_timeout', 300))
+            pool_config = self._as_mapping(config.get('pool'))
+            self.pool_min_size = self._safe_int(pool_config.get('min_size', 5), 5)
+            self.pool_max_size = self._safe_int(pool_config.get('max_size', 20), 20)
+            self.pool_max_idle = self._safe_float(pool_config.get('max_idle', 10), 10.0)
+            self.pool_wait_timeout = self._safe_float(pool_config.get('wait_timeout', 30), 30.0)
+            self.pool_validation_interval = self._safe_float(
+                pool_config.get('validation_interval', 300), 300.0
+            )
+            self.leak_detection_enabled = self._as_bool(
+                pool_config.get('leak_detection_enabled', True), True
+            )
+            self.leak_timeout = self._safe_float(pool_config.get('leak_timeout', 300), 300.0)
 
             # 熔断器配置
-            if 'circuit_breaker' in pool_config:
-                cb_config = pool_config['circuit_breaker']
-                self.circuit_breaker_enabled = cb_config.get('enabled', False)
-                self.circuit_breaker_failure_threshold = int(cb_config.get('failure_threshold', 3))
-                self.circuit_breaker_recovery_timeout = float(cb_config.get('recovery_timeout', 60))
-                self.circuit_breaker_success_threshold = int(cb_config.get('success_threshold', 3))
+            cb_config = self._as_mapping(pool_config.get('circuit_breaker'))
+            self.circuit_breaker_enabled = self._as_bool(
+                cb_config.get('enabled', False), False
+            )
+            self.circuit_breaker_failure_threshold = self._safe_int(
+                cb_config.get('failure_threshold', 3), 3
+            )
+            self.circuit_breaker_recovery_timeout = self._safe_float(
+                cb_config.get('recovery_timeout', 60), 60.0
+            )
+            self.circuit_breaker_success_threshold = self._safe_int(
+                cb_config.get('success_threshold', 3), 3
+            )
 
         # 加载安全配置
         if 'security' in config:
-            security_config = config['security']
-            self.sql_injection_detection = security_config.get('sql_injection_detection', True)
-            self.ast_validation_enabled = security_config.get('ast_validation_enabled', False)
-            self.sensitive_data_masking = security_config.get('sensitive_data_masking', True)
-            self.access_control_enabled = security_config.get('access_control_enabled', False)
-            self.log_masking_enabled = security_config.get('log_masking_enabled', True)
-            self.block_ddl = security_config.get('block_ddl', True)
-            self.allow_raw_params = security_config.get('allow_raw_params', False)
-            self.allowed_tables = security_config.get('allowed_tables', [])
-            self.allowed_columns = security_config.get('allowed_columns', [])
+            security_config = self._as_mapping(config.get('security'))
+            self.sql_injection_detection = self._as_bool(
+                security_config.get('sql_injection_detection', True), True
+            )
+            self.ast_validation_enabled = self._as_bool(
+                security_config.get('ast_validation_enabled', False), False
+            )
+            self.sensitive_data_masking = self._as_bool(
+                security_config.get('sensitive_data_masking', True), True
+            )
+            self.access_control_enabled = self._as_bool(
+                security_config.get('access_control_enabled', False), False
+            )
+            self.log_masking_enabled = self._as_bool(
+                security_config.get('log_masking_enabled', True), True
+            )
+            self.block_ddl = self._as_bool(security_config.get('block_ddl', True), True)
+            self.allow_raw_params = self._as_bool(
+                security_config.get('allow_raw_params', False), False
+            )
+            self.allowed_tables = self._as_list(security_config.get('allowed_tables', []))
+            self.allowed_columns = self._as_list(security_config.get('allowed_columns', []))
 
         # 加载性能配置
         if 'performance' in config:
-            perf_config = config['performance']
-            self.sql_precompile_cache = perf_config.get('sql_precompile_cache', True)
-            self.result_map_cache = perf_config.get('result_map_cache', True)
-            self.lazy_load_mappers = perf_config.get('lazy_load_mappers', True)
+            perf_config = self._as_mapping(config.get('performance'))
+            self.sql_precompile_cache = self._as_bool(
+                perf_config.get('sql_precompile_cache', True), True
+            )
+            self.result_map_cache = self._as_bool(
+                perf_config.get('result_map_cache', True), True
+            )
+            self.lazy_load_mappers = self._as_bool(
+                perf_config.get('lazy_load_mappers', True), True
+            )
 
         # 加载批量操作配置
         if 'batch' in config:
-            batch_config = config['batch']
-            self.max_batch_size = batch_config.get('max_size', 1000)
-            self.batch_split_size = batch_config.get('split_size', 100)
+            batch_config = self._as_mapping(config.get('batch'))
+            self.max_batch_size = self._safe_int(batch_config.get('max_size', 1000), 1000)
+            self.batch_split_size = self._safe_int(batch_config.get('split_size', 100), 100)
 
         # 加载方言配置
-        if 'dialect' in config:
-            self.dialect = config['dialect']
+        if 'dialect' in config and isinstance(config.get('dialect'), str):
+            dialect = config['dialect'].strip().lower()
+            if dialect:
+                self.dialect = dialect
 
         # 加载日志配置
         if 'logging' in config:
-            logging_config = config['logging']
-            self.log_level = logging_config.get('level', 'INFO')
-            self.log_file = logging_config.get('file')
+            logging_config = self._as_mapping(config.get('logging'))
+            level = logging_config.get('level', 'INFO')
+            self.log_level = level if isinstance(level, str) and level else 'INFO'
+            log_file = logging_config.get('file')
+            self.log_file = log_file if isinstance(log_file, str) else None
 
         # 加载分页配置
         if 'pagination' in config:
-            pagination_config = config['pagination']
-            self.max_pagination_offset = pagination_config.get('max_offset', 10000)
+            pagination_config = self._as_mapping(config.get('pagination'))
+            self.max_pagination_offset = self._safe_int(
+                pagination_config.get('max_offset', 10000), 10000
+            )
 
         # 加载监控指标配置
         if 'metrics' in config:
-            metrics_config = config['metrics']
-            self.metrics_enabled = metrics_config.get('enabled', False)
-            self.metrics_endpoint = metrics_config.get('endpoint', '/metrics')
-            self.metrics_port = metrics_config.get('port', 9090)
+            metrics_config = self._as_mapping(config.get('metrics'))
+            self.metrics_enabled = self._as_bool(metrics_config.get('enabled', False), False)
+            endpoint = metrics_config.get('endpoint', '/metrics')
+            self.metrics_endpoint = endpoint if isinstance(endpoint, str) and endpoint else '/metrics'
+            self.metrics_port = self._safe_int(metrics_config.get('port', 9090), 9090)
 
         self._validate()
 

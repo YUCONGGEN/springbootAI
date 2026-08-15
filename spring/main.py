@@ -1,6 +1,7 @@
 from typing import Type, Optional
 import socket
 import sys
+import asyncio
 from spring.context.application_context import ApplicationContext
 from spring.web.web_context import WebApplicationContext
 from spring.utils.banner import BannerPrinter
@@ -44,6 +45,28 @@ class SpringApplication:
         self._discovery_registered = False
         self._background_started = False
 
+    @staticmethod
+    def _section(value: object) -> dict:
+        """Return a config section as a dictionary for defensive reads."""
+        return value if isinstance(value, dict) else {}
+
+    def _cleanup_after_start_failure(self) -> None:
+        """Release context-owned resources when web startup aborts."""
+        context = self.application_context
+        if context is None:
+            return
+        try:
+            context.destroy()
+        except Exception as cleanup_error:
+            logger = getattr(self, 'logger', None)
+            if logger is not None:
+                try:
+                    logger.warning(
+                        f"Failed to clean up application context after startup error: {cleanup_error}"
+                    )
+                except Exception:
+                    pass
+
     def run(self, **kwargs) -> None:
         banner = BannerPrinter()
         banner.print_banner()
@@ -54,14 +77,17 @@ class SpringApplication:
         except LoggingConfigError as e:
             # 日志配置错误：错误信息已格式化（含配置项/值/原因/建议），
             # 干净退出不输出框架 traceback，让用户一眼定位问题
+            self._cleanup_after_start_failure()
             print(f"\n应用启动失败（日志配置错误）:\n{e}\n", file=sys.stderr)
             sys.exit(1)
         except ComponentInitError as e:
             # 组件初始化失败：错误信息已格式化（含组件名/配置/原因/建议），
             # 干净退出不输出框架 traceback
+            self._cleanup_after_start_failure()
             print(f"\n应用启动失败（组件初始化失败）:\n{e}\n", file=sys.stderr)
             sys.exit(1)
         except Exception as e:
+            self._cleanup_after_start_failure()
             self.logger.error(f"Application failed to start: {str(e)}")
             raise
 
@@ -74,6 +100,10 @@ class SpringApplication:
         """脱敏配置中的敏感字段（密码/密钥等），用于错误输出。"""
         if not config:
             return {}
+        if not isinstance(config, dict):
+            # Error reporting must remain safe even when a malformed optional
+            # section (for example ``rabbitmq: []``) reaches this boundary.
+            return {'value': config}
         masked = {}
         for k, v in config.items():
             if k.lower() in _SENSITIVE_CONFIG_KEYS:
@@ -245,61 +275,66 @@ class SpringApplication:
 
         # 初始化日志（init_logging 内部已通过 strict 校验抛 LoggingConfigError，
         # 由 run() 专门捕获，此处不再包裹 try/except）
-        init_logging(config.get('logging', {}))
+        init_logging(self._section(config.get('logging')))
 
         # 初始化Redis（延迟导入）
-        if config.get('redis', {}).get('enabled', True):
+        redis_config = self._section(config.get('redis'))
+        if redis_config.get('enabled', True):
             try:
                 from spring.utils.redis_client import init_redis
-                init_redis(config.get('redis', {}))
+                init_redis(redis_config)
                 self.logger.info("Redis initialized")
             except Exception as e:
-                self._handle_init_error('Redis', config.get('redis', {}), e, fail_fast)
+                self._handle_init_error('Redis', redis_config, e, fail_fast)
 
         # 初始化JWT（延迟导入，JWT 为核心依赖，不区分 enabled）
         try:
             from spring.security.jwt_utils import init_jwt
-            init_jwt(config.get('jwt', {}))
+            init_jwt(self._section(config.get('jwt')))
             self.logger.info("JWT initialized")
         except Exception as e:
-            self._handle_init_error('JWT', config.get('jwt', {}), e, fail_fast)
+            self._handle_init_error('JWT', self._section(config.get('jwt')), e, fail_fast)
 
         # 初始化数据库（延迟导入）
-        database_config = config.get('database', {})
+        database_config = self._section(config.get('database'))
         orm_mode = str(database_config.get('orm', 'mybatis')).lower()
         if database_config.get('enabled', False) and orm_mode in {'sqlalchemy', 'both'}:
             try:
                 from spring.orm.database import init_database
-                init_database(config.get('database', {}))
+                init_database(database_config)
                 self.logger.info("Database initialized")
             except Exception as e:
-                self._handle_init_error('Database', config.get('database', {}), e, fail_fast)
+                self._handle_init_error('Database', database_config, e, fail_fast)
 
         # 初始化Nacos服务发现（延迟导入）
-        discovery_enabled = config.get('discovery', {}).get('enabled', False) or any(
+        discovery_config = self._section(config.get('discovery'))
+        discovery_enabled = discovery_config.get('enabled', False) or any(
             isinstance(item, EnableDiscoveryClient)
             for item in getattr(self.main_class, '__spring_annotations__', [])
         )
         if discovery_enabled:
             try:
                 from spring.cloud.discovery import init_discovery
-                init_discovery(config.get('discovery', {}))
+                init_discovery(discovery_config)
                 self.logger.info("Service discovery initialized")
             except Exception as e:
-                self._handle_init_error('Discovery', config.get('discovery', {}), e, fail_fast)
+                self._handle_init_error('Discovery', discovery_config, e, fail_fast)
 
         # 初始化Seata分布式事务（延迟导入）
-        if config.get('seata', {}).get('enabled', False):
+        seata_config = self._section(config.get('seata'))
+        if seata_config.get('enabled', False):
             try:
                 from spring.cloud.seata import init_seata
-                init_seata(config.get('seata', {}))
+                init_seata(seata_config)
                 self.logger.info("Seata distributed transaction initialized")
             except Exception as e:
-                self._handle_init_error('Seata', config.get('seata', {}), e, fail_fast)
+                self._handle_init_error('Seata', seata_config, e, fail_fast)
 
         # 初始化Spring Cloud Config配置中心（延迟导入）
         # 支持两种启用方式：配置文件 spring.cloud.config.enabled=true 或 @EnableConfigServer 注解
-        config_center_cfg = config.get('spring', {}).get('cloud', {}).get('config', {})
+        spring_config = self._section(config.get('spring'))
+        cloud_config = self._section(spring_config.get('cloud'))
+        config_center_cfg = self._section(cloud_config.get('config'))
         config_center_annotation = self._find_annotation(EnableConfigServer)
         config_center_enabled = config_center_cfg.get('enabled', False) or config_center_annotation is not None
         if config_center_enabled:
@@ -327,7 +362,7 @@ class SpringApplication:
 
         # 初始化Spring Cloud Bus事件总线（延迟导入）
         # 支持两种启用方式：配置文件 spring.cloud.bus.enabled=true 或 @EnableBus 注解
-        bus_cfg = config.get('spring', {}).get('cloud', {}).get('bus', {})
+        bus_cfg = self._section(cloud_config.get('bus'))
         bus_annotation = self._find_annotation(EnableBus)
         bus_enabled = bus_cfg.get('enabled', False) or bus_annotation is not None
         if bus_enabled:
@@ -348,17 +383,18 @@ class SpringApplication:
                 self._handle_init_error('CloudBus', bus_cfg, e, fail_fast)
 
         # 初始化RabbitMQ（延迟导入）
-        if config.get('rabbitmq', {}).get('enabled', False):
+        rabbitmq_config = self._section(config.get('rabbitmq'))
+        if rabbitmq_config.get('enabled', False):
             try:
                 from spring.messaging.rabbitmq import init_rabbitmq
-                init_rabbitmq(config.get('rabbitmq', {}))
+                init_rabbitmq(rabbitmq_config)
                 self.logger.info("RabbitMQ initialized")
             except Exception as e:
-                self._handle_init_error('RabbitMQ', config.get('rabbitmq', {}), e, fail_fast)
+                self._handle_init_error('RabbitMQ', rabbitmq_config, e, fail_fast)
 
         # 初始化Kafka（延迟导入，配置 key 为 spring.kafka）
-        kafka_config = config.get('spring', {}).get('kafka', {})
-        if kafka_config:
+        kafka_config = self._section(spring_config.get('kafka'))
+        if kafka_config.get('enabled', False):
             try:
                 from spring.messaging.kafka import init_kafka
                 init_kafka(config)
@@ -368,9 +404,10 @@ class SpringApplication:
 
         # 初始化OAuth2资源服务器（延迟导入）
         # 支持两种启用方式：配置文件 spring.security.oauth2.* 或 @EnableOAuth2 注解
-        oauth2_config = config.get('spring', {}).get('security', {}).get('oauth2', {})
+        security_config = self._section(spring_config.get('security'))
+        oauth2_config = self._section(security_config.get('oauth2'))
         oauth2_annotation = self._find_annotation(EnableOAuth2)
-        oauth2_enabled = bool(oauth2_config) or oauth2_annotation is not None
+        oauth2_enabled = bool(oauth2_config.get('enabled', False)) or oauth2_annotation is not None
         if oauth2_enabled:
             try:
                 if oauth2_annotation:
@@ -398,7 +435,8 @@ class SpringApplication:
 
         # 初始化CSRF防护（延迟导入）
         # 支持两种启用方式：配置文件 server.csrf.enabled=true 或 @EnableCsrf 注解
-        csrf_config = config.get('server', {}).get('csrf', {})
+        server_config = self._section(config.get('server'))
+        csrf_config = self._section(server_config.get('csrf'))
         csrf_annotation = self._find_annotation(EnableCsrf)
         csrf_enabled = csrf_config.get('enabled', False) or csrf_annotation is not None
         if csrf_enabled:
@@ -423,17 +461,18 @@ class SpringApplication:
                 self._handle_init_error('CSRF', csrf_config, e, fail_fast)
 
         # 初始化Prometheus监控（延迟导入）
-        if config.get('prometheus', {}).get('enabled', False):
+        prometheus_config = self._section(config.get('prometheus'))
+        if prometheus_config.get('enabled', False):
             try:
                 from spring.monitoring.prometheus import init_prometheus
-                init_prometheus(config.get('prometheus', {}))
+                init_prometheus(prometheus_config)
                 self.logger.info("Prometheus monitoring initialized")
             except Exception as e:
-                self._handle_init_error('Prometheus', config.get('prometheus', {}), e, fail_fast)
+                self._handle_init_error('Prometheus', prometheus_config, e, fail_fast)
 
         # 初始化DevTools热重载（仅开发环境）
         # 支持两种启用方式：配置文件 spring.devtools.restart.enabled=true 或 @EnableDevTools 注解
-        devtools_config = config.get('spring', {}).get('devtools', {}).get('restart', {})
+        devtools_config = self._section(self._section(spring_config.get('devtools')).get('restart'))
         devtools_annotation = self._find_annotation(EnableDevTools)
         devtools_enabled = devtools_config.get('enabled', False) or devtools_annotation is not None
         if devtools_enabled:
@@ -464,7 +503,7 @@ class SpringApplication:
 
         # 初始化Spring Data REST（扫描 @RepositoryRestResource 标记的 Repository）
         # 支持两种启用方式：配置文件 spring.data.rest.enabled=true 或 @EnableDataRest 注解
-        data_rest_cfg = config.get('spring', {}).get('data', {}).get('rest', {})
+        data_rest_cfg = self._section(self._section(spring_config.get('data')).get('rest'))
         data_rest_annotation = self._find_annotation(EnableDataRest)
         data_rest_enabled = data_rest_cfg.get('enabled', False) or data_rest_annotation is not None
         if data_rest_enabled:
@@ -480,20 +519,37 @@ class SpringApplication:
     def _prepare_context(self) -> None:
         self.logger.info("Preparing application context...")
         self.application_context = ApplicationContext(self.main_class)
-        self._init_enterprise_components()
-        config = self.application_context.get_config()
-        fail_fast = self._should_fail_fast(config)
-
-        # 在refresh之前先初始化MyBatis，确保Mapper在组件扫描时可用
         try:
-            init_mybatis(self.application_context)
-            self.logger.info("MyBatis integration initialized")
-        except Exception as e:
-            self._handle_init_error('MyBatis', config.get('database', {}), e, fail_fast)
+            self._init_enterprise_components()
+            config = self.application_context.get_config()
+            fail_fast = self._should_fail_fast(config)
 
-        self.application_context.refresh()
+            # 在refresh之前先初始化MyBatis，确保Mapper在组件扫描时可用
+            try:
+                init_mybatis(self.application_context)
+                self.logger.info("MyBatis integration initialized")
+            except Exception as e:
+                self._handle_init_error('MyBatis', self._section(config.get('database')), e, fail_fast)
 
-        self.logger.info(f"Registered {self.application_context.bean_factory.get_bean_count()} beans")
+            self.application_context.refresh()
+
+            self.logger.info(f"Registered {self.application_context.bean_factory.get_bean_count()} beans")
+        except Exception:
+            # MyBatis is initialized before refresh so mapper dependencies are
+            # available during component construction.  If a later startup
+            # phase fails, the normal refresh rollback cannot see or destroy
+            # that pre-existing factory.  Tear down the whole context here so
+            # failed starts do not retain SQLite/MySQL handles or background
+            # resources (especially important for reloaders and Windows).
+            context = self.application_context
+            if context is not None:
+                try:
+                    context.destroy()
+                except Exception as cleanup_error:
+                    self.logger.warning(
+                        f"Failed to clean up application context after startup error: {cleanup_error}"
+                    )
+            raise
 
     def _on_app_startup(self) -> None:
         """在 ASGI worker 已启动后创建后台线程并注册服务。"""
@@ -501,28 +557,32 @@ class SpringApplication:
             return
         config = self.application_context.get_config()
         fail_fast = self._should_fail_fast(config)
-        if config.get('seata', {}).get('enabled', False) and str(
-            config.get('seata', {}).get('mode', 'local')
+        seata_config = self._section(config.get('seata'))
+        if seata_config.get('enabled', False) and str(
+            seata_config.get('mode', 'local')
         ).lower() == 'http':
             try:
                 from spring.cloud.seata import seata_manager
                 seata_manager.start_recovery_worker()
             except Exception as exc:
-                self._handle_init_error('Seata HTTP Recovery', config.get('seata', {}), exc, fail_fast)
-        if config.get('rabbitmq', {}).get('enabled', False):
+                self._handle_init_error('Seata HTTP Recovery', seata_config, exc, fail_fast)
+        rabbitmq_config = self._section(config.get('rabbitmq'))
+        if rabbitmq_config.get('enabled', False):
             try:
                 from spring.messaging.rabbitmq import rabbitmq_client
                 rabbitmq_client.start_consuming_background()
             except Exception as exc:
-                self._handle_init_error('RabbitMQ Consumer', config.get('rabbitmq', {}), exc, fail_fast)
+                self._handle_init_error('RabbitMQ Consumer', rabbitmq_config, exc, fail_fast)
         # 启动 Kafka 消费者后台线程（延迟导入）
-        if config.get('spring', {}).get('kafka', {}):
+        spring_config = self._section(config.get('spring'))
+        kafka_config = self._section(spring_config.get('kafka'))
+        if kafka_config.get('enabled', False):
             try:
                 from spring.messaging.kafka import kafka_client
                 kafka_client.start_consuming()
             except Exception as exc:
-                self._handle_init_error('Kafka Consumer', config.get('spring', {}).get('kafka', {}), exc, fail_fast)
-        port = config.get('server', {}).get('port', 8080)
+                self._handle_init_error('Kafka Consumer', kafka_config, exc, fail_fast)
+        port = self._section(config.get('server')).get('port', 8080)
         self._register_discovery_service(port)
         self._background_started = True
 
@@ -534,40 +594,47 @@ class SpringApplication:
 
     @staticmethod
     def _should_fail_fast(config: dict) -> bool:
-        startup_config = config.get('startup', {}) or {}
+        if not isinstance(config, dict):
+            return False
+        startup_config = config.get('startup', {})
+        startup_config = startup_config if isinstance(startup_config, dict) else {}
         if 'fail_fast' in startup_config:
             value = startup_config['fail_fast']
             if isinstance(value, str):
                 return value.strip().lower() in {'true', '1', 'yes', 'on'}
             return bool(value)
-        spring_config = config.get('spring', {}) or {}
-        profile_config = spring_config.get('profiles', {}) or {}
+        spring_config = config.get('spring', {})
+        spring_config = spring_config if isinstance(spring_config, dict) else {}
+        profile_config = spring_config.get('profiles', {})
+        profile_config = profile_config if isinstance(profile_config, dict) else {}
         profile = str(profile_config.get('active', 'default')).lower()
         return profile in {'prod', 'production'}
 
     def _production_security_check(self, config: dict) -> None:
         """生产环境安全检查"""
+        if not isinstance(config, dict):
+            config = {}
         warnings = []
         # 检查JWT密钥是否为默认值
-        jwt_config = config.get('jwt', {})
+        jwt_config = self._section(config.get('jwt'))
         jwt_secret = jwt_config.get('secret_key', '')
         if jwt_secret in ('', 'your-secret-key', 'secret', 'changeme', 'springpy-secret'):
             warnings.append("JWT secret_key is default/empty, MUST set strong secret in production")
 
         # 检查数据库是否无密码
-        db_config = config.get('database', {})
+        db_config = self._section(config.get('database'))
         if db_config.get('enabled', False) and not db_config.get('password'):
             warnings.append("Database password is empty, MUST set password in production")
 
         # 检查CORS是否全开
-        server_config = config.get('server', {}) or {}
-        cors_config = server_config.get('cors', config.get('cors', {})) or {}
+        server_config = self._section(config.get('server'))
+        cors_config = self._section(server_config.get('cors', config.get('cors', {})))
         allow_origins = cors_config.get('allow_origins', [])
         if '*' in (allow_origins if isinstance(allow_origins, list) else [allow_origins]):
             warnings.append("CORS allows all origins (*), restrict to specific domains in production")
 
         # 检查是否启用了debug模式
-        if config.get('debug', False) or config.get('server', {}).get('debug', False):
+        if config.get('debug', False) or server_config.get('debug', False):
             warnings.append("Debug mode is enabled, MUST disable in production")
 
         # 检查Docker IP自动检测
@@ -595,7 +662,7 @@ class SpringApplication:
                 )
                 self.logger.info("CSRF middleware registered")
         except Exception:
-            pass
+            self.logger.debug("Non-critical operation skipped")
 
         # 注册 @RepositoryRestResource 标记的 Repository REST 端点
         pending_controllers = getattr(self, '_pending_rest_controllers', [])
@@ -614,11 +681,11 @@ class SpringApplication:
             # 注册资源关闭钩子
             shutdown_handler.register_hook("discovery_deregister", self._deregister_discovery_service, order=10)
         except Exception:
-            pass
+            self.logger.debug("Non-critical operation skipped")
 
         # 从配置获取端口和主机
         config = self.application_context.get_config()
-        server_config = config.get('server', {})
+        server_config = self._section(config.get('server'))
         
         port = kwargs.get('port', server_config.get('port', 8080))
         host = kwargs.get('host', server_config.get('host', '0.0.0.0'))  # nosec B104 - server bind is operator controlled
@@ -628,39 +695,42 @@ class SpringApplication:
 
         self.web_context.run(host=host, port=port)
 
-    def _on_app_shutdown(self):
+    async def _on_app_shutdown(self):
         """ASGI应用关闭事件回调"""
         try:
             from spring.cloud.seata import seata_manager
             seata_manager.stop_recovery_worker()
         except Exception:
-            pass
+            self.logger.debug("Non-critical operation skipped")
         # 停止 Kafka 消费者线程
         try:
             from spring.messaging.kafka import kafka_client
             kafka_client.stop_consuming()
         except Exception:
-            pass
+            self.logger.debug("Non-critical operation skipped")
         try:
             from spring.core.graceful_shutdown import shutdown_handler
             if not shutdown_handler._signal_received:
                 # 如果是ASGI服务器直接关闭（非信号触发），执行关闭钩子
-                shutdown_handler.initiate_shutdown()
+                # Run the synchronous drain/hook coordinator off the ASGI
+                # event-loop thread.  Async hooks bound to this loop can then
+                # make progress while ``GracefulShutdown`` waits for them.
+                await asyncio.to_thread(shutdown_handler.initiate_shutdown)
         except Exception:
-            pass
+            self.logger.debug("Non-critical operation skipped")
 
     def _register_discovery_service(self, port: int) -> None:
         """Register the running application after its HTTP port is known."""
         annotations = getattr(self.main_class, '__spring_annotations__', [])
         enabled = any(isinstance(item, EnableDiscoveryClient) for item in annotations)
         config = self.application_context.get_config()
-        discovery_config = config.get('discovery', {})
+        discovery_config = self._section(config.get('discovery'))
         if not enabled and not discovery_config.get('enabled', False):
             return
-        service_name = (
-            config.get('spring', {}).get('application', {}).get('name')
-            or config.get('application', {}).get('name')
-        )
+        spring_config = self._section(config.get('spring'))
+        application_config = self._section(spring_config.get('application'))
+        root_application_config = self._section(config.get('application'))
+        service_name = application_config.get('name') or root_application_config.get('name')
         if not service_name:
             self.logger.warning("Discovery enabled but spring.application.name is missing")
             return
@@ -709,13 +779,17 @@ def run(main_class: Type, **kwargs) -> None:
 def create_app(main_class: Type):
     """构建ASGI应用，供Uvicorn/Gunicorn等生产进程管理器加载。"""
     application = SpringApplication(main_class)
-    application._prepare_context()
-    application.web_context = WebApplicationContext(application.application_context)
-    application.web_context.init()
-    application._configure_web_lifecycle()
-    asgi_app = application.web_context.get_app()
-    asgi_app.state.spring_application = application
-    return asgi_app
+    try:
+        application._prepare_context()
+        application.web_context = WebApplicationContext(application.application_context)
+        application.web_context.init()
+        application._configure_web_lifecycle()
+        asgi_app = application.web_context.get_app()
+        asgi_app.state.spring_application = application
+        return asgi_app
+    except Exception:
+        application._cleanup_after_start_failure()
+        raise
 
 
 def run_cli():
@@ -735,8 +809,7 @@ def run_cli():
     if len(sys.argv) > 1 and sys.argv[1] in _KNOWN_SUBCOMMANDS:
         # 子命令模式：委托给 spring.cli.main
         from spring.cli.main import main as cli_main
-        cli_main()
-        return
+        return cli_main()
 
     # 传统启动模式：springbootai myapp.Application --port 8080
     import argparse
@@ -762,3 +835,4 @@ def run_cli():
 
     # Run application
     run(main_class, port=args.port, host=args.host)
+    return 0

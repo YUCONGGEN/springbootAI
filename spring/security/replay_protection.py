@@ -31,8 +31,17 @@ class NonceCache:
 
     def __init__(self, max_size: int = DEFAULT_NONCE_CACHE_SIZE, ttl: int = DEFAULT_TIMESTAMP_WINDOW):
         self._cache: "OrderedDict[str, float]" = OrderedDict()
-        self._max_size = max_size
-        self._ttl = ttl
+        # Zero/negative values make the eviction loop call ``popitem`` on an
+        # empty cache.  Normalize malformed configuration to a minimal usable
+        # cache so replay validation fails closed without an internal crash.
+        try:
+            self._max_size = max(1, int(max_size))
+        except (TypeError, ValueError):
+            self._max_size = DEFAULT_NONCE_CACHE_SIZE
+        try:
+            self._ttl = max(1, int(ttl))
+        except (TypeError, ValueError):
+            self._ttl = DEFAULT_TIMESTAMP_WINDOW
         self._lock = threading.RLock()
         self._last_cleanup = time.monotonic()
 
@@ -78,7 +87,10 @@ class RedisNonceCache:
     def __init__(self, redis_client, key_prefix: str = "springpy:nonce:", ttl: int = DEFAULT_TIMESTAMP_WINDOW):
         self._redis = redis_client
         self._prefix = key_prefix
-        self._ttl = ttl
+        try:
+            self._ttl = max(1, int(ttl))
+        except (TypeError, ValueError):
+            self._ttl = DEFAULT_TIMESTAMP_WINDOW
 
     def check_and_add(self, nonce: str) -> bool:
         key = f"{self._prefix}{nonce}"
@@ -108,8 +120,13 @@ class ReplayProtection:
                  timestamp_window: int = DEFAULT_TIMESTAMP_WINDOW,
                  nonce_cache=None,
                  redis_client=None):
+        if not isinstance(secret_key, str) or not secret_key:
+            raise ValueError("secret_key must be a non-empty string")
         self.secret_key = secret_key.encode('utf-8')
-        self.timestamp_window = timestamp_window
+        try:
+            self.timestamp_window = max(1, int(timestamp_window))
+        except (TypeError, ValueError):
+            self.timestamp_window = DEFAULT_TIMESTAMP_WINDOW
 
         if nonce_cache:
             self.nonce_cache = nonce_cache
@@ -159,7 +176,7 @@ class ReplayProtection:
             return False, "Invalid timestamp format"
 
         # 2. 验证Nonce
-        if not nonce or len(nonce) < 8:
+        if not isinstance(nonce, str) or len(nonce) < 8:
             return False, "Invalid or missing nonce (minimum 8 characters)"
 
         if not self.nonce_cache.check_and_add(nonce):

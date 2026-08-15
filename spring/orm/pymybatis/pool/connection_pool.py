@@ -56,6 +56,10 @@ class PooledConnection:
         self.in_use = False
         self._lock = threading.RLock()
         self._checkout_time = None
+        # Disposal can race with ``ConnectionPool.close`` and a concurrent
+        # request returning the same connection.  Keep the transition
+        # idempotent so the raw connection and pool counters are updated once.
+        self._disposed = False
 
     def __enter__(self):
         """上下文管理器进入"""
@@ -68,6 +72,8 @@ class PooledConnection:
     def mark_in_use(self):
         """标记连接为使用中"""
         with self._lock:
+            if self._disposed:
+                raise RuntimeError("连接已被处置，不能再次借用")
             if self.in_use:
                 raise RuntimeError("连接已被借出，不能重复借用")
             self.in_use = True
@@ -123,13 +129,15 @@ class ConnectionPool(ABC):
 
     def __init__(self, config: Dict[str, Any]):
         self.config = dict(config)
-        self.min_size = int(config.get('min_size', 5))
-        self.max_size = int(config.get('max_size', 20))
-        self.max_idle = float(config.get('max_idle', 10))
-        self.wait_timeout = float(config.get('wait_timeout', 30))
-        self.validation_interval = float(config.get('validation_interval', 300))
+        self.min_size = self._safe_int(config.get('min_size', 5), 5)
+        self.max_size = self._safe_int(config.get('max_size', 20), 20)
+        self.max_idle = self._safe_float(config.get('max_idle', 10), 10.0)
+        self.wait_timeout = self._safe_float(config.get('wait_timeout', 30), 30.0)
+        self.validation_interval = self._safe_float(
+            config.get('validation_interval', 300), 300.0
+        )
         self.leak_detection_enabled = self._as_bool(config.get('leak_detection_enabled', True))
-        self.leak_timeout = float(config.get('leak_timeout', 300))
+        self.leak_timeout = self._safe_float(config.get('leak_timeout', 300), 300.0)
 
         if self.min_size < 0:
             raise ValueError("min_size 不能小于 0")
@@ -144,9 +152,15 @@ class ConnectionPool(ABC):
 
         # 熔断器配置
         self.circuit_breaker_enabled = self._as_bool(config.get('circuit_breaker_enabled', False))
-        self.circuit_breaker_failure_threshold = int(config.get('circuit_breaker_failure_threshold', 3))
-        self.circuit_breaker_recovery_timeout = float(config.get('circuit_breaker_recovery_timeout', 60))
-        self.circuit_breaker_success_threshold = int(config.get('circuit_breaker_success_threshold', 3))
+        self.circuit_breaker_failure_threshold = self._safe_int(
+            config.get('circuit_breaker_failure_threshold', 3), 3
+        )
+        self.circuit_breaker_recovery_timeout = self._safe_float(
+            config.get('circuit_breaker_recovery_timeout', 60), 60.0
+        )
+        self.circuit_breaker_success_threshold = self._safe_int(
+            config.get('circuit_breaker_success_threshold', 3), 3
+        )
 
         self._pool: queue.Queue = queue.Queue(maxsize=self.max_size)
         self._active_count = 0
@@ -183,6 +197,28 @@ class ConnectionPool(ABC):
         if isinstance(value, str):
             return value.strip().lower() in {'1', 'true', 'yes', 'on'}
         return bool(value)
+
+    @staticmethod
+    def _safe_int(value: Any, default: int) -> int:
+        """Convert loosely typed configuration without leaking ``TypeError``."""
+        if isinstance(value, dict):
+            value = value.get('value') or value.get('size') or default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            logger.warning("Invalid integer pool setting %r; using %s", value, default)
+            return default
+
+    @staticmethod
+    def _safe_float(value: Any, default: float) -> float:
+        """Convert loosely typed configuration without leaking ``ValueError``."""
+        if isinstance(value, dict):
+            value = value.get('value') or value.get('timeout') or default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            logger.warning("Invalid numeric pool setting %r; using %s", value, default)
+            return default
 
     @abstractmethod
     def _create_connection(self) -> Any:
@@ -292,12 +328,30 @@ class ConnectionPool(ABC):
                             f"获取连接超时，最大连接数已达上限: {self.max_size}"
                         ) from exc
 
+            # A close/return race may leave a disposed wrapper in the queue;
+            # discard it before validation rather than surfacing a RuntimeError
+            # from ``mark_in_use`` to the request.
+            if pooled_conn._disposed:
+                self._dispose_connection(pooled_conn)
+                continue
+
             if not pooled_conn.is_valid():
                 logger.warning("检测到无效连接，关闭并重新获取")
                 self._dispose_connection(pooled_conn)
                 continue
 
-            pooled_conn.mark_in_use()
+            try:
+                pooled_conn.mark_in_use()
+            except RuntimeError:
+                # ``close()`` may dispose a connection after the flag check but
+                # before the checkout transition.  Treat that race as a pool
+                # outage (or retry while the pool is still open), while
+                # preserving the error for a genuine double checkout.
+                if not pooled_conn._disposed:
+                    raise
+                if self._closed:
+                    raise ConnectionError("连接池已关闭")
+                continue
             with self._lock:
                 if self._closed:
                     pooled_conn.mark_free()
@@ -328,6 +382,9 @@ class ConnectionPool(ABC):
 
     def _dispose_connection(self, pooled_conn: PooledConnection) -> None:
         with self._lock:
+            if pooled_conn._disposed:
+                return
+            pooled_conn._disposed = True
             self._active_connections.discard(pooled_conn)
             self._active_count = len(self._active_connections)
             if self._total_connections > 0:
@@ -341,7 +398,7 @@ class ConnectionPool(ABC):
         Args:
             pooled_conn: 池化连接对象
         """
-        if pooled_conn.pool is not self:
+        if not isinstance(pooled_conn, PooledConnection) or pooled_conn.pool is not self:
             raise ValueError("连接不属于当前连接池")
         if not pooled_conn.in_use:
             raise ValueError("连接已归还，不能重复归还")
@@ -409,7 +466,20 @@ class ConnectionPool(ABC):
                     valid_connections.append(pooled_conn)
 
             for pooled_conn in valid_connections:
-                self._pool.put_nowait(pooled_conn)
+                dispose = False
+                with self._lock:
+                    if self._closed or pooled_conn._disposed:
+                        dispose = True
+                    else:
+                        try:
+                            self._pool.put_nowait(pooled_conn)
+                        except queue.Full:
+                            # A concurrent return may have filled the queue
+                            # after the drain above.  Dispose the surplus
+                            # instead of propagating an incidental queue.Full.
+                            dispose = True
+                if dispose:
+                    self._dispose_connection(pooled_conn)
 
             while not self._closed:
                 with self._lock:
@@ -460,14 +530,14 @@ class ConnectionPool(ABC):
                 return
             self._closed = True
             active_connections = list(self._active_connections)
+            idle_connections = []
+            while True:
+                try:
+                    idle_connections.append(self._pool.get_nowait())
+                except queue.Empty:
+                    break
         self._stop_event.set()
         logger.info("关闭连接池")
-        idle_connections = []
-        while True:
-            try:
-                idle_connections.append(self._pool.get_nowait())
-            except queue.Empty:
-                break
         for pooled_conn in idle_connections + active_connections:
             self._dispose_connection(pooled_conn)
 
