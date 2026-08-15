@@ -47,7 +47,7 @@ except ImportError:
     pass
 
 # 把项目根目录加入 sys.path，便于直接 python xxx.py 运行
-_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
