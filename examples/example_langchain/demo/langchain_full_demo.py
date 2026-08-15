@@ -46,10 +46,12 @@ try:
 except ImportError:
     pass
 
-# 把项目根目录加入 sys.path，便于直接 python xxx.py 运行
+# 把项目根目录和 examples/ 加入 sys.path，便于直接 python xxx.py 运行
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
+_EXAMPLES_DIR = str(Path(__file__).resolve().parent.parent.parent)
+for _p in (_PROJECT_ROOT, _EXAMPLES_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 # 无 API Key 时降级 FakeChatModel（保证 demo 可独立运行）
 os.environ.setdefault("AI_ALLOW_FAKE", "true")
