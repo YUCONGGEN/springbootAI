@@ -58,7 +58,9 @@ def test_http_transaction_metadata_survives_callback_cache_loss(http_manager):
 
 def test_http_commit_is_idempotent_after_timeout_and_restart(http_manager):
     calls = []
-    xid = http_manager.begin_transaction(name="idempotent", timeout=50)
+    # timeout 设为 500ms（原 50ms 在 CI 共享主机上易因调度延迟触发误超时），
+    # sleep 调整为 600ms 确保仍大于 timeout，保持"超时后重启"的测试意图
+    xid = http_manager.begin_transaction(name="idempotent", timeout=500)
     http_manager.register_branch(
         xid,
         resource_id="orders-db",
@@ -66,7 +68,7 @@ def test_http_commit_is_idempotent_after_timeout_and_restart(http_manager):
         rollback_cb=lambda *_: None,
     )
     assert http_manager.commit_transaction(xid) is True
-    time.sleep(0.08)
+    time.sleep(0.6)
 
     _simulate_worker_restart(http_manager)
     assert http_manager.commit_transaction(xid) is True
