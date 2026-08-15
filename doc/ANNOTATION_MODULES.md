@@ -313,16 +313,16 @@ print(rows[0].name)
 ```python
 from spring.orm import (
     Column,
+    Entity,
     Id,
     OptimisticLockError,
     OptimisticLockExecutor,
     Transient,
     Version,
-    entity,
 )
 
 
-@entity("sys_user")  # 对应数据库表名
+@Entity("sys_user")  # 对应数据库表名
 class User:
     id = Id()                           # 主键
     name = Column(nullable=False, length=50)  # 数据库列

@@ -153,14 +153,14 @@ database:
 
 ### 第一步：定义数据实体
 
-> **@entity 是什么？** 给一个 Python 类打上这个标签，框架启动时自动帮你建数据库表。好比：你画了张"表的草图"，`@entity` 就是工匠，照着草图把真的表造出来。
+> **@Entity 是什么？** 给一个 Python 类打上这个标签，框架启动时自动帮你建数据库表。好比：你画了张"表的草图"，`@Entity` 就是工匠，照着草图把真的表造出来。
 
 ```python
 # demo/entity/user.py
 from dataclasses import dataclass
-from spring.orm import entity, Index
+from spring.orm import Entity, Index
 
-@entity("users", indexes=[
+@Entity("users", indexes=[
     Index("idx_name", ["name"]),  # 给 name 列建索引，查名字时更快
 ], comment="用户表")
 @dataclass
@@ -873,11 +873,11 @@ A: ① 启动日志没有 Mapper 未注册或连接失败；② 调插入接口�
 ### ② 怎么用
 
 ```python
-from spring.orm.ddl_auto import entity, Id, Column
+from spring.orm.ddl_auto import Entity, Id, Column
 from spring.data import PagingAndSortingRepository, Pageable, Sort, Specification
 
 # 定义实体（数据库表对应的类）
-@entity("users")
+@Entity("users")
 class User:
     id = Id()
     name = Column("user_name")

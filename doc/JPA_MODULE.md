@@ -20,7 +20,7 @@
 
 ### 为什么分离？
 
-Java JPA 中，`@Entity` 标记"这是一个实体类"，`@Table` 指定"对应哪张表"。之前本框架把两者合并在 `@entity("table_name")` 里。v2.2.2 起支持分离写法，更清晰、更接近 Java 习惯。
+Java JPA 中，`@Entity` 标记"这是一个实体类"，`@Table` 指定"对应哪张表"。本框架同时支持分离写法（`@Entity` + `@Table`）和一体化写法（`@Entity("table_name")`），与 Java JPA 习惯一致。
 
 ### 三种声明写法（均向后兼容）
 
@@ -68,21 +68,23 @@ class SysLog:
     message: str = Column(nullable=False, length=500)
 ```
 
-#### 写法四：传统 @entity / @table（全版本兼容）
+#### 写法四：一体化 @Entity("name", ...)（全版本兼容）
 
 ```python
-@entity("sys_user", indexes=[Index("idx_username", ["username"], unique=True)], comment="用户表")
+@Entity("sys_user", indexes=[Index("idx_username", ["username"], unique=True)], comment="用户表")
 class User:
     id: int = None
     username: str = ""
     email: str = ""
     age: int = 0
 
-@table("sys_role")  # @entity 别名
+@Table("sys_role")  # @Entity 别名（单独使用隐含 @Entity 语义）
 class Role:
     id: int = None
     role_name: str = ""
 ```
+
+> **小写别名**：框架还提供 `@entity` / `@table` 小写函数别名（向后兼容），与 `@Entity` / `@Table` 完全等价，推荐统一使用大写版本。
 
 ### @Table 单独使用
 
@@ -113,8 +115,7 @@ class User: ...
 | `@Entity` + `@Table(...)` | 分离风格（推荐） | `@Entity` + `@Table` | v2.2.2+ |
 | `@Entity` 无括号 | 表名自动推导为 snake_case | `@Entity`（无 `@Table`） | v2.2.2+ |
 | `@Entity("name", ...)` | 一体化风格 | — | v2.2.2+ |
-| `@entity("name", ...)` | 传统写法（兼容） | — | 全版本 |
-| `@table("name", ...)` | `@entity` 别名 | — | 全版本 |
+| `@Table("name", ...)` | `@Entity` 别名（单独使用隐含 `@Entity` 语义） | — | 全版本 |
 
 ### @Entity / @Table 参数
 
@@ -249,7 +250,7 @@ class MixedUser:
 v2.2.2 之前的写法仍然支持，适合不需要自动推断的场景：
 
 ```python
-@entity("sys_user")
+@Entity("sys_user")
 class User:
     def __init__(self, id: int = None, username: str = "", email: str = "", age: int = 0):
         self.id = id          # 自动主键+自增
@@ -275,9 +276,9 @@ class User:
 ### ② 怎么用（两种写法任选一种）
 
 ```python
-from spring.orm import entity, Id, CreateTime, UpdateTime, AuditTimeExecutor
+from spring.orm import Entity, Id, CreateTime, UpdateTime, AuditTimeExecutor
 
-@entity("sys_user")
+@Entity("sys_user")
 class User:
     id = Id()
 
@@ -293,15 +294,14 @@ class User:
 ```
 
 ```python
-# 写法二：函数装饰器（可自定义列名）
-from spring.orm import create_time_column, update_time_column
+# 写法二：描述符传参（可自定义列名）
+from spring.orm import Entity, Id, CreateTime, UpdateTime
 
+@Entity("sys_user")
 class User:
     id = Id()
-    @create_time_column(name="create_time")
-    def ctime(self): ...
-    @update_time_column(name="update_time")
-    def utime(self): ...
+    created_at = CreateTime(name="create_time")   # 自定义列名
+    updated_at = UpdateTime(name="update_time")
 ```
 
 ### ③ 自动建表也会适配
@@ -353,21 +353,21 @@ user_mapper.update(user)              # 执行 UPDATE
 
 | 注解 | 一句话 | 放哪里 | 版本 |
 |------|--------|--------|------|
-| `@Entity` | "这是一个实体类"（可无括号） | 实体类上 | v2.2.2+ |
+| `@Entity` | "这是一个实体类"（可无括号 / 可传参一体化写法） | 实体类上 | v2.2.2+ |
 | `@Table(name=..., indexes=[...], comment=...)` | "对应哪张表、索引、注释" | 实体类上 | v2.2.2+ |
-| `@entity("table_name", indexes=[...], comment=...)` | 一体化写法（完全兼容） | 实体类上 | 全版本 |
-| `@table("table_name", ...)` | `@entity` 别名 | 实体类上 | 全版本 |
+
+> **小写别名**：`@entity` / `@table` 是 `@Entity` / `@Table` 的函数别名（全版本兼容），推荐统一使用大写版本。
 
 ### 实体字段注解
 
 | 注解 | 一句话 | 放哪里 |
 |------|--------|--------|
-| `Column` / `@column` | "这是一个数据库列" | 实体字段 |
-| `Id` / `@id_column` | "这是主键，默认自增" | 实体字段 |
-| `Version` / `@version_column` | "乐观锁版本号，更新时自动 +1 并作冲突检查" | 实体字段 |
-| `CreateTime` / `@create_time_column` | "创建时间，插入时自动填充" | 实体字段 |
-| `UpdateTime` / `@update_time_column` | "更新时间，插入/更新时自动填充" | 实体字段 |
-| `Transient` / `@transient_field` | "这个字段不存数据库" | 实体字段 |
+| `Column` | "这是一个数据库列" | 实体字段 |
+| `Id` | "这是主键，默认自增" | 实体字段 |
+| `Version` | "乐观锁版本号，更新时自动 +1 并作冲突检查" | 实体字段 |
+| `CreateTime` | "创建时间，插入时自动填充" | 实体字段 |
+| `UpdateTime` | "更新时间，插入/更新时自动填充" | 实体字段 |
+| `Transient` | "这个字段不存数据库" | 实体字段 |
 
 ### 字段自动推断规则（v2.2.3+）
 
