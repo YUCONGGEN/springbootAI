@@ -1,4 +1,4 @@
-﻿# SpringBootAI
+# SpringBootAI
 
 <p align="center">
   <img src="doc/images/hero-banner.png" alt="SpringBootAI 功能总览" width="100%" />
@@ -115,8 +115,11 @@ curl http://127.0.0.1:8080/api/hello/Alice
 | 模块 | 文档 | 安装方式 | 一句话说明 |
 |------|------|----------|-----------|
 | ✅ 新手入门 | [BEGINNER_GUIDE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | 随核心包 | 从零安装、创建项目、运行接口、打开 Swagger |
+| ✅ Web MVC | [WEB_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/WEB_MODULE.md) | 随核心包 | `@RestController` / 路由映射 / 参数绑定 / 跨域 / 全局异常处理 |
 | ✅ 常用注解模块 | [ANNOTATION_MODULES.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ANNOTATION_MODULES.md) | 随核心包 | Bean Validation / 条件装配 / 缓存增强 / CSV / `@Version` / `@Transient` |
+| ✅ Bean 生命周期与增强 | [LIFECYCLE_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LIFECYCLE_MODULE.md) | 随核心包 | `@PostConstruct` / `@Slf4j` / `@Primary` / `@Profile` / `@AuditLog` / `@FeatureToggle` |
 | ✅ AOP / 后置鉴权 / 重试恢复 | [AOP_SECURITY_RETRY.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AOP_SECURITY_RETRY.md) | 随核心包 | `@Aspect` 通知 / `@PostAuthorize` / `@Recover`，含小白示例与常见错误 |
+| ✅ 并发与弹性 | [CONCURRENCY_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CONCURRENCY_MODULE.md) | 随核心包 | `@Async` / `@Scheduled` / `@RateLimit` / `@CircuitBreaker` / `@Idempotent` / `@Lock` |
 | 📦 AI（对接大模型） | [AI_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AI_MODULE.md) | `pip install springbootAI[ai]` | ChatClient / Advisor / Tools / RAG / Function Calling / 多厂商适配 |
 | 📦 LangChain | [LANGCHAIN_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGCHAIN_MODULE.md) | `pip install springbootAI[langchain]` | Chains / Agents / Memory / Retrievers / VectorStores / 30+ 提供商 |
 | 📦 LangGraph | [LANGGRAPH_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGGRAPH_MODULE.md) | `pip install springbootAI[langgraph]` | 状态图 / 条件路由 / 人工中断 / 注解式工作流 |
@@ -124,6 +127,7 @@ curl http://127.0.0.1:8080/api/hello/Alice
 | ✅ 内嵌 PyMyBatis ORM | [ORM_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 / Repository 分页查询 |
 | ✅ JPA 实体与仓库 | [JPA_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/JPA_MODULE.md) | 随核心包 | `@Entity` + `@Table` / 字段自动推断 / `@CreateTime` / Repository / DataJpaTest |
 | ✅ Cloud 微服务 | [CLOUD_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 分布式事务 |
+| 📦 消息队列 | [MESSAGING_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/MESSAGING_MODULE.md) | `pip install springbootAI[rabbitmq]` | `@RabbitListener` / `RabbitTemplate` RabbitMQ 消息收发 |
 | 📦 Excel 读写 | [EXCEL_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/EXCEL_MODULE.md) | `pip install springbootAI[excel]` | `@ExcelProperty` / `@ExcelIgnore` 注解驱动读写 |
 | 📦 CSV 读写 | [CSV_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CSV_MODULE.md) | `pip install springbootAI[csv]` | `@CsvProperty` / `@CsvIgnore` 注解驱动读写 |
 | ✅ Swagger 文档 | [SWAGGER_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SWAGGER_MODULE.md) | 随核心包 | `@Tag` / `@Operation` 注解驱动 API 文档 |
@@ -146,10 +150,11 @@ curl http://127.0.0.1:8080/api/hello/Alice
 ### 🎯 新手推荐阅读顺序
 
 1. 先按 [新手入门指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) 跑通 `/api/hello/{name}`。
-2. 阅读本页第 4、6、7 章，理解配置、依赖注入和 Controller。
+2. 阅读本页第 4、6、7 章，理解配置、依赖注入和 Controller；深入学习 Web 注解看 [WEB_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/WEB_MODULE.md)。
 3. 做数据库 CRUD 时阅读 [ORM_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ORM_MODULE.md)。
 4. 需要输入校验、缓存或条件开关时阅读 [ANNOTATION_MODULES.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ANNOTATION_MODULES.md)。
-5. 最后再按业务需要选择安全、Cloud、AI、LangChain、Excel、WebSocket 等文档。
+5. 需要异步、定时任务、限流、熔断时阅读 [CONCURRENCY_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CONCURRENCY_MODULE.md)。
+6. 最后再按业务需要选择安全、Cloud、消息队列、AI、LangChain、Excel、WebSocket 等文档。
 
 ---
 
