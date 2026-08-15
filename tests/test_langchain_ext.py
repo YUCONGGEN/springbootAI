@@ -106,13 +106,18 @@ def index_service(lc_embeddings, lc_model):
 def _isolate_lc_env(monkeypatch):
     """隔离 LangChain / AI 环境变量，并显式允许 Fake 模型降级。
 
-    - 清理 LC_* 残留 env，防止开发者本机配置干扰绑定测试
+    - 清理 LC_* / AI provider / API Key 残留 env，防止开发者本机配置干扰绑定测试
     - 设置 AI_ALLOW_FAKE=true：本测试套件全程使用 FakeChatModel/FakeEmbeddingModel，
       不依赖真实 API Key；configure_ai() 在无 key 时降级 Fake，符合测试预期
     """
     for key in list(os.environ):
         if key.startswith("LC_"):
             monkeypatch.delenv(key, raising=False)
+    # 清除 AI provider / API Key，防止本机配置导致 configure_ai 走真实 API
+    for key in list(os.environ):
+        if key.startswith(("OPENAI_", "DEEPSEEK_", "ANTHROPIC_", "OLLAMA_")):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("AI_PROVIDER", raising=False)
     monkeypatch.setenv("AI_ALLOW_FAKE", "true")
 
 
