@@ -181,7 +181,9 @@ class ConfigCenterClient:
 
         for attempt in range(1, self._retry_max + 1):
             try:
-                resp = requests.get(
+                # timeout 已通过 self._timeout / 1000 传入，Bandit B113 无法
+                # 识别变量表达式形式的 timeout 参数，标记为 nosec 抑制误报
+                resp = requests.get(  # nosec B113
                     url,
                     timeout=self._timeout / 1000,
                     headers={'Accept': 'application/json'},
