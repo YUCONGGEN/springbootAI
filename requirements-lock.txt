@@ -207,7 +207,7 @@ requests==2.34.2
     #   alibabacloud-tea
 sqlalchemy==2.0.40
     # via -r requirements.txt
-sqlglot==27.28.1
+sqlglot==30.17.0
     # via -r requirements.txt
 starlette==1.6.0
     # via fastapi
