@@ -72,7 +72,7 @@ jobs:
           --ignore=tests/test_langgraph_module.py \
           --ignore=tests/test_mcp_module.py \
           --ignore=tests/test_ai_declarative_annotations.py \
-          -v --tb=short --cov=spring --cov-report= --cov-fail-under=0
+          -v --tb=short --cov=springbootai --cov-report= --cov-fail-under=0
 
     - name: Run LangGraph integration tests
       run: |
@@ -104,7 +104,7 @@ jobs:
     - name: Run real runtime-path tests with cumulative coverage gate
       run: |
         pytest tests/runtime/ -v --tb=short \
-          --cov=spring --cov-append --cov-report=xml --cov-report=term \
+          --cov=springbootai --cov-append --cov-report=xml --cov-report=term \
           --cov-fail-under=60
 
     - name: Module import verification (including springbootai.langchain)
