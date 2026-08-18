@@ -1,6 +1,6 @@
 """OAuth2 资源服务器 (Resource Server) 测试。
 
-覆盖 ``spring.security.oauth2`` 模块的核心功能：
+覆盖 ``springbootai.security.oauth2`` 模块的核心功能：
 - ``OAuth2ResourceServer`` 单例的配置与初始化
 - JWT Access Token 验证（HS256 对称密钥模式）
 - FastAPI 依赖注入与路由保护
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-# 将项目根目录加入 sys.path，确保能直接 import spring 包
+# 将项目根目录加入 sys.path，确保能直接 import springbootai 包
 PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -27,7 +27,7 @@ import jwt as pyjwt
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from spring.security.oauth2 import (
+from springbootai.security.oauth2 import (
     OAuth2ResourceServer,
     OAuth2TokenValidationError,
     init_oauth2,
@@ -370,11 +370,11 @@ class TestInitOAuth2:
         assert oauth2_resource_server._algorithms == ["HS256"]
 
     def test_init_oauth2_empty_config_does_nothing(self):
-        """配置中无 spring.security.oauth2 时，init_oauth2 不做任何操作。"""
+        """配置中无 springbootai.security.oauth2 时，init_oauth2 不做任何操作。"""
         # 先确保单例处于未配置状态
         assert oauth2_resource_server._configured is False
 
-        # 空配置（不含 spring.security.oauth2 键）
+        # 空配置（不含 springbootai.security.oauth2 键）
         init_oauth2({})
 
         # 应保持未配置状态

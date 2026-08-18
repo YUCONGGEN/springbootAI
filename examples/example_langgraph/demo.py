@@ -24,9 +24,9 @@ os.environ.setdefault("AI_ALLOW_FAKE", "true")
 from langgraph.graph import END
 from langgraph.types import interrupt
 
-from spring.ai.core import Message
-from spring.ai.providers import FakeChatModel
-from spring.langgraph import LangGraphProperties, LangGraphWorkflow
+from springbootai.ai.core import Message
+from springbootai.ai.providers import FakeChatModel
+from springbootai.langgraph import LangGraphProperties, LangGraphWorkflow
 
 
 class OrderState(TypedDict, total=False):

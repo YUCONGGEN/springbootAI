@@ -14,14 +14,14 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.excel import (
+from springbootai.excel import (
     EasyExcel, ExcelProperty, ExcelIgnore, excel_sheet, ExcelSheet,
     read_excel, write_excel,
     Converter, StringConverter, IntegerConverter, FloatConverter,
     BooleanConverter, DateStringConverter, BigDecimalConverter, resolve_converter,
     ExcelPropertyError, ExcelReadError, ExcelWriteError, ExcelDependencyError,
 )
-from spring.excel.annotations import (
+from springbootai.excel.annotations import (
     parse_excel_columns, _get_class_sheet_meta, _field_to_header,
 )
 
@@ -698,7 +698,7 @@ class TestCompositionalAnnotations:
 
     def test_descriptors_not_replaced_by_orm(self):
         """ORM _auto_infer_columns 不覆盖 ExcelProperty/CsvProperty 描述符。"""
-        from spring.orm import Entity, Id, Column
+        from springbootai.orm import Entity, Id, Column
 
         @Entity("users")
         @ExcelSheet("用户列表")
@@ -717,8 +717,8 @@ class TestCompositionalAnnotations:
 
     def test_auto_init_with_foreign_descriptors(self):
         """组合式自动 __init__ 正确处理跨模块描述符的默认值。"""
-        from spring.orm import Entity, Id, Column
-        from spring.csv import CsvFile, CsvProperty
+        from springbootai.orm import Entity, Id, Column
+        from springbootai.csv import CsvFile, CsvProperty
 
         @Entity("users")
         @ExcelSheet("用户列表")
@@ -739,8 +739,8 @@ class TestCompositionalAnnotations:
 
     def test_all_fields_in_excel(self):
         """组合式类所有字段都出现在 Excel 列中。"""
-        from spring.orm import Entity, Id, Column
-        from spring.csv import CsvFile, CsvProperty
+        from springbootai.orm import Entity, Id, Column
+        from springbootai.csv import CsvFile, CsvProperty
 
         @Entity("users")
         @ExcelSheet("用户列表")
@@ -764,8 +764,8 @@ class TestCompositionalAnnotations:
 
     def test_excel_round_trip_compositional(self, tmp_path):
         """组合式类的 Excel 写入 + 读取 round-trip。"""
-        from spring.orm import Entity, Id, Column
-        from spring.csv import CsvFile, CsvProperty
+        from springbootai.orm import Entity, Id, Column
+        from springbootai.csv import CsvFile, CsvProperty
 
         @Entity("users")
         @ExcelSheet("用户列表")

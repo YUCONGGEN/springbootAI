@@ -59,8 +59,8 @@ jobs:
 
     - name: Static code check with py_compile
       run: |
-        echo "Compiling all Python files under spring/..."
-        python -m py_compile $(find spring/ -name "*.py" -type f)
+        echo "Compiling all Python files under springbootai/..."
+        python -m py_compile $(find springbootai/ -name "*.py" -type f)
         echo "py_compile check passed"
 
     - name: Run core unit tests (no AI dependency)
@@ -86,7 +86,7 @@ jobs:
       run: |
         echo "Running AI module tests..."
         pytest tests/test_ai_module.py -v --tb=short \
-          --cov=spring.ai --cov-append --cov-report=term
+          --cov=springbootai.ai --cov-append --cov-report=term
 
     - name: Run LangChain module tests (FakeChatModel)
       run: |
@@ -107,37 +107,37 @@ jobs:
           --cov=spring --cov-append --cov-report=xml --cov-report=term \
           --cov-fail-under=60
 
-    - name: Module import verification (including spring.langchain)
+    - name: Module import verification (including springbootai.langchain)
       run: |
         python -c "
-        import spring
-        import spring.annotations
-        import spring.annotations.core
-        import spring.annotations.cloud
-        import spring.annotations.messaging
-        import spring.aop
-        import spring.cloud
-        import spring.config
-        import spring.context
-        import spring.core
-        import spring.event
-        import spring.logging
-        import spring.messaging
-        import spring.monitoring
-        import spring.orm
-        import spring.orm.pymybatis
-        import spring.retry
-        import spring.scheduling
-        import spring.security
-        import spring.tracing
-        import spring.utils
-        import spring.web
-        import spring.ai
-        import spring.langchain
-        import spring.langgraph
-        import spring.mcp
+        import springbootai
+        import springbootai.annotations
+        import springbootai.annotations.core
+        import springbootai.annotations.cloud
+        import springbootai.annotations.messaging
+        import springbootai.aop
+        import springbootai.cloud
+        import springbootai.config
+        import springbootai.context
+        import springbootai.core
+        import springbootai.event
+        import springbootai.logging
+        import springbootai.messaging
+        import springbootai.monitoring
+        import springbootai.orm
+        import springbootai.orm.pymybatis
+        import springbootai.retry
+        import springbootai.scheduling
+        import springbootai.security
+        import springbootai.tracing
+        import springbootai.utils
+        import springbootai.web
+        import springbootai.ai
+        import springbootai.langchain
+        import springbootai.langgraph
+        import springbootai.mcp
         print('All module imports successful (including AI, LangChain, LangGraph and MCP)!')
-        print(f'spring version: {spring.__version__}')
+        print(f'spring version: {springbootai.__version__}')
         "
 
     - name: Upload coverage report

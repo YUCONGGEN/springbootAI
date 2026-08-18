@@ -2,7 +2,7 @@
 
 import pytest
 
-from spring.orm.pymybatis.configuration import Configuration
+from springbootai.orm.pymybatis.configuration import Configuration
 
 
 @pytest.mark.parametrize(
@@ -99,9 +99,9 @@ def test_empty_and_valid_sqlite_configuration_still_work():
 
 def test_sql_session_factory_is_closed_by_container_destroy(tmp_path):
     """Container shutdown must release the pool-owned database handle."""
-    from spring.context.bean_factory import BeanFactory
-    from spring.orm.mybatis_integration import MyBatisConfigurer
-    from spring.orm.pymybatis import build_session_factory
+    from springbootai.context.bean_factory import BeanFactory
+    from springbootai.orm.mybatis_integration import MyBatisConfigurer
+    from springbootai.orm.pymybatis import build_session_factory
 
     database_path = tmp_path / "shutdown.sqlite"
     session_factory = build_session_factory(

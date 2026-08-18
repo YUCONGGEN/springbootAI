@@ -6,10 +6,10 @@ import math
 import time
 from pathlib import Path
 
-from spring.annotations import GetMapping, RequestMapping, RestController
-from spring.orm import Column, Id, entity
-from spring.test import DataJpaTest, SpringBootTest, WebMvcTest
-from spring.test.slicing import _MinimalApp
+from springbootai.annotations import GetMapping, RequestMapping, RestController
+from springbootai.orm import Column, Id, entity
+from springbootai.test import DataJpaTest, SpringBootTest, WebMvcTest
+from springbootai.test.slicing import _MinimalApp
 
 
 @RequestMapping("/slice")

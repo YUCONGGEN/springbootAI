@@ -5,7 +5,7 @@ Run ``python -m example_mcp.server`` first, then execute this module. The
 MCP request to the configured server.
 """
 
-from spring.mcp import (
+from springbootai.mcp import (
     MCPCall,
     MCPClient,
     MCPClientProperties,

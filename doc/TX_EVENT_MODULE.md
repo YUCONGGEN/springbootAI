@@ -1,6 +1,6 @@
 # 事务事件 —— 操作完成后自动发通知
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -16,7 +16,7 @@
 ## ② 怎么用
 
 ```python
-from spring.tx import TransactionalEventListener, TransactionPhase
+from springbootai.tx import TransactionalEventListener, TransactionPhase
 
 # 定义事件
 class OrderCreatedEvent:
@@ -74,9 +74,9 @@ ctx.publish_event(OrderCreatedEvent(123))
 ### 怎么用？
 
 ```python
-from spring.annotations import Service, EventListener
-from spring.annotations.core import ApplicationEvent
-from spring.context.application_context import ApplicationContext
+from springbootai.annotations import Service, EventListener
+from springbootai.annotations.core import ApplicationEvent
+from springbootai.context.application_context import ApplicationContext
 
 # 1. 定义事件（继承 ApplicationEvent）
 class UserRegisteredEvent(ApplicationEvent):

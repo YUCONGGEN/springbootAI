@@ -1,8 +1,8 @@
-from spring.annotations.core import ControllerAdvice, ExceptionHandler
-from spring.web.result import Result
+from springbootai.annotations.core import ControllerAdvice, ExceptionHandler
+from springbootai.web.result import Result
 
 
-@ControllerAdvice
+@ControllerAdvice()
 class GlobalExceptionHandler:
     """全局异常处理器 - 测试 @ControllerAdvice 和 @ExceptionHandler"""
     

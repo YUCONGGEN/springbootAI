@@ -1,7 +1,7 @@
 """
 配置类集合 — 测试 @Configuration, @Bean, @Value, @ConfigurationProperties, @Profile, @Primary, @Lazy, @Autowired
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     Configuration, Bean, Value, ConfigurationProperties,
     Autowired, Profile, Primary, Lazy, Slf4j, PostConstruct, PreDestroy,
 )

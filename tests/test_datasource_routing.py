@@ -1,6 +1,6 @@
 """P0-3 多数据源读写分离测试。
 
-覆盖 ``spring.datasource`` 模块：
+覆盖 ``springbootai.datasource`` 模块：
 - ``DataSourceContextHolder`` 路由键的 set/get/reset/clear 与嵌套复位
 - ``routing_scope`` 上下文管理器
 - ``DynamicRoutingDataSource`` 路由选择、从库轮询、故障回退、连接归还、统计
@@ -14,7 +14,7 @@ import logging
 
 import pytest
 
-from spring.datasource import (
+from springbootai.datasource import (
     DataSourceContextHolder,
     routing_scope,
     DynamicRoutingDataSource,
@@ -139,13 +139,13 @@ class TestDynamicRoutingDataSource:
         with routing_scope(is_slave_placeholder.__doc__ or "@__slave__"):
             pass
         # 直接用占位键
-        from spring.datasource.annotations import _SLAVE_PLACEHOLDER
+        from springbootai.datasource.annotations import _SLAVE_PLACEHOLDER
         with routing_scope(_SLAVE_PLACEHOLDER):
             pool = self.dds.determine_target_data_source()
             assert pool in (self.slave1, self.slave2)
 
     def test_slave_round_robin_distributes(self):
-        from spring.datasource.annotations import _SLAVE_PLACEHOLDER
+        from springbootai.datasource.annotations import _SLAVE_PLACEHOLDER
         selected = []
         with routing_scope(_SLAVE_PLACEHOLDER):
             for _ in range(4):
@@ -232,7 +232,7 @@ class TestDynamicRoutingDataSource:
             default_target_data_source=self.master,
             # 无 slave_keys
         )
-        from spring.datasource.annotations import _SLAVE_PLACEHOLDER
+        from springbootai.datasource.annotations import _SLAVE_PLACEHOLDER
         with routing_scope(_SLAVE_PLACEHOLDER):
             pool = dds.determine_target_data_source()
             assert pool is self.master
@@ -360,7 +360,7 @@ class TestDSAnnotations:
         assert DataSourceContextHolder.get() is None
 
     def test_annotations_registered_in_comprehensive_aop(self):
-        from spring.aop.comprehensive_aop import ANNOTATION_DECORATORS
+        from springbootai.aop.comprehensive_aop import ANNOTATION_DECORATORS
         assert DS in ANNOTATION_DECORATORS
         assert Master in ANNOTATION_DECORATORS
         assert Slave in ANNOTATION_DECORATORS

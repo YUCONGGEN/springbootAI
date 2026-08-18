@@ -17,14 +17,14 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from spring.cli.main import create_parser, main as cli_main
-from spring.cli.scaffold import collect_project_options, create_project, main as scaffold_main
+from springbootai.cli.main import create_parser, main as cli_main
+from springbootai.cli.scaffold import collect_project_options, create_project, main as scaffold_main
 
 
 @pytest.fixture(autouse=True)
 def _restore_config_loader_and_import_path():
     """Keep generated-project contexts from leaking process-global config."""
-    from spring.config.config_loader import ConfigLoader, config_loader
+    from springbootai.config.config_loader import ConfigLoader, config_loader
 
     original_state = dict(config_loader.__dict__)
     original_base_path = ConfigLoader._default_base_path
@@ -54,7 +54,7 @@ def test_scaffold_defaults_are_noninteractive(tmp_path):
         captured.update(kwargs)
         return target
 
-    with patch("spring.cli.scaffold.create_project", side_effect=fake_create_project):
+    with patch("springbootai.cli.scaffold.create_project", side_effect=fake_create_project):
         with patch("builtins.input", side_effect=AssertionError("scaffold must not prompt")):
             assert scaffold_main([str(target), "--non-interactive"]) == 0
 
@@ -99,7 +99,7 @@ def test_unified_init_keeps_scaffold_port_default(tmp_path):
 
 def test_unified_init_exposes_interactive_wizard_without_project():
     """The main console command keeps the scaffold's no-argument wizard reachable."""
-    with patch("spring.cli.scaffold.main", return_value=0) as scaffold:
+    with patch("springbootai.cli.scaffold.main", return_value=0) as scaffold:
         assert cli_main(["init"]) == 0
     scaffold.assert_called_once_with(["--port", "8000"])
 
@@ -171,7 +171,7 @@ def test_generated_application_without_web_module_is_executable(tmp_path):
     # Execute the generated entrypoint while replacing the long-running web
     # server call.  This still validates imports, decorators, and the main
     # block in a fresh script namespace.
-    with patch("spring.main.SpringApplication.run", return_value=None) as run:
+    with patch("springbootai.main.SpringApplication.run", return_value=None) as run:
         runpy.run_path(str(application_file), run_name="__main__")
     run.assert_called_once()
 
@@ -199,7 +199,7 @@ def test_default_generated_project_builds_asgi_app_without_external_services(tmp
     )
     smoke = (
         "import runpy\n"
-        "from spring.main import create_app\n"
+        "from springbootai.main import create_app\n"
         "namespace = runpy.run_path('Application.py', run_name='generated_application')\n"
         "app = create_app(namespace['Application'])\n"
         "assert '/api/hello' in [getattr(route, 'path', '') for route in app.routes]\n"
@@ -221,7 +221,7 @@ def test_default_generated_project_builds_asgi_app_without_external_services(tmp
 def test_generated_web_has_uniform_response_and_business_exception_handler(tmp_path):
     """示例端点应验证统一响应和生成的全局异常处理器都实际生效。"""
     from fastapi.testclient import TestClient
-    from spring.main import create_app
+    from springbootai.main import create_app
 
     target = _create_project(tmp_path / "response-smoke")
     namespace = runpy.run_path(str(target / "Application.py"), run_name="generated_response_app")

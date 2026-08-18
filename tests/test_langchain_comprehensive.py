@@ -14,7 +14,7 @@ import pytest
 
 class TestToolFactoryExtended:
     def test_from_function_basic(self):
-        from spring.langchain.tools.tools import ToolFactory
+        from springbootai.langchain.tools.tools import ToolFactory
 
         def get_weather(city: str) -> str:
             """获取指定城市的天气"""
@@ -27,7 +27,7 @@ class TestToolFactoryExtended:
         assert result == "北京晴朗"
 
     def test_from_function_custom_name_desc(self):
-        from spring.langchain.tools.tools import ToolFactory
+        from springbootai.langchain.tools.tools import ToolFactory
 
         def calc(a: int, b: int) -> int:
             return a + b
@@ -37,7 +37,7 @@ class TestToolFactoryExtended:
         assert tool.description == "加法计算"
 
     def test_create_tool_simple(self):
-        from spring.langchain.tools.tools import ToolFactory
+        from springbootai.langchain.tools.tools import ToolFactory
 
         def greet(name: str) -> str:
             return f"Hello {name}"
@@ -47,8 +47,8 @@ class TestToolFactoryExtended:
         assert tool.invoke("World") == "Hello World"
 
     def test_from_spring_tool_registry(self):
-        from spring.ai.tools import ToolRegistry
-        from spring.langchain.tools.tools import ToolFactory
+        from springbootai.ai.tools import ToolRegistry
+        from springbootai.langchain.tools.tools import ToolFactory
 
         spring_reg = ToolRegistry()
 
@@ -61,12 +61,12 @@ class TestToolFactoryExtended:
         assert tools[0].name == "lookup"
 
     def test_from_spring_tool_registry_none(self):
-        from spring.langchain.tools.tools import ToolFactory
+        from springbootai.langchain.tools.tools import ToolFactory
         assert ToolFactory.from_spring_tool_registry(None) == []
 
     def test_from_spring_tool_registry_empty(self):
-        from spring.ai.tools import ToolRegistry
-        from spring.langchain.tools.tools import ToolFactory
+        from springbootai.ai.tools import ToolRegistry
+        from springbootai.langchain.tools.tools import ToolFactory
         assert ToolFactory.from_spring_tool_registry(ToolRegistry()) == []
 
 
@@ -76,7 +76,7 @@ class TestToolFactoryExtended:
 
 class TestLangChainToolRegistry:
     def test_add_tool(self):
-        from spring.langchain.tools.tools import ToolRegistry
+        from springbootai.langchain.tools.tools import ToolRegistry
         from langchain_core.tools import Tool
 
         reg = ToolRegistry()
@@ -86,7 +86,7 @@ class TestLangChainToolRegistry:
         assert reg.names() == ["t1"]
 
     def test_add_function(self):
-        from spring.langchain.tools.tools import ToolRegistry
+        from springbootai.langchain.tools.tools import ToolRegistry
 
         reg = ToolRegistry()
 
@@ -99,7 +99,7 @@ class TestLangChainToolRegistry:
         assert reg.names() == ["my_func"]
 
     def test_add_function_custom_name(self):
-        from spring.langchain.tools.tools import ToolRegistry
+        from springbootai.langchain.tools.tools import ToolRegistry
 
         reg = ToolRegistry()
 
@@ -110,7 +110,7 @@ class TestLangChainToolRegistry:
         assert reg.names() == ["custom"]
 
     def test_clear(self):
-        from spring.langchain.tools.tools import ToolRegistry
+        from springbootai.langchain.tools.tools import ToolRegistry
         from langchain_core.tools import Tool
 
         reg = ToolRegistry()
@@ -127,22 +127,22 @@ class TestLangChainToolRegistry:
 
 class TestCallbackRegistry:
     def test_create_stdout_handler(self):
-        from spring.langchain.callbacks.handlers import CallbackRegistry
+        from springbootai.langchain.callbacks.handlers import CallbackRegistry
         handler = CallbackRegistry.create_stdout_handler()
         assert handler is not None
 
     def test_create_streaming_stdout_handler(self):
-        from spring.langchain.callbacks.handlers import CallbackRegistry
+        from springbootai.langchain.callbacks.handlers import CallbackRegistry
         handler = CallbackRegistry.create_streaming_stdout_handler()
         assert handler is not None
 
     def test_create_file_handler(self):
-        from spring.langchain.callbacks.handlers import CallbackRegistry
+        from springbootai.langchain.callbacks.handlers import CallbackRegistry
         handler = CallbackRegistry.create_file_handler("test.log")
         assert handler is not None
 
     def test_register_and_clear(self):
-        from spring.langchain.callbacks.handlers import CallbackRegistry
+        from springbootai.langchain.callbacks.handlers import CallbackRegistry
         reg = CallbackRegistry()
         h1 = CallbackRegistry.create_stdout_handler()
         h2 = CallbackRegistry.create_streaming_stdout_handler()
@@ -158,7 +158,7 @@ class TestCallbackRegistry:
 
 class TestUtilityRegistryExtended:
     def test_supported_types(self):
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         types = UtilityRegistry.supported_types()
         assert "serpapi" in types
         assert "duckduckgo" in types
@@ -170,17 +170,17 @@ class TestUtilityRegistryExtended:
         assert "openweathermap" in types
 
     def test_dangerous_tool_blocked(self):
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         with pytest.raises(PermissionError, match="危险工具"):
             UtilityRegistry.create("python-repl")
 
     def test_dangerous_tool_blocked_sql(self):
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         with pytest.raises(PermissionError, match="危险工具"):
             UtilityRegistry.create("sql-database")
 
     def test_dangerous_tool_allowed(self, monkeypatch):
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         monkeypatch.setenv("AI_ALLOW_DANGEROUS_TOOLS", "true")
         try:
             UtilityRegistry.create("python-repl")
@@ -190,12 +190,12 @@ class TestUtilityRegistryExtended:
             pass  # Any other error is fine - it means the dangerous tool was allowed past the gate
 
     def test_unknown_type(self):
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         with pytest.raises(ValueError, match="未知"):
             UtilityRegistry.create("nonexistent-tool")
 
     def test_create_missing_dependency(self):
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         with pytest.raises(ImportError):
             UtilityRegistry.create("serpapi", serpapi_api_key="fake")
 
@@ -206,58 +206,58 @@ class TestUtilityRegistryExtended:
 
 class TestSafeEvalArithmetic:
     def test_simple_addition(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("2 + 3") == 5
 
     def test_multiplication(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("4 * 5") == 20
 
     def test_division(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("10 / 3") == pytest.approx(3.333, rel=0.01)
 
     def test_floor_division(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("10 // 3") == 3
 
     def test_modulo(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("10 % 3") == 1
 
     def test_power(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("2 ** 3") == 8
 
     def test_negative_numbers(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("-5 + 3") == -2
 
     def test_complex_expression(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("2 + 3 * 4") == 14
 
     def test_parentheses(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         assert safe_eval_arithmetic("(2 + 3) * 4") == 20
 
     def test_reject_function_call(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         with pytest.raises(ValueError):
             safe_eval_arithmetic("__import__('os').system('ls')")
 
     def test_reject_variable(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         with pytest.raises(ValueError):
             safe_eval_arithmetic("x + 1")
 
     def test_division_by_zero(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         with pytest.raises(ValueError):
             safe_eval_arithmetic("1 / 0")
 
     def test_invalid_syntax(self):
-        from spring.langchain.utilities.utils import safe_eval_arithmetic
+        from springbootai.langchain.utilities.utils import safe_eval_arithmetic
         with pytest.raises(ValueError):
             safe_eval_arithmetic("2 +* 3")
 
@@ -268,7 +268,7 @@ class TestSafeEvalArithmetic:
 
 class TestRetrieverFactoryExtended:
     def test_supported_types(self):
-        from spring.langchain.retrievers.retrievers import RetrieverFactory
+        from springbootai.langchain.retrievers.retrievers import RetrieverFactory
         types = RetrieverFactory.supported_types()
         assert "similarity" in types
         assert "multi-query" in types
@@ -277,27 +277,27 @@ class TestRetrieverFactoryExtended:
         assert "ensemble" in types
 
     def test_unknown_type(self):
-        from spring.langchain.retrievers.retrievers import RetrieverFactory
+        from springbootai.langchain.retrievers.retrievers import RetrieverFactory
         with pytest.raises(ValueError, match="未知 retriever_type"):
             RetrieverFactory.create("nonexistent")
 
     def test_multi_query_requires_llm(self):
-        from spring.langchain.retrievers.retrievers import RetrieverFactory
+        from springbootai.langchain.retrievers.retrievers import RetrieverFactory
         with pytest.raises(ValueError, match="需要 llm"):
             RetrieverFactory.create("multi-query", vector_store=None, llm=None)
 
     def test_contextual_compression_requires_llm(self):
-        from spring.langchain.retrievers.retrievers import RetrieverFactory
+        from springbootai.langchain.retrievers.retrievers import RetrieverFactory
         with pytest.raises(ValueError, match="需要 llm"):
             RetrieverFactory.create("contextual-compression", vector_store=None, llm=None)
 
     def test_self_query_requires_llm(self):
-        from spring.langchain.retrievers.retrievers import RetrieverFactory
+        from springbootai.langchain.retrievers.retrievers import RetrieverFactory
         with pytest.raises(ValueError, match="需要 llm"):
             RetrieverFactory.create("self-query", vector_store=None, llm=None)
 
     def test_ensemble_requires_retrievers(self):
-        from spring.langchain.retrievers.retrievers import RetrieverFactory
+        from springbootai.langchain.retrievers.retrievers import RetrieverFactory
         with pytest.raises(ValueError, match="需要 retrievers"):
             RetrieverFactory.create("ensemble")
 
@@ -308,8 +308,8 @@ class TestRetrieverFactoryExtended:
 
 class TestIndexServiceExtended:
     def test_create_from_texts(self):
-        from spring.langchain.indexes.index import IndexService
-        from spring.ai.providers import FakeEmbeddingModel
+        from springbootai.langchain.indexes.index import IndexService
+        from springbootai.ai.providers import FakeEmbeddingModel
 
         emb = FakeEmbeddingModel(dim=8)
         svc = IndexService(lcEmbeddings=emb)
@@ -320,8 +320,8 @@ class TestIndexServiceExtended:
         assert index is not None
 
     def test_query_simple(self):
-        from spring.langchain.indexes.index import IndexService
-        from spring.ai.providers import FakeEmbeddingModel
+        from springbootai.langchain.indexes.index import IndexService
+        from springbootai.ai.providers import FakeEmbeddingModel
 
         emb = FakeEmbeddingModel(dim=8)
         svc = IndexService(lcEmbeddings=emb)
@@ -333,14 +333,14 @@ class TestIndexServiceExtended:
         assert len(results) > 0
 
     def test_query_invalid_store(self):
-        from spring.langchain.indexes.index import IndexService
+        from springbootai.langchain.indexes.index import IndexService
         svc = IndexService()
         with pytest.raises(ValueError, match="不支持"):
             svc.query("not_a_store", "test")
 
     def test_create_from_texts_with_metadata(self):
-        from spring.langchain.indexes.index import IndexService
-        from spring.ai.providers import FakeEmbeddingModel
+        from springbootai.langchain.indexes.index import IndexService
+        from springbootai.ai.providers import FakeEmbeddingModel
 
         emb = FakeEmbeddingModel(dim=8)
         svc = IndexService(lcEmbeddings=emb)
@@ -358,18 +358,18 @@ class TestIndexServiceExtended:
 
 class TestPromptTemplateFactoryExtended:
     def test_create_prompt_template(self):
-        from spring.langchain.prompts.templates import PromptTemplateFactory
+        from springbootai.langchain.prompts.templates import PromptTemplateFactory
         template = PromptTemplateFactory.create_prompt_template("Hello {name}")
         result = template.format(name="World")
         assert "World" in result
 
     def test_create_prompt_template_auto_vars(self):
-        from spring.langchain.prompts.templates import PromptTemplateFactory
+        from springbootai.langchain.prompts.templates import PromptTemplateFactory
         template = PromptTemplateFactory.create_prompt_template("{greeting} {name}")
         assert template.input_variables == ["greeting", "name"]
 
     def test_create_chat_prompt_template(self):
-        from spring.langchain.prompts.templates import PromptTemplateFactory
+        from springbootai.langchain.prompts.templates import PromptTemplateFactory
         template = PromptTemplateFactory.create_chat_prompt_template([
             {"role": "system", "content": "You are helpful"},
             {"role": "user", "content": "Hello {name}"},
@@ -377,7 +377,7 @@ class TestPromptTemplateFactoryExtended:
         assert template is not None
 
     def test_create_chat_prompt_template_tuple(self):
-        from spring.langchain.prompts.templates import PromptTemplateFactory
+        from springbootai.langchain.prompts.templates import PromptTemplateFactory
         template = PromptTemplateFactory.create_chat_prompt_template([
             ("system", "You are helpful"),
             ("user", "Hi"),
@@ -385,14 +385,14 @@ class TestPromptTemplateFactoryExtended:
         assert template is not None
 
     def test_create_chat_prompt_template_invalid(self):
-        from spring.langchain.prompts.templates import PromptTemplateFactory
+        from springbootai.langchain.prompts.templates import PromptTemplateFactory
         with pytest.raises(TypeError):
             PromptTemplateFactory.create_chat_prompt_template([
                 123,
             ])
 
     def test_create_few_shot_prompt_template(self):
-        from spring.langchain.prompts.templates import PromptTemplateFactory
+        from springbootai.langchain.prompts.templates import PromptTemplateFactory
         from langchain_core.prompts import PromptTemplate
         example_prompt = PromptTemplate(
             input_variables=["input", "output"],
@@ -407,7 +407,7 @@ class TestPromptTemplateFactoryExtended:
         assert template is not None
 
     def test_from_template(self):
-        from spring.langchain.prompts.templates import PromptTemplateFactory
+        from springbootai.langchain.prompts.templates import PromptTemplateFactory
         template = PromptTemplateFactory.from_template(
             "Hello {name}", name="World"
         )
@@ -421,27 +421,27 @@ class TestPromptTemplateFactoryExtended:
 
 class TestMemoryFactoryExtended:
     def test_create_buffer(self):
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         assert mem is not None
 
     def test_create_buffer_window(self):
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer-window", max_messages=5)
         assert mem is not None
 
     def test_create_summary_requires_llm(self):
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         with pytest.raises(ValueError, match="需要 llm"):
             MemoryFactory.create("summary")
 
     def test_create_token_buffer_requires_llm(self):
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         with pytest.raises(ValueError, match="需要 llm"):
             MemoryFactory.create("token-buffer")
 
     def test_unknown_type(self):
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         with pytest.raises(ValueError, match="未知"):
             MemoryFactory.create("nonexistent")
 
@@ -452,36 +452,36 @@ class TestMemoryFactoryExtended:
 
 class TestOutputParserFactoryExtended:
     def test_create_comma_list(self):
-        from spring.langchain.parsers.parsers import OutputParserFactory
+        from springbootai.langchain.parsers.parsers import OutputParserFactory
         parser = OutputParserFactory.create_comma_list_parser()
         result = parser.parse("a,b,c")
         assert result == ["a", "b", "c"]
 
     def test_create_json(self):
-        from spring.langchain.parsers.parsers import OutputParserFactory
+        from springbootai.langchain.parsers.parsers import OutputParserFactory
         parser = OutputParserFactory.create_json_parser()
         result = parser.parse('{"key": "value"}')
         assert "key" in str(result)
 
     def test_create_datetime(self):
-        from spring.langchain.parsers.parsers import OutputParserFactory
+        from springbootai.langchain.parsers.parsers import OutputParserFactory
         parser = OutputParserFactory.create_datetime_parser()
         result = parser.parse("2024-01-15T00:00:00.000000Z")
         assert result is not None
 
     def test_unified_create_comma_list(self):
-        from spring.langchain.parsers.parsers import OutputParserFactory
+        from springbootai.langchain.parsers.parsers import OutputParserFactory
         parser = OutputParserFactory.create("comma-list")
         result = parser.parse("x,y,z")
         assert result == ["x", "y", "z"]
 
     def test_unified_create_json(self):
-        from spring.langchain.parsers.parsers import OutputParserFactory
+        from springbootai.langchain.parsers.parsers import OutputParserFactory
         parser = OutputParserFactory.create("json")
         assert parser is not None
 
     def test_unified_unknown_type(self):
-        from spring.langchain.parsers.parsers import OutputParserFactory
+        from springbootai.langchain.parsers.parsers import OutputParserFactory
         with pytest.raises(ValueError, match="未知"):
             OutputParserFactory.create("nonexistent")
 
@@ -492,32 +492,32 @@ class TestOutputParserFactoryExtended:
 
 class TestVectorStoreFactoryExtended:
     def test_create_inmemory(self):
-        from spring.langchain.vectorstores.stores import VectorStoreFactory
-        from spring.ai.providers import FakeEmbeddingModel
+        from springbootai.langchain.vectorstores.stores import VectorStoreFactory
+        from springbootai.ai.providers import FakeEmbeddingModel
 
         emb = FakeEmbeddingModel(dim=8)
         store = VectorStoreFactory.create("inmemory", emb)
         assert store is not None
 
     def test_from_texts_inmemory(self):
-        from spring.langchain.vectorstores.stores import VectorStoreFactory
-        from spring.ai.providers import FakeEmbeddingModel
+        from springbootai.langchain.vectorstores.stores import VectorStoreFactory
+        from springbootai.ai.providers import FakeEmbeddingModel
 
         emb = FakeEmbeddingModel(dim=8)
         store = VectorStoreFactory.from_texts("inmemory", ["hello world"], emb)
         assert store is not None
 
     def test_unknown_type(self):
-        from spring.langchain.vectorstores.stores import VectorStoreFactory
-        from spring.ai.providers import FakeEmbeddingModel
+        from springbootai.langchain.vectorstores.stores import VectorStoreFactory
+        from springbootai.ai.providers import FakeEmbeddingModel
 
         emb = FakeEmbeddingModel(dim=8)
         with pytest.raises(ValueError, match="未知"):
             VectorStoreFactory.create("nonexistent", emb)
 
     def test_search_on_created_store(self):
-        from spring.langchain.vectorstores.stores import VectorStoreFactory
-        from spring.ai.providers import FakeEmbeddingModel
+        from springbootai.langchain.vectorstores.stores import VectorStoreFactory
+        from springbootai.ai.providers import FakeEmbeddingModel
 
         emb = FakeEmbeddingModel(dim=8)
         store = VectorStoreFactory.from_texts(
@@ -535,12 +535,12 @@ class TestVectorStoreFactoryExtended:
 
 class TestDocumentLoaderRegistryExtended:
     def test_unknown_type(self):
-        from spring.langchain.loaders.loaders import DocumentLoaderRegistry
+        from springbootai.langchain.loaders.loaders import DocumentLoaderRegistry
         with pytest.raises(ValueError, match="未知"):
             DocumentLoaderRegistry.create("nonexistent", "test.txt")
 
     def test_create_text_loader(self):
-        from spring.langchain.loaders.loaders import DocumentLoaderRegistry
+        from springbootai.langchain.loaders.loaders import DocumentLoaderRegistry
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
             f.write("Hello World")
             fname = f.name
@@ -557,11 +557,11 @@ class TestDocumentLoaderRegistryExtended:
 
 class TestUtilityAsTools:
     def test_as_tools_unknown_type_raises(self):
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         with pytest.raises(ValueError):
             UtilityRegistry.as_tools(["unknown-tool"])
 
     def test_as_tools_with_duckduckgo_missing_dep(self):
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         with pytest.raises(ImportError):
             UtilityRegistry.as_tools(["duckduckgo"])

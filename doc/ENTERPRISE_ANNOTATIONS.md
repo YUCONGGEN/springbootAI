@@ -32,7 +32,7 @@ SpringBootAI 提供了 10 个新注解，将 16 项企业级功能改造为注�
 ### 基本用法
 
 ```python
-from spring.annotations import SpringBootApplication, EnableOAuth2
+from springbootai.annotations import SpringBootApplication, EnableOAuth2
 
 @SpringBootApplication
 @EnableOAuth2(
@@ -70,7 +70,7 @@ spring:
 ### 在路由中使用 OAuth2 保护
 
 ```python
-from spring.security.oauth2 import oauth2_resource_server
+from springbootai.security.oauth2 import oauth2_resource_server
 from fastapi import Depends
 
 @app.get("/api/protected", dependencies=[Depends(oauth2_resource_server.get_dependency())])
@@ -85,7 +85,7 @@ def protected():
 ### 基本用法
 
 ```python
-from spring.annotations import SpringBootApplication, EnableCsrf
+from springbootai.annotations import SpringBootApplication, EnableCsrf
 
 @SpringBootApplication
 @EnableCsrf(token_ttl=7200, secure_cookie=True)
@@ -130,7 +130,7 @@ fetch('/api/users', {
 ### 基本用法
 
 ```python
-from spring.annotations import SpringBootApplication, EnableDevTools
+from springbootai.annotations import SpringBootApplication, EnableDevTools
 
 @SpringBootApplication
 @EnableDevTools(watch_dirs=["src", "config"], poll_interval=0.5)
@@ -155,7 +155,7 @@ class Application:
 ### 基本用法
 
 ```python
-from spring.annotations import SpringBootApplication, EnableConfigServer
+from springbootai.annotations import SpringBootApplication, EnableConfigServer
 
 @SpringBootApplication
 @EnableConfigServer(
@@ -172,7 +172,7 @@ class Application:
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `uri` | `str` | `'http://localhost:8888'` | 配置中心地址 |
-| `profile` | `str` | `None` | 环境名（默认读取 `spring.profiles.active`） |
+| `profile` | `str` | `None` | 环境名（默认读取 `springbootai.profiles.active`） |
 | `label` | `str` | `'master'` | 分支/标签 |
 | `fail_fast` | `bool` | `False` | 拉取失败是否快速失败 |
 | `backend` | `str` | `'http'` | 后端类型（`'http'` 或 `'file'`） |
@@ -209,7 +209,7 @@ curl -X POST http://localhost:8080/actuator/refresh
 ### 基本用法
 
 ```python
-from spring.annotations import SpringBootApplication, EnableBus
+from springbootai.annotations import SpringBootApplication, EnableBus
 
 @SpringBootApplication
 @EnableBus(backend="rabbitmq", destination="myBus")
@@ -234,7 +234,7 @@ curl -X POST http://localhost:8080/actuator/busrefresh
 ### 代码中发布/订阅事件
 
 ```python
-from spring.cloud.bus import event_bus, BusEvent
+from springbootai.cloud.bus import event_bus, BusEvent
 
 # 订阅事件
 event_bus.subscribe('refreshConfig', lambda e: print('Refreshing...'))
@@ -250,7 +250,7 @@ event_bus.publish(BusEvent(type='refreshConfig', data={'keys': ['app.name']}))
 ### 基本用法
 
 ```python
-from spring.annotations import SpringBootApplication, EnableBatchProcessing
+from springbootai.annotations import SpringBootApplication, EnableBatchProcessing
 
 @SpringBootApplication
 @EnableBatchProcessing
@@ -270,8 +270,8 @@ class Application:
 ### 定义批处理作业（使用 @BatchJob / @BatchStep）
 
 ```python
-from spring.annotations import BatchJob, BatchStep
-from spring.batch import Step, CsvItemReader, ListItemWriter, FunctionItemProcessor
+from springbootai.annotations import BatchJob, BatchStep
+from springbootai.batch import Step, CsvItemReader, ListItemWriter, FunctionItemProcessor
 
 @BatchJob(name="importUsers", description="导入用户数据")
 class ImportUserJob:
@@ -290,7 +290,7 @@ class ImportUserJob:
 ### 基本用法
 
 ```python
-from spring.annotations import SpringBootApplication, EnableDataRest, RepositoryRestResource
+from springbootai.annotations import SpringBootApplication, EnableDataRest, RepositoryRestResource
 
 @SpringBootApplication
 @EnableDataRest(base_path="/api/v1", default_page_size=50)
@@ -434,7 +434,7 @@ class ProductRepo:
 所有 `@EnableXxx` 注解可以组合使用，标记在同一个主类上：
 
 ```python
-from spring.annotations import (
+from springbootai.annotations import (
     SpringBootApplication,
     EnableOAuth2,
     EnableCsrf,
@@ -516,8 +516,8 @@ spring:
 ### Q: 如何在测试中验证注解是否生效？
 
 ```python
-from spring.annotations.core import get_spring_annotations
-from spring.annotations import EnableOAuth2
+from springbootai.annotations.core import get_spring_annotations
+from springbootai.annotations import EnableOAuth2
 
 @EnableOAuth2(issuer="https://test.com")
 class App:

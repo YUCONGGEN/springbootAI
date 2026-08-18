@@ -40,6 +40,7 @@ database:
     mode: update
     entity_packages:
       - example_all.models
+      - example_all.common
   security:
     block_ddl: false
     sql_injection_detection: false

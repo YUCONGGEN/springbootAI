@@ -13,16 +13,16 @@ for _p in (_PROJECT_ROOT, _EXAMPLES_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from spring import SpringBootApplication
-from spring.orm import MapperScan
+from springbootai import SpringBootApplication
+from springbootai.orm import MapperScan
 
 
 @SpringBootApplication(scan_base_packages=["example_all"])
-@MapperScan(base_packages=["example_all.mappers"])
+@MapperScan(base_packages=["example_all.mappers", "example_all.common"])
 class Application:
     """全注解示例应用启动类"""
 
 
 if __name__ == "__main__":
-    from spring import run
+    from springbootai import run
     run(Application, port=8080)

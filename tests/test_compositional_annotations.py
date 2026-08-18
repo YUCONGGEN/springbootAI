@@ -13,7 +13,7 @@
 """
 from __future__ import annotations
 
-from spring.orm.ddl_auto import (
+from springbootai.orm.ddl_auto import (
     Column, Entity, Id, Version, DdlAutoManager,
     CreateTime, UpdateTime, column, id_column,
 )
@@ -22,18 +22,18 @@ from spring.orm.ddl_auto import (
 def _parse_entity(cls, dialect='sqlite'):
     """便捷函数：复用 ``DdlAutoManager._parse_entity`` 单例解析。"""
     return DdlAutoManager(None, dialect=dialect, mode='none')._parse_entity(cls)
-from spring.excel.annotations import (
+from springbootai.excel.annotations import (
     ExcelSheet, ExcelProperty, ExcelIgnore, parse_excel_columns,
 )
-from spring.excel import EasyExcel
-from spring.csv.annotations import (
+from springbootai.excel import EasyExcel
+from springbootai.csv.annotations import (
     CsvFile, CsvProperty, parse_csv_columns,
 )
-from spring.csv import write_csv, read_csv
-from spring.validation.constraints import (
+from springbootai.csv import write_csv, read_csv
+from springbootai.validation.constraints import (
     NotNull, NotBlank, Size, Min, Max, Positive, Email, Pattern,
 )
-from spring.validation.validator import BeanValidator
+from springbootai.validation.validator import BeanValidator
 
 
 # ==================== 1. 组合式：四模块注解同用一类 ====================

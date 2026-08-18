@@ -2,8 +2,8 @@
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from spring.web import actuator as actuator_module
-from spring.web.actuator import actuator_router
+from springbootai.web import actuator as actuator_module
+from springbootai.web.actuator import actuator_router
 
 
 @pytest.fixture
@@ -91,6 +91,74 @@ def test_admin_html_has_auto_refresh(client):
     resp = client.get("/actuator/admin")
     assert "setInterval" in resp.text
     assert "loadAll" in resp.text
+    assert "资源趋势" not in resp.text
+
+
+def test_admin_html_reuses_or_accepts_an_access_token(client):
+    """Admin 页面会给敏感 Actuator 请求附加已登录用户的 JWT。"""
+    html = client.get("/actuator/admin").text
+    assert "actuatorFetch" in html
+    assert "Authorization" in html
+    assert "welding_token" in html
+    assert "springbootai_actuator_token" in html
+
+
+def test_admin_html_supports_paging_info_mapping_and_token_events(client):
+    """Admin 页面必须提供每页十条分页、当前 info 结构映射和可用的 Token 按钮绑定。"""
+    html = client.get("/actuator/admin").text
+    assert "loggerPageSize = 10" in html
+    assert "beanPageSize = 10" in html
+    assert "data-page-jump" in html
+    assert "page-input" in html
+    assert "d.application || d.app" in html
+    assert "bindDashboardEvents" in html
+    assert "apply-actuator-token" in html
+    assert "clear-actuator-token" in html
+    assert "getDashboardToken" in html
+    assert "面板 Token 已清除" in html
+    assert "component.enabled === false || s === 'DISABLED'" in html
+    assert "不应占用业务运维面板" in html
+
+
+def test_admin_dashboard_yaml_config_overrides_and_invalid_values_fall_back(monkeypatch):
+    """management.admin 可覆盖页面参数；空值和非法数值不应破坏内置面板。"""
+    resolved = actuator_module._resolve_admin_dashboard_config({
+        "management": {
+            "admin": {
+                "title": "焊接运维中心",
+                "subtitle": "生产环境",
+                "refresh-interval-seconds": 45,
+                "page-size": 25,
+                "request-metrics": {
+                    "enabled": True,
+                    "title": "持久化请求统计",
+                },
+            }
+        }
+    })
+    assert resolved == {
+        "title": "焊接运维中心",
+        "subtitle": "生产环境",
+        "refresh_interval_seconds": 45,
+        "page_size": 25,
+        "request_metrics_enabled": True,
+        "request_metrics_url": "/actuator/request-metrics",
+        "request_metrics_title": "持久化请求统计",
+    }
+    assert actuator_module._resolve_admin_dashboard_config({
+        "management": {"admin": {"title": "", "page-size": 0}}
+    }) == actuator_module._ADMIN_DASHBOARD_DEFAULTS
+
+    monkeypatch.setattr(actuator_module, "_admin_dashboard_config", resolved)
+    html = actuator_module._build_admin_dashboard_html()
+    assert "焊接运维中心" in html
+    assert "生产环境" in html
+    assert "loggerPageSize = 25" in html
+    assert "beanPageSize = 25" in html
+    assert "setInterval(loadAll, 45000)" in html
+    assert "持久化请求统计" in html
+    assert "const REQUEST_METRICS_URL = \"/actuator/request-metrics\"" in html
+    assert "loadRequestMetrics" in html
 
 
 # ==================== /actuator/sysmetrics 测试 ====================
@@ -193,3 +261,37 @@ def test_endpoint_directory_includes_new_endpoints(client):
     assert links["prometheus"]["href"] == "/actuator/prometheus"
     assert links["admin"]["href"] == "/actuator/admin"
     assert links["alert"]["methods"] == ["POST"]
+
+# ==================== Spring Boot Admin 注册客户端测试 ====================
+
+def test_spring_boot_admin_registration_posts_instance(monkeypatch):
+    from springbootai.monitoring.admin_client import AdminClientProperties, SpringBootAdminClient
+
+    calls = []
+    class Response:
+        headers = {"Location": "http://admin:1111/instances/instance-1"}
+        def raise_for_status(self): pass
+    class Session:
+        def post(self, url, json, timeout):
+            calls.append((url, json, timeout))
+            return Response()
+        def delete(self, url, timeout):
+            calls.append((url, None, timeout))
+            return Response()
+
+    client = SpringBootAdminClient(AdminClientProperties(
+        enabled=True, url="http://admin:1111", name="orders",
+        service_url="http://app:8080", management_url="http://app:8080/actuator",
+        health_url="http://app:8080/actuator/health", metadata={"env": "test"},
+    ), session=Session())
+    assert client.register() == "instance-1"
+    assert calls[0][0] == "http://admin:1111/instances"
+    assert calls[0][1]["managementUrl"] == "http://app:8080/actuator"
+    client.deregister()
+    assert calls[1][0] == "http://admin:1111/instances/instance-1"
+
+
+def test_spring_boot_admin_registration_requires_reachable_urls():
+    from springbootai.monitoring.admin_client import AdminClientProperties, SpringBootAdminClient
+    with pytest.raises(ValueError, match="service-url"):
+        SpringBootAdminClient(AdminClientProperties(enabled=True)).register()

@@ -13,15 +13,15 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.orm.pymybatis.annotations.annotations import (
+from springbootai.orm.pymybatis.annotations.annotations import (
     Select, Insert, Update, Delete, SelectAnnotation, InsertAnnotation,
     UpdateAnnotation, DeleteAnnotation, Param, Result, ResultMap, Options,
 )
-from spring.orm.ddl_auto import (
+from springbootai.orm.ddl_auto import (
     DdlAutoManager, DdlAutoMode, Column, Id, Table, Index, entity,
     _camel_to_snake, _get_sql_type,
 )
-from spring.orm.pymybatis.pool import create_connection_pool
+from springbootai.orm.pymybatis.pool import create_connection_pool
 
 
 # ==================== SQL 注解测试 ====================

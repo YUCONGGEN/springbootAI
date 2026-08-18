@@ -6,15 +6,15 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 
-from spring.annotations import *  # noqa: F401,F403 - this test audits public exports
-from spring.annotations import __all__ as annotation_exports
-from spring.annotations import cloud as cloud_annotations
-from spring.annotations import core as core_annotations
-from spring.annotations import messaging as messaging_annotations
-from spring.annotations.core import ApplicationEvent, get_spring_annotations
-from spring.event import ApplicationEventPublisher
-from spring.orm import Mapper, MapperScan
-from spring.orm.pymybatis.annotations import (
+from springbootai.annotations import *  # noqa: F401,F403 - this test audits public exports
+from springbootai.annotations import __all__ as annotation_exports
+from springbootai.annotations import cloud as cloud_annotations
+from springbootai.annotations import core as core_annotations
+from springbootai.annotations import messaging as messaging_annotations
+from springbootai.annotations.core import ApplicationEvent, get_spring_annotations
+from springbootai.event import ApplicationEventPublisher
+from springbootai.orm import Mapper, MapperScan
+from springbootai.orm.pymybatis.annotations import (
     CacheNamespace,
     DataSource,
     Delete,
@@ -243,9 +243,9 @@ class AnnotationContractTests(unittest.TestCase):
         self.assertEqual(["body"], events)
 
         fake_client = Mock()
-        fake_rabbitmq = types.ModuleType("spring.messaging.rabbitmq")
+        fake_rabbitmq = types.ModuleType("springbootai.messaging.rabbitmq")
         fake_rabbitmq.rabbitmq_client = fake_client
-        with patch.dict(sys.modules, {"spring.messaging.rabbitmq": fake_rabbitmq}):
+        with patch.dict(sys.modules, {"springbootai.messaging.rabbitmq": fake_rabbitmq}):
             messaging_annotations.register_rabbit_listener(annotation, decorated)
             RabbitTemplate().send("orders", {"id": 1})
             RabbitTemplate().send(
@@ -357,7 +357,7 @@ class AnnotationContractTests(unittest.TestCase):
     def test_annotation_exports_are_importable(self):
         for name in annotation_exports:
             with self.subTest(name=name):
-                self.assertTrue(hasattr(__import__("spring.annotations", fromlist=[name]), name))
+                self.assertTrue(hasattr(__import__("springbootai.annotations", fromlist=[name]), name))
 
     def test_repeatable_audit_and_metrics_decorators_stack(self):
         """同一方法叠加多个 AOP 注解应均能被 get_spring_annotations 收集。"""

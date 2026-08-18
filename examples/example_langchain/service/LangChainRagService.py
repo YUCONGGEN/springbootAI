@@ -5,9 +5,9 @@ LangChain RAG 服务 - 演示完整 RAG 流水线：文档入库 -> 检索 -> �
 （IndexService 内部已处理 springbootAI SimpleInMemoryVectorStore 与 langchain
 Embeddings 的接口桥接，参见 _ensure_spring_embedding）。
 """
-from spring.annotations.core import Autowired, Service, Slf4j
-from spring.langchain.chains.services import ChainService
-from spring.langchain.indexes.index import IndexService
+from springbootai.annotations.core import Autowired, Service, Slf4j
+from springbootai.langchain.chains.services import ChainService
+from springbootai.langchain.indexes.index import IndexService
 
 
 @Slf4j

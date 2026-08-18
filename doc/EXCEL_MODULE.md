@@ -1,6 +1,6 @@
 # SpringBootAI Excel 模块 —— 小白也能看懂的使用指南
 
-> 模块版本：`spring.excel` 2.3.0 ｜ 框架版本：SpringBootAI 2.3.0
+> 模块随 SpringBootAI 2.3.2 发布
 
 ---
 
@@ -46,7 +46,7 @@ wb.save("users.xlsx")
 
 ```python
 # ✅ 用 Excel 模块（定义类 + 一行代码）
-from spring.excel import write_excel
+from springbootai.excel import write_excel
 from demo.excel_entity import UserExport
 
 write_excel("users.xlsx", UserExport, users)
@@ -118,7 +118,7 @@ python -m pip install "springbootAI[excel]"
 # demo/excel_entity.py
 from datetime import datetime
 from decimal import Decimal
-from spring.excel import ExcelProperty, ExcelIgnore, ExcelSheet, BigDecimalConverter
+from springbootai.excel import ExcelProperty, ExcelIgnore, ExcelSheet, BigDecimalConverter
 
 
 @ExcelSheet("用户列表", freeze_head=True, auto_width=True)
@@ -165,7 +165,7 @@ class UserExport:
 # demo/export_users.py
 from datetime import datetime
 from decimal import Decimal
-from spring.excel import EasyExcel, write_excel
+from springbootai.excel import EasyExcel, write_excel
 from demo.excel_entity import UserExport
 
 # 准备数据（实际项目中数据从数据库查）
@@ -209,7 +209,7 @@ write_excel("用户列表_便捷.xlsx", UserExport, users)
 
 ```python
 # demo/import_users.py
-from spring.excel import EasyExcel, read_excel
+from springbootai.excel import EasyExcel, read_excel
 from demo.excel_entity import UserExport
 
 # 方式1：流式读取
@@ -240,9 +240,9 @@ rows2 = read_excel("用户列表.xlsx", UserExport)
 
 ```python
 # demo/controller/export_controller.py
-from spring.web import RestController, GetMapping
-from spring.http import FileResponse
-from spring.excel import write_excel
+from springbootai.web import RestController, GetMapping
+from springbootai.http import FileResponse
+from springbootai.excel import write_excel
 from demo.excel_entity import UserExport
 from demo.service.user_service import UserService
 
@@ -290,7 +290,7 @@ class ExportController:
 
 ```python
 # demo/multi_sheet_export.py
-from spring.excel import EasyExcel
+from springbootai.excel import EasyExcel
 from demo.excel_entity import UserExport
 
 # 准备不同 Sheet 的数据
@@ -308,7 +308,7 @@ EasyExcel.write("多Sheet示例.xlsx", head=UserExport).doWriteAll({
 
 ```python
 # demo/multi_sheet_import.py
-from spring.excel import EasyExcel
+from springbootai.excel import EasyExcel
 from demo.excel_entity import UserExport
 
 # 读取所有 Sheet
@@ -371,7 +371,7 @@ id = ExcelProperty("用户ID", order=1, big_number=True)
 
 ```python
 # demo/custom_converter.py
-from spring.excel import Converter, ExcelProperty, ExcelSheet
+from springbootai.excel import Converter, ExcelProperty, ExcelSheet
 
 
 # 自定义转换器：列表 ↔ 分号分隔的字符串
@@ -399,7 +399,7 @@ class Article:
 
 
 # 测试
-from spring.excel import write_excel, read_excel
+from springbootai.excel import write_excel, read_excel
 
 data = [
     Article("Python 入门", ["python", "教程"]),
@@ -618,7 +618,7 @@ class Demo:
 > **提示：** `ExcelSheet` 是类级装饰器（也可作元数据类使用），与 ORM `@Table` 风格一致。框架还提供了小写函数别名向后兼容，推荐统一用大写。
 >
 > ```python
-> from spring.excel import ExcelSheet
+> from springbootai.excel import ExcelSheet
 >
 > @ExcelSheet("用户列表", freeze_head=True, auto_width=True)
 > class DemoData:
@@ -660,7 +660,7 @@ class User:
         self.email = email
 
 # 直接导出，不需要 @ExcelSheet
-from spring.excel import EasyExcel
+from springbootai.excel import EasyExcel
 EasyExcel.write("users.xlsx").doWrite(users)
 # Excel 表头自动生成为：Id / Name / Age / Email
 ```
@@ -670,7 +670,7 @@ EasyExcel.write("users.xlsx").doWrite(users)
 在已有类的属性上加 `@ExcelProperty`，只改你想控制的列：
 
 ```python
-from spring.excel import ExcelProperty, ExcelIgnore
+from springbootai.excel import ExcelProperty, ExcelIgnore
 
 class User:
     id = ExcelProperty("用户ID", order=1)      # 自定义表头和顺序
@@ -692,7 +692,7 @@ class User:
 用类型注解声明字段，未标注 `@ExcelProperty` 的字段也会自动建列：
 
 ```python
-from spring.excel import ExcelProperty, ExcelSheet
+from springbootai.excel import ExcelProperty, ExcelSheet
 
 @ExcelSheet("用户列表")
 class User:
@@ -717,7 +717,7 @@ class User:
 ## API 速查
 
 ```python
-from spring.excel import (
+from springbootai.excel import (
     # 注解
     ExcelProperty, ExcelIgnore, ExcelSheet,
     # 转换器
@@ -790,7 +790,7 @@ A: 设计范式一致（都用类属性描述符 + MRO 反射），但功能独�
 
 ### 大文件读取未流式处理，内存溢出风险 — 高 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/excel/reader.py` doRead()
+**位置**：`springbootai/excel/reader.py` doRead()
 
 **现象**：Excel 读取使用 `openpyxl.load_workbook()` 一次性加载整个文件到内存。10 万行以上的大文件内存占用可能超过 1GB。
 

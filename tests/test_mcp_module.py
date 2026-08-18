@@ -12,11 +12,11 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from spring.ai.core import ChatClient
-from spring.ai.providers import FakeChatModel
-from spring.ai.tools import CompositeToolRegistry, ToolExecutionPolicy, ToolRegistry
-from spring.context.registry import BeanRegistry
-from spring.mcp import (
+from springbootai.ai.core import ChatClient
+from springbootai.ai.providers import FakeChatModel
+from springbootai.ai.tools import CompositeToolRegistry, ToolExecutionPolicy, ToolRegistry
+from springbootai.context.registry import BeanRegistry
+from springbootai.mcp import (
     MCPCall,
     MCPClientConnection,
     MCPClient,

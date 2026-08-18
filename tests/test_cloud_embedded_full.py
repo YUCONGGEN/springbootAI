@@ -11,21 +11,21 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.annotations.core import get_spring_annotations
-from spring.annotations.cloud import (
+from springbootai.annotations.core import get_spring_annotations
+from springbootai.annotations.cloud import (
     EnableDiscoveryClient, NacosValue, RefreshScope, EnableFeignClients,
     FeignClient, SentinelResource, EnableGateway, LoadBalanced,
     GlobalTransactional,
 )
-from spring.cloud.sentinel import (
+from springbootai.cloud.sentinel import (
     sentinel_engine, FlowRule, DegradeRule, BlockException, sentinel_protect,
 )
-from spring.cloud.tracer import (
+from springbootai.cloud.tracer import (
     Tracer, SpanKind, SpanStatus, trace_span, get_tracer, _parse_traceparent,
 )
-from spring.cloud.seata import seata_manager, BranchStatus
-from spring.cloud.gateway import GatewayRouter
-from spring.cloud.load_balancer import LoadBalancer
+from springbootai.cloud.seata import seata_manager, BranchStatus
+from springbootai.cloud.gateway import GatewayRouter
+from springbootai.cloud.load_balancer import LoadBalancer
 
 
 # ==================== Cloud 注解测试 ====================
@@ -611,7 +611,7 @@ class TestGatewayRouter:
         assert all("id" in r for r in routes)
 
     def test_add_filter(self):
-        from spring.cloud.gateway import LoggingFilter
+        from springbootai.cloud.gateway import LoggingFilter
         gw = GatewayRouter()
         initial_count = len(gw.filters)
         gw.add_filter(LoggingFilter())

@@ -1,5 +1,5 @@
-from spring.annotations.core import GetMapping, RequestMapping, RestController
-from spring.web.web_context import WebApplicationContext
+from springbootai.annotations.core import GetMapping, RequestMapping, RestController
+from springbootai.web.web_context import WebApplicationContext
 
 
 @RestController

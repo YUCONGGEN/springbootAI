@@ -21,32 +21,32 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装缺失依赖 mock
 
-from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
-from spring.ai.core import ChatModel, EmbeddingModel, Message
-from spring.context.registry import BeanRegistry
-from spring.langchain.adapters import (
+from springbootai.ai.providers import FakeChatModel, FakeEmbeddingModel
+from springbootai.ai.core import ChatModel, EmbeddingModel, Message
+from springbootai.context.registry import BeanRegistry
+from springbootai.langchain.adapters import (
     SpringChatModelToLangChain, to_langchain_embeddings, to_langchain_model,
     to_spring_embeddings, to_spring_model,
 )
-from spring.langchain.autoconfig import (
+from springbootai.langchain.autoconfig import (
     bind_langchain_config, configure_langchain,
 )
-from spring.langchain.partners import (
+from springbootai.langchain.partners import (
     PARTNER_REGISTRY, PartnerProviderFactory,
     is_partner_available, list_available_partners, list_partners,
 )
-from spring.langchain.prompts.templates import PromptTemplateFactory
-from spring.langchain.chains.services import ChainService
-from spring.langchain.agents.services import AgentService
-from spring.langchain.memory.memory import MemoryFactory
-from spring.langchain.parsers.parsers import OutputParserFactory
-from spring.langchain.loaders.loaders import DocumentLoaderRegistry
-from spring.langchain.retrievers.retrievers import RetrieverFactory
-from spring.langchain.vectorstores.stores import VectorStoreFactory
-from spring.langchain.indexes.index import IndexService
-from spring.langchain.tools.tools import ToolFactory, ToolRegistry
-from spring.langchain.utilities.utils import UtilityRegistry
-from spring.langchain.callbacks.handlers import CallbackRegistry
+from springbootai.langchain.prompts.templates import PromptTemplateFactory
+from springbootai.langchain.chains.services import ChainService
+from springbootai.langchain.agents.services import AgentService
+from springbootai.langchain.memory.memory import MemoryFactory
+from springbootai.langchain.parsers.parsers import OutputParserFactory
+from springbootai.langchain.loaders.loaders import DocumentLoaderRegistry
+from springbootai.langchain.retrievers.retrievers import RetrieverFactory
+from springbootai.langchain.vectorstores.stores import VectorStoreFactory
+from springbootai.langchain.indexes.index import IndexService
+from springbootai.langchain.tools.tools import ToolFactory, ToolRegistry
+from springbootai.langchain.utilities.utils import UtilityRegistry
+from springbootai.langchain.callbacks.handlers import CallbackRegistry
 
 
 # ==================== 公共 fixture ====================
@@ -820,7 +820,7 @@ class TestEndToEndIntegration:
 class _StubConfig:
     """最小配置加载器 stub - 支持 get_prefix_config 返回子树。
 
-    生产环境用 spring.config.config_loader；测试用本 stub 注入确定性配置，
+    生产环境用 springbootai.config.config_loader；测试用本 stub 注入确定性配置，
     避免读取真实 application.yml 造成的环境依赖。
     """
 
@@ -828,7 +828,7 @@ class _StubConfig:
         self._tree = tree
 
     def get_prefix_config(self, prefix: str) -> dict:
-        """按 dotted prefix 取子树（如 spring.langchain）。"""
+        """按 dotted prefix 取子树（如 springbootai.langchain）。"""
         node = self._tree
         for part in prefix.split("."):
             if not isinstance(node, dict):

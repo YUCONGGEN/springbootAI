@@ -1,6 +1,6 @@
 # SpringBootAI Swagger / OpenAPI 模块使用文档
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -79,8 +79,8 @@ spring:
 ### 第二步：创建 Controller，加上注解
 
 ```python
-from spring.annotations.core import RestController, RequestMapping, GetMapping, PostMapping, PathVariable, RequestBody
-from spring.web.swagger import Tag, Operation, ApiResponse, SecurityScheme, SecurityRequirement
+from springbootai.annotations.core import RestController, RequestMapping, GetMapping, PostMapping, PathVariable, RequestBody
+from springbootai.web.swagger import Tag, Operation, ApiResponse, SecurityScheme, SecurityRequirement
 
 
 @SecurityScheme(name="BearerAuth", scheme="bearer", bearer_format="JWT")  # 声明 JWT 认证方式
@@ -137,7 +137,7 @@ python main.py
 > 生活比喻：JWT 就像一张电子门禁卡。有卡（Token）才能进特定房间，没卡的只能去公共区域。
 
 ```python
-from spring.web.swagger import SecurityScheme, SecurityRequirement
+from springbootai.web.swagger import SecurityScheme, SecurityRequirement
 
 
 # 1. 在 Controller 类上声明"这个控制器用的是 JWT 门禁"
@@ -171,7 +171,7 @@ class Api:
 > 生活比喻：API Key 就像一把固定密码的钥匙。你把钥匙发给合作方，他们每次请求都带上。
 
 ```python
-from spring.web.swagger import SecurityScheme, SecurityRequirement
+from springbootai.web.swagger import SecurityScheme, SecurityRequirement
 
 
 @SecurityScheme(name="ApiKey", type="apiKey", header_name="X-API-Key", description="API 密钥认证")
@@ -189,7 +189,7 @@ class Api:
 > 生活比喻：就像给快递包裹贴标签——外面写着"里面是什么、长什么样"。
 
 ```python
-from spring.web.swagger import Schema
+from springbootai.web.swagger import Schema
 
 
 @Schema(title="订单模型", description="订单实体", example={"id": 1, "amount": 99.9})
@@ -205,7 +205,7 @@ class OrderDTO:
 > 生活比喻：就像表格栏旁边的小字标注——"请填身份证上的名字，示例：张三"。
 
 ```python
-from spring.web.swagger import Parameter
+from springbootai.web.swagger import Parameter
 
 
 @RestController
@@ -245,7 +245,7 @@ spring:
 ### Q1: 打开 /docs 是空白页？
 
 **检查清单：**
-- `application.yml` 中 `spring.swagger.enabled` 是否为 `true`？
+- `application.yml` 中 `springbootai.swagger.enabled` 是否为 `true`？
 - Controller 类有没有加 `@RestController`？
 - 方法有没有加 `@GetMapping` / `@PostMapping` 等路由注解？
 
@@ -288,6 +288,6 @@ spring:
 
 ## 代码位置
 
-- 实现：[`spring/web/swagger.py`](../spring/web/swagger.py)
+- 实现：[`springbootai/web/swagger.py`](../springbootai/web/swagger.py)
 - 测试：[`tests/test_swagger_module.py`](../tests/test_swagger_module.py)（43 个用例）
 - 测试报告：[TEST_REPORT.md](TEST_REPORT.md)

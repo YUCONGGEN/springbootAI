@@ -3,10 +3,10 @@ Event/Listener 事件控制器
 ============================================================================
 测试: publish_event + @EventListener 异步事件分发
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping, Autowired, Slf4j,
 )
-from spring.web.result import Result
+from springbootai.web.result import Result
 from example_all.service.EventService import EventService
 
 
@@ -26,7 +26,7 @@ class EventController:
     def publish_user_created(self, username: str, email: str = ""):
         """发布 UserCreatedEvent"""
         from example_all.service.EventService import UserCreatedEvent
-        from spring.context.application_context import ApplicationContext
+        from springbootai.context.application_context import ApplicationContext
         
         event = UserCreatedEvent(username=username, email=email)
         ctx = ApplicationContext.get_instance()
@@ -43,7 +43,7 @@ class EventController:
     def publish_system_startup(self, message: str = "test startup event"):
         """发布 SystemStartupEvent"""
         from example_all.service.EventService import SystemStartupEvent
-        from spring.context.application_context import ApplicationContext
+        from springbootai.context.application_context import ApplicationContext
 
         event = SystemStartupEvent(message=message)
         ctx = ApplicationContext.get_instance()

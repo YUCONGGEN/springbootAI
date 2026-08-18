@@ -1,7 +1,7 @@
 """
 Cloud 微服务 — 测试 Nacos 服务发现、Feign 调用、负载均衡、Sentinel、分布式事务
 """
-from spring.annotations.core import Service, Slf4j, PostConstruct
+from springbootai.annotations.core import Service, Slf4j, PostConstruct
 
 
 @Slf4j
@@ -22,7 +22,7 @@ class CloudService:
     def get_discovery_status(self) -> dict:
         """获取 Nacos 服务发现状态"""
         try:
-            from spring.cloud.discovery import nacos_client
+            from springbootai.cloud.discovery import nacos_client
             if nacos_client and getattr(nacos_client, '_ready', False):
                 return {"enabled": True, "status": "connected"}
         except Exception:
@@ -32,7 +32,7 @@ class CloudService:
     def list_registered_services(self) -> list:
         """获取注册的服务"""
         try:
-            from spring.cloud.discovery import nacos_client
+            from springbootai.cloud.discovery import nacos_client
             if nacos_client:
                 services = nacos_client.get_services()
                 return services or []
@@ -43,7 +43,7 @@ class CloudService:
     def register_service(self, service_name: str, ip: str, port: int) -> dict:
         """注册服务"""
         try:
-            from spring.cloud.discovery import nacos_client
+            from springbootai.cloud.discovery import nacos_client
             if nacos_client:
                 registered = nacos_client.register(service_name, ip, port)
                 return {
@@ -72,7 +72,7 @@ class CloudService:
     def get_loadbalancer_info(self) -> dict:
         """获取负载均衡信息"""
         try:
-            from spring.cloud.load_balancer import lb
+            from springbootai.cloud.load_balancer import lb
             if lb:
                 return {
                     "enabled": True,

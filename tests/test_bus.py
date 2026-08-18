@@ -1,7 +1,7 @@
 """Spring Cloud Bus 事件总线测试"""
 import pytest
 
-from spring.cloud.bus import (
+from springbootai.cloud.bus import (
     BusEvent,
     EventBus,
     event_bus,

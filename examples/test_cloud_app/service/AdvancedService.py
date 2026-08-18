@@ -1,4 +1,4 @@
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     Service,
     RateLimit,
     CircuitBreaker,

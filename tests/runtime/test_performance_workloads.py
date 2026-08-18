@@ -4,7 +4,7 @@ import httpx
 
 
 def test_feature_workloads_execute_real_framework_paths():
-    from spring.context.application_context import ApplicationContext
+    from springbootai.context.application_context import ApplicationContext
 
     previous_context = ApplicationContext.get_instance()
     from tests.performance import benchmark_app

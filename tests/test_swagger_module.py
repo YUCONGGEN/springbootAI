@@ -12,10 +12,10 @@
 复用既有 ``ApplicationContext``/``WebApplicationContext``，不依赖第三方 Swagger 库。
 """
 
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     SpringBootApplication, RestController, RequestMapping, GetMapping,
 )
-from spring.web.swagger import (
+from springbootai.web.swagger import (
     Tag, Api, Operation, ApiOperation, ApiResponse, ApiResponses,
     Parameter, Schema, SecurityScheme, SecurityRequirement,
     SwaggerConfig, collect_openapi_metadata, collect_security_schemes,
@@ -26,10 +26,10 @@ from spring.web.swagger import (
 
 def _build_client(controllers, config=None):
     """构建带 Swagger 注解 Controller 的 WebApplicationContext + TestClient。"""
-    from spring.context.application_context import ApplicationContext
-    from spring.context.bean_definition import BeanDefinition
-    from spring.config.config_loader import ConfigLoader
-    from spring.web.web_context import WebApplicationContext
+    from springbootai.context.application_context import ApplicationContext
+    from springbootai.context.bean_definition import BeanDefinition
+    from springbootai.config.config_loader import ConfigLoader
+    from springbootai.web.web_context import WebApplicationContext
     import tempfile, os, yaml
 
     cfg = config or {}
@@ -534,7 +534,7 @@ class TestSwaggerIntegration:
             import os; os.unlink(path)
 
     def test_schema_post_processing(self):
-        from spring.web.swagger import _SCHEMA_REGISTRY
+        from springbootai.web.swagger import _SCHEMA_REGISTRY
         from pydantic import BaseModel
 
         _SCHEMA_REGISTRY.clear()

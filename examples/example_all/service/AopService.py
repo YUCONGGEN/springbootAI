@@ -3,7 +3,7 @@ AOP 企业级注解服务 — 测试所有 AOP 切面注解
 @RateLimit, @CircuitBreaker, @Idempotent, @AuditLog,
 @FeatureToggle, @Lock, @Metrics, @Synchronized, @Validate, @Trace
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     Service, Slf4j, PostConstruct,
     RateLimit, CircuitBreaker, Idempotent, AuditLog,
     FeatureToggle, Lock, Metrics, Synchronized,

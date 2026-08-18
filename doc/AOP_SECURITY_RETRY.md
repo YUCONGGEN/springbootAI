@@ -1,6 +1,6 @@
 # 声明式 AOP、后置鉴权与重试恢复指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 >
 > 适用范围：`@Aspect` 通知、`@PostAuthorize` 返回后鉴权、`@Recover` 重试失败兜底。
 
@@ -42,7 +42,7 @@ def __init__(self, order_service: OrderService):
 ### 2. 最小可用示例
 
 ```python
-from spring.annotations import (
+from springbootai.annotations import (
     AfterReturning,
     AfterThrowing,
     Around,
@@ -51,7 +51,7 @@ from spring.annotations import (
     Pointcut,
     Service,
 )
-from spring.aop import JoinPoint, ProceedingJoinPoint
+from springbootai.aop import JoinPoint, ProceedingJoinPoint
 
 
 @Aspect
@@ -201,7 +201,7 @@ async def measure(self, join_point):
 ### 2. 完整示例
 
 ```python
-from spring.annotations import Authenticate, PostAuthorize, Service
+from springbootai.annotations import Authenticate, PostAuthorize, Service
 
 
 @Service
@@ -282,8 +282,8 @@ class DocumentService:
 ### 2. 完整示例
 
 ```python
-from spring.annotations import Recover, Retryable, Service
-from spring.retry import Backoff
+from springbootai.annotations import Recover, Retryable, Service
+from springbootai.retry import Backoff
 
 
 @Service
@@ -438,7 +438,7 @@ conda run -n py3.10 python -m pytest tests/test_declarative_aop_post_authorize_r
 
 ### AOP 异步切面未正确 await 返回值 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/aop/aspect.py` 异步包装路径
+**位置**：`springbootai/aop/aspect.py` 异步包装路径
 
 **现象**：异步函数上的 advice 包装未完全考虑 `await` 传播。若 `around` advice 返回 coroutine 但未被 await，会导致协程从未执行（静默跳过业务逻辑）。
 

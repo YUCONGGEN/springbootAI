@@ -17,8 +17,8 @@ for _p in (_PROJECT_ROOT, _EXAMPLES_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from spring.ai import ToolExecutionPolicy, ToolRegistry
-from spring.mcp import MCPServerAdapter, MCPServerProperties
+from springbootai.ai import ToolExecutionPolicy, ToolRegistry
+from springbootai.mcp import MCPServerAdapter, MCPServerProperties
 
 
 def build_server() -> MCPServerAdapter:

@@ -2,11 +2,11 @@
 ORM 数据访问控制器 — 测试 MyBatis 注解 + XML Mapper 混合使用
 以及 Schedule 状态端点
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping, PutMapping, DeleteMapping,
     Autowired, Slf4j,
 )
-from spring.web.result import Result
+from springbootai.web.result import Result
 from example_all.mappers.UserMapper import UserMapper
 from example_all.service.OrmBridgeService import OrmBridgeService
 from example_all.service.ScheduledService import ScheduledService
@@ -32,7 +32,7 @@ class OrmController:
             import os
             import pymysql
             # 从 example_all/config/application.yml 读取 MySQL 配置，避免硬编码凭据
-            from spring.config.config_loader import ConfigLoader
+            from springbootai.config.config_loader import ConfigLoader
             example_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             db_cfg = ConfigLoader(base_path=example_dir).get_config().get('database', {})
             host = db_cfg.get('host', 'localhost')
@@ -46,12 +46,11 @@ class OrmController:
             try:
                 conn = pymysql.connect(host=host, port=port, **connection_options)
             except pymysql.MySQLError:
-                # Docker Desktop publishes MySQL on localhost.  Only fall back
-                # to the container IP when that configured endpoint is really
-                # unavailable; eagerly replacing localhost breaks Windows/macOS.
+                # Docker Desktop 会把 MySQL 发布到 localhost。只有配置的地址确实不可用时
+                # 才回退到容器 IP；提前替换 localhost 会破坏 Windows/macOS 环境。
                 if host not in ('localhost', '127.0.0.1', '0.0.0.0'):
                     raise
-                from spring.orm.pymybatis.pool.connection_pool import _get_docker_container_ip_by_port
+                from springbootai.orm.pymybatis.pool.connection_pool import _get_docker_container_ip_by_port
                 docker_ip = _get_docker_container_ip_by_port(port)
                 if not docker_ip or docker_ip == host:
                     raise

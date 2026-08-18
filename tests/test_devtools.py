@@ -1,6 +1,6 @@
 """DevTools 热重载模块测试。
 
-覆盖 ``spring.devtools`` 的核心组件：
+覆盖 ``springbootai.devtools`` 的核心组件：
 - ``FileWatcher``：基于轮询的文件变更监视器
 - ``RestartTrigger``：带静默期的应用重启触发器
 - ``create_devtools_watcher``：从配置创建监视器的工厂函数
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from spring.devtools import FileWatcher, RestartTrigger, create_devtools_watcher
+from springbootai.devtools import FileWatcher, RestartTrigger, create_devtools_watcher
 
 
 # ==================== FileWatcher 测试 ====================

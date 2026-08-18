@@ -1,6 +1,6 @@
 # SpringBootAI JPA 实体与仓库 —— 使用指南
 
-> 框架版本：SpringBootAI 2.3.0 / 内嵌 PyMyBatis 2.3.0
+> 框架版本：SpringBootAI 2.3.2 / 内嵌 PyMyBatis 2.3.2
 
 ---
 
@@ -27,7 +27,7 @@ Java JPA 中，`@Entity` 标记"这是一个实体类"，`@Table` 指定"对应�
 #### 写法一：@Entity + @Table 分离（推荐）
 
 ```python
-from spring.orm import Entity, Table, Column, Id, Index, CreateTime
+from springbootai.orm import Entity, Table, Column, Id, Index, CreateTime
 
 @Entity                                          # 标记为实体类
 @Table(                                          # 指定表信息
@@ -160,7 +160,7 @@ Java JPA 中，实体类的所有字段自动映射为数据库列，`@Column` �
 ### 完整示例
 
 ```python
-from spring.orm import Entity, Table, Column, Id, Index, CreateTime
+from springbootai.orm import Entity, Table, Column, Id, Index, CreateTime
 
 @Entity
 @Table(
@@ -276,7 +276,7 @@ class User:
 ### ② 怎么用（两种写法任选一种）
 
 ```python
-from spring.orm import Entity, Id, CreateTime, UpdateTime, AuditTimeExecutor
+from springbootai.orm import Entity, Id, CreateTime, UpdateTime, AuditTimeExecutor
 
 @Entity("sys_user")
 class User:
@@ -295,7 +295,7 @@ class User:
 
 ```python
 # 写法二：描述符传参（可自定义列名）
-from spring.orm import Entity, Id, CreateTime, UpdateTime
+from springbootai.orm import Entity, Id, CreateTime, UpdateTime
 
 @Entity("sys_user")
 class User:

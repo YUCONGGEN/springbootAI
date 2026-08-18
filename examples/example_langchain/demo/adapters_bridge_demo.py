@@ -1,7 +1,7 @@
 """
 adapters 双向桥接演示 - springbootAI ↔ 原生 langchain 自由切换。
 
-本脚本演示 spring.langchain.adapters 的核心能力：
+本脚本演示 springbootai.langchain.adapters 的核心能力：
 - springbootAI ChatModel → 原生 langchain BaseChatModel（走 LCEL 管道）
 - 原生 langchain ChatOpenAI → springbootAI ChatModel（走 LangChainCore 封装）
 - 同进程内两种生态共享同一 FakeChatModel，无需 API Key
@@ -35,7 +35,7 @@ if str(ROOT) not in sys.path:
 # 允许无 API Key（用 FakeChatModel 演示）
 os.environ.setdefault("AI_ALLOW_FAKE", "true")
 
-from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
+from springbootai.ai.providers import FakeChatModel, FakeEmbeddingModel
 
 
 # ============================================================
@@ -44,7 +44,7 @@ from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
 def demo_spring_to_native():
     """把 springbootAI 的 FakeChatModel 桥接成 langchain BaseChatModel，用原生的 LCEL 管道。"""
 
-    from spring.langchain.adapters import to_langchain_model, to_langchain_embeddings
+    from springbootai.langchain.adapters import to_langchain_model, to_langchain_embeddings
 
     # 1a. 模型桥接
     print("\n--- 第 1 节：springbootAI → 原生 langchain ---")
@@ -83,13 +83,13 @@ def demo_spring_to_native():
 def demo_native_to_spring():
     """把原生 langchain ChatOpenAI 桥接成 springbootAI ChatModel，享受安全防护。"""
 
-    from spring.langchain.adapters import to_spring_model
+    from springbootai.langchain.adapters import to_spring_model
 
     print("\n--- 第 2 节：原生 langchain → springbootAI ---")
 
     # 2a. 模型桥接（反向）
     spring_model = FakeChatModel()
-    from spring.langchain.adapters import to_langchain_model
+    from springbootai.langchain.adapters import to_langchain_model
     lc_model = to_langchain_model(spring_model)
 
     # to_spring_model 接受 langchain BaseChatModel，返回 springbootAI ChatModel
@@ -100,13 +100,13 @@ def demo_native_to_spring():
     print("  [2a] to_spring_model(langchain_model) → springbootAI ChatModel: ✅")
 
     # 2b. 桥接回来的模型可独立调用 call/stream
-    from spring.ai.core import Message, MessageType
+    from springbootai.ai.core import Message, MessageType
     result = spring_wrapper.call([Message(content="用中文答：1+1 等于几？", type=MessageType.USER)])
     output = result.content() if hasattr(result, 'content') else str(result)
     print(f'  [2b] spring_wrapper.call([Message(...)]) → "{output.strip()}" : ✅')
 
     # 2c. 用 LangChainCore 封装原始 spring_model（Core 自动桥接为 langchain 模型）
-    from spring.langchain.core import LangChainCore
+    from springbootai.langchain.core import LangChainCore
 
     core = LangChainCore.builder().with_model(spring_model).build()
     response = core.chat("用一句话介绍 Python。")
@@ -123,8 +123,8 @@ def demo_hybrid():
 
     print("\n--- 第 3 节：混合使用 — 同一个模型两边跑 ---")
 
-    from spring.langchain.adapters import to_langchain_model
-    from spring.langchain.core import LangChainCore
+    from springbootai.langchain.adapters import to_langchain_model
+    from springbootai.langchain.core import LangChainCore
 
     spring_model = FakeChatModel()
     lc_model = to_langchain_model(spring_model)
@@ -155,8 +155,8 @@ def demo_rag_bridge():
 
     print("\n--- 第 4 节：RAG 流水线（spring 嵌入 → langchain 检索）---")
 
-    from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
-    from spring.langchain.adapters import to_langchain_embeddings, to_langchain_model
+    from springbootai.ai.providers import FakeChatModel, FakeEmbeddingModel
+    from springbootai.langchain.adapters import to_langchain_embeddings, to_langchain_model
 
     spring_model = FakeChatModel()
     spring_emb = FakeEmbeddingModel()
@@ -177,7 +177,7 @@ def demo_rag_bridge():
     retriever = vector_store.as_retriever()
 
     # 用 LangChainCore 的 RAG 流水线
-    from spring.langchain.core import LangChainCore
+    from springbootai.langchain.core import LangChainCore
 
     core = LangChainCore.builder().with_model(lc_model).build()
     response = core.rag_pipeline("什么是 SpringBootAI？", retriever=retriever)

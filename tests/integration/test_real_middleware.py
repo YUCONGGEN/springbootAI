@@ -10,7 +10,7 @@ if os.getenv("RUN_INTEGRATION_TESTS") != "1":
 
 
 def test_mysql_through_springpy_connection_pool():
-    from spring.orm.pymybatis.pool.connection_pool import MySQLConnectionPool
+    from springbootai.orm.pymybatis.pool.connection_pool import MySQLConnectionPool
 
     pool = MySQLConnectionPool({
         "host": "127.0.0.1",
@@ -36,7 +36,7 @@ def test_mysql_through_springpy_connection_pool():
 
 
 def test_redis_through_springpy_client():
-    from spring.utils.redis_client import RedisClient
+    from springbootai.utils.redis_client import RedisClient
 
     client = RedisClient(host="127.0.0.1", port=6379, db=15)
     client.connect(strict=True)
@@ -48,7 +48,7 @@ def test_redis_through_springpy_client():
 
 
 def test_rabbitmq_publish_and_consume_through_springpy_client():
-    from spring.messaging.rabbitmq import init_rabbitmq, rabbitmq_client
+    from springbootai.messaging.rabbitmq import init_rabbitmq, rabbitmq_client
 
     init_rabbitmq({
         "host": "127.0.0.1",

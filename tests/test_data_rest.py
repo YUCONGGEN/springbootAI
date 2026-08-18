@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from spring.data.rest import RepositoryRestController, DataRestConfig, _to_dict, _from_dict
+from springbootai.data.rest import RepositoryRestController, DataRestConfig, _to_dict, _from_dict
 
 
 # ==================== 测试用 Mock Repository ====================
@@ -26,7 +26,7 @@ class MockUserRepository:
         self._next_id = 1
 
     def find_all(self, pageable=None) -> any:
-        from spring.data.page import Page
+        from springbootai.data.page import Page
         items = list(self._store.values())
         # 排序
         if pageable and pageable.sort:

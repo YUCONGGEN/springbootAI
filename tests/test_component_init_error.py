@@ -11,7 +11,7 @@
 """
 import pytest
 
-from spring.main import SpringApplication, ComponentInitError
+from springbootai.main import SpringApplication, ComponentInitError
 
 
 class TestFormatComponentError:

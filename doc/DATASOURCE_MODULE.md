@@ -1,6 +1,6 @@
 # 多数据源 —— 读写分离
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -16,7 +16,7 @@
 ## ② 怎么用
 
 ```python
-from spring.datasource import DynamicRoutingDataSource, DS, Master, Slave, routing_scope
+from springbootai.datasource import DynamicRoutingDataSource, DS, Master, Slave, routing_scope
 
 # 1. 构造多数据源路由器
 router = DynamicRoutingDataSource(
@@ -69,7 +69,7 @@ class UserService:
 
 ### 连接池泄漏检测仅告警不强制回收 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/orm/pymybatis/pool/connection_pool.py` _detect_leaks()
+**位置**：`springbootai/orm/pymybatis/pool/connection_pool.py` _detect_leaks()
 
 **现象**：`_detect_leaks()` 检测到连接借出时间超过 `leak_timeout` 后，仅 `logger.warning()`，不强制回收连接。泄漏的连接会一直占用配额，最终耗尽连接池。
 
@@ -77,7 +77,7 @@ class UserService:
 
 ### Docker IP 自动检测每次连接失败都调用 subprocess — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/orm/pymybatis/pool/connection_pool.py` _detect_docker_ip()
+**位置**：`springbootai/orm/pymybatis/pool/connection_pool.py` _detect_docker_ip()
 
 **现象**：MySQL 连接失败且 host 为 localhost/127.0.0.1 时，每次都会 `subprocess.run(['docker', 'ps', ...])`。非 Docker 环境下每次约 100-300ms 无意义开销。
 
@@ -85,7 +85,7 @@ class UserService:
 
 ### is_valid() 连接有效性检查逻辑不完整 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/orm/pymybatis/pool/connection_pool.py` is_valid()
+**位置**：`springbootai/orm/pymybatis/pool/connection_pool.py` is_valid()
 
 **现象**：没有 `ping` 也没有 `isclosed` 的连接（如某些 SQLite 实现）永远返回 True，无法检测真实有效性。
 
@@ -93,7 +93,7 @@ class UserService:
 
 ### SQLite 连接池 check_same_thread=False 的线程安全风险 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/orm/pymybatis/pool/connection_pool.py` SQLite 连接创建
+**位置**：`springbootai/orm/pymybatis/pool/connection_pool.py` SQLite 连接创建
 
 **现象**：SQLite 连接设置 `check_same_thread=False` 允许跨线程使用，但多线程并发写入可能导致 `database is locked`。
 

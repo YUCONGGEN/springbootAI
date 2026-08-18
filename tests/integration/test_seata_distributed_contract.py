@@ -71,7 +71,7 @@ def _wait_for_action(events, lock, branch_id, action):
 
 
 def test_real_seata_tcc_commit_and_rollback_contract(tcc_callback_server):
-    from spring.cloud.seata import SeataTransactionManager
+    from springbootai.cloud.seata import SeataTransactionManager
 
     callback_port, events, lock = tcc_callback_server
     manager = SeataTransactionManager()

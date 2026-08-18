@@ -1,7 +1,7 @@
 """
 ORM 服务 — 桥接 Controller 和 Mapper，演示 @Transactional, @Cacheable, @Retryable
 """
-from spring.annotations.core import Service, Autowired, Slf4j, Transactional, Cacheable, Retryable
+from springbootai.annotations.core import Service, Autowired, Slf4j, Transactional, Cacheable, Retryable
 from example_all.mappers.UserMapper import UserMapper
 
 

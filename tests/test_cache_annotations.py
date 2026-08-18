@@ -21,10 +21,10 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.annotations.core import Cacheable
-from spring.annotations.cache import CachePut, CacheEvict, CacheConfig, Caching
-from spring.context.bean_factory import BeanFactory
-from spring.context.bean_definition import BeanDefinition
+from springbootai.annotations.core import Cacheable
+from springbootai.annotations.cache import CachePut, CacheEvict, CacheConfig, Caching
+from springbootai.context.bean_factory import BeanFactory
+from springbootai.context.bean_definition import BeanDefinition
 
 
 # ==================== 辅助：构建受管 Bean（应用 AOP） ====================

@@ -1,6 +1,6 @@
 # SpringBootAI Bean 生命周期与增强注解指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -46,7 +46,7 @@
 ### 怎么用？
 
 ```python
-from spring.annotations import Service, PostConstruct, PreDestroy
+from springbootai.annotations import Service, PostConstruct, PreDestroy
 
 
 @Service
@@ -96,7 +96,7 @@ class DatabaseService:
 ### 怎么用？
 
 ```python
-from spring.annotations import Service, Slf4j, LogExecutionTime, Metrics
+from springbootai.annotations import Service, Slf4j, LogExecutionTime, Metrics
 
 
 @Slf4j
@@ -166,7 +166,7 @@ class OrderService:
 **@Primary：多个同类 Bean 选一个默认的**
 
 ```python
-from spring.annotations import Service, Primary, Autowired
+from springbootai.annotations import Service, Primary, Autowired
 
 
 @Primary  # 有多个 DataSource 时，优先选这个
@@ -190,7 +190,7 @@ class UserService:
 **@Scope：控制单例还是多例**
 
 ```python
-from spring.annotations import Component, Scope
+from springbootai.annotations import Component, Scope
 
 
 @Scope("singleton")  # 全局唯一实例（默认）
@@ -208,7 +208,7 @@ class PrototypeService:
 **@Profile：按环境切换实现**
 
 ```python
-from spring.annotations import Service, Profile
+from springbootai.annotations import Service, Profile
 
 
 @Profile("dev")  # 只有 SPRING_PROFILES_ACTIVE=dev 时才注册
@@ -226,7 +226,7 @@ class ProdEmailService:
 **@Lazy：延迟初始化**
 
 ```python
-from spring.annotations import Service, Lazy
+from springbootai.annotations import Service, Lazy
 
 
 @Lazy  # 不在启动时创建，首次被注入时才创建
@@ -280,7 +280,7 @@ class HeavyService:
 **@AuditLog：审计日志**
 
 ```python
-from spring.annotations import Service, AuditLog
+from springbootai.annotations import Service, AuditLog
 
 
 @Service
@@ -295,7 +295,7 @@ class UserService:
 **@FeatureToggle：功能开关**
 
 ```python
-from spring.annotations import Service, FeatureToggle
+from springbootai.annotations import Service, FeatureToggle
 
 
 @Service
@@ -347,10 +347,10 @@ features:
 
 | 注解组 | 实现位置 | 测试文件 |
 |--------|---------|---------|
-| 生命周期 | `spring/annotations/core.py` | `tests/test_lifecycle_annotations.py` |
-| 日志与监控 | `spring/annotations/core.py` | `tests/test_logging_annotations.py` |
-| Bean 配置 | `spring/annotations/core.py` | `tests/test_bean_config_annotations.py` |
-| 业务增强 | `spring/annotations/core.py` | `tests/test_comprehensive_aop.py` |
+| 生命周期 | `springbootai/annotations/core.py` | `tests/test_lifecycle_annotations.py` |
+| 日志与监控 | `springbootai/annotations/core.py` | `tests/test_logging_annotations.py` |
+| Bean 配置 | `springbootai/annotations/core.py` | `tests/test_bean_config_annotations.py` |
+| 业务增强 | `springbootai/annotations/core.py` | `tests/test_comprehensive_aop.py` |
 
 完整测试报告见 [TEST_REPORT.md](TEST_REPORT.md)。
 

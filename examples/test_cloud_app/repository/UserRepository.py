@@ -1,4 +1,4 @@
-from spring.annotations.core import Repository
+from springbootai.annotations.core import Repository
 
 
 @Repository

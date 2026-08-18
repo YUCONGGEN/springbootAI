@@ -1,7 +1,7 @@
 # SpringBootAI LangChain 模块使用指南 —— 小白也能看懂
 
 > 把 [LangChain](https://github.com/langchain-ai/langchain) 全套能力（Chains / Agents / Memory / Retrievers / VectorStores / Parsers / Loaders）封装为 Spring 风格 Bean，配合 30+ 第三方模型提供商（OpenAI / Anthropic / Ollama / DeepSeek / ZhipuAI / Tongyi …）开箱即用。
-> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.3.0 / LangChain 模块 2.3.0
+> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.3.2
 
 ---
 
@@ -16,7 +16,7 @@
                     configure_ai() ──→ configure_langchain()
                          │                     │
                          ▼                     ▼
-                  spring.ai 模块        spring.langchain 模块
+                  springbootai.ai 模块        springbootai.langchain 模块
                   (ChatModel)           (LangChain 全家桶)
                          │                     │
                          │     ┌───────────────┤
@@ -50,7 +50,7 @@
 
 第一次使用请先读完 [新手入门指南](BEGINNER_GUIDE.md) 的普通 HTTP 接口，再学习 [AI 模块使用指南](AI_MODULE.md) 的基础聊天，最后读本文件。
 
-本模块**复用** `spring.ai` 装配出的 `aiChatModel` / `aiEmbeddingModel` Bean 作为底层模型，再做一层 LangChain 适配。因此**没有真实 API Key 也能跑通**——设置 `AI_ALLOW_FAKE=true` 后会降级 `FakeChatModel`，整个 LangChain 流程依然可演示。
+本模块**复用** `springbootai.ai` 装配出的 `aiChatModel` / `aiEmbeddingModel` Bean 作为底层模型，再做一层 LangChain 适配。因此**没有真实 API Key 也能跑通**——设置 `AI_ALLOW_FAKE=true` 后会降级 `FakeChatModel`，整个 LangChain 流程依然可演示。
 
 学习顺序建议：基础问答 → Prompt 模板 → Memory 多轮 → Chain → Agent → RAG → 输出解析 → 自定义 Partner。
 
@@ -117,13 +117,13 @@ export AI_ALLOW_FAKE=true
 ```
 
 ```python
-from spring.context.registry import BeanRegistry
-from spring.ai.autoconfig import configure_ai
-from spring.langchain.autoconfig import configure_langchain
+from springbootai.context.registry import BeanRegistry
+from springbootai.ai.autoconfig import configure_ai
+from springbootai.langchain.autoconfig import configure_langchain
 
 registry = BeanRegistry()
-configure_ai(registry=registry)              # 1. 装配 spring.ai（降级 FakeChatModel）
-beans = configure_langchain(registry=registry)  # 2. 装配 spring.langchain
+configure_ai(registry=registry)              # 1. 装配 springbootai.ai（降级 FakeChatModel）
+beans = configure_langchain(registry=registry)  # 2. 装配 springbootai.langchain
 
 chain_service = beans["lcChainService"]      # 拿到 ChainService Bean
 print(chain_service.run_llm_chain("你好"))     # 用 LLMChain 跑一句话
@@ -145,7 +145,7 @@ export OPENAI_API_KEY=sk-你的真实key
 
 - ❌ 以为要自己 `import langchain.xxx` 再 `new` → ✅ 全部走 `@Autowired` 注入 `lc*Service` Bean
 - ❌ 直接在 Controller 里写 LangChain 代码 → ✅ Controller 只调 Service，Service 通过 `@Autowired` 拿 `lcChainService`
-- ❌ 30 个 partner 全装上拖慢启动 → ✅ 按需在 `application.yml` 的 `spring.langchain.partners` 下配置，未配置的不加载
+- ❌ 30 个 partner 全装上拖慢启动 → ✅ 按需在 `application.yml` 的 `springbootai.langchain.partners` 下配置，未配置的不加载
 - ❌ 以为 `lcLangChainModel` 是 springbootAI 模型 → ✅ 它是**langchain `BaseChatModel`**（由 `aiChatModel` 桥接而来）；要 springbootAI 模型请用 `aiChatModel`
 - ❌ RAG 流程忘记配嵌入模型 → ✅ `configure_ai` 默认会装 `aiEmbeddingModel`，缺失时 RAG 会告警但不崩溃
 
@@ -154,7 +154,7 @@ export OPENAI_API_KEY=sk-你的真实key
 ## 第1章：模块全景
 
 ```
-spring.langchain/
+springbootai.langchain/
 ├── core.py              # LangChainCore 统一核心入口（构建器模式 + 一站式 API）
 ├── adapters.py          # 双向桥接：springbootAI ↔ langchain 模型/嵌入/向量库
 ├── partners.py          # 30+ Partner 提供商工厂注册表（懒加载）
@@ -180,7 +180,7 @@ spring.langchain/
 
 设计原则（与 Spring AI 对齐）：
 
-- **配置即启用**：在 `application.yml` 写一段 `spring.langchain.partners.<name>` 即可启用一个厂商，零代码。
+- **配置即启用**：在 `application.yml` 写一段 `springbootai.langchain.partners.<name>` 即可启用一个厂商，零代码。
 - **懒加载**：所有 partner 包、外部向量库均按需 `importlib.import_module`，缺失时抛带 `pip install` 提示的 `ImportError`，不污染全局启动。
 - **双重注册**：每个 Bean 同时注册到 `BeanRegistry`（`registry.get(name)` 直取）和 `ApplicationContext.bean_factory`（`@Autowired` 按名称/类型注入），兼容两套用法。
 - **降级友好**：无 API Key 时 `aiChatModel` 自动降级 `FakeChatModel`，整个 LangChain 流程仍可演示；某 partner 嵌入不可用时只告警不阻塞聊天。
@@ -190,7 +190,7 @@ spring.langchain/
 `LangChainCore` 是把分散在 13 个子模块的能力汇聚到一个对象上的统一编程入口：
 
 ```python
-from spring.langchain.core import LangChainCore, create_langchain_core
+from springbootai.langchain.core import LangChainCore, create_langchain_core
 
 # 方式 1：构建器模式（推荐）
 core = (LangChainCore.builder()
@@ -228,7 +228,7 @@ core = LangChainCore.from_autoconfig()
 ```python
 response: LangChainResponse = core.chat("什么是 SpringBootAI？")
 print(response.output)           # 主输出文本
-print(response.content)          # 同 output（兼容 spring.ai 命名）
+print(response.content)          # 同 output（兼容 springbootai.ai 命名）
 print(response.metadata)          # {"chain_type": "llm", ...}
 print(response.intermediate_steps)  # Agent 中间推理步骤
 ```
@@ -245,7 +245,7 @@ print(response.intermediate_steps)  # Agent 中间推理步骤
 spring:
   langchain:
     enabled: ${LC_ENABLED:true}
-    # default-llm: auto=复用 spring.ai 的 aiChatModel；或指定 partner 名（openai/anthropic/ollama/...）
+    # default-llm: auto=复用 springbootai.ai 的 aiChatModel；或指定 partner 名（openai/anthropic/ollama/...）
     default-llm: ${LC_DEFAULT_LLM:auto}
     chains:
       default-verbose: ${LC_CHAIN_VERBOSE:false}
@@ -284,7 +284,7 @@ spring:
 优先级：**环境变量 > application.yml > dataclass 默认值**。
 
 ```python
-from spring.langchain.autoconfig import LangChainProperties, bind_langchain_config
+from springbootai.langchain.autoconfig import LangChainProperties, bind_langchain_config
 
 props: LangChainProperties = bind_langchain_config({
     "default-llm": "openai",
@@ -331,8 +331,8 @@ springbootAI 自己有一套模型抽象（`ChatModel` / `EmbeddingModel`），l
 ### 完整示例：双向桥接一条龙
 
 ```python
-from spring.ai import FakeChatModel, FakeEmbeddingModel
-from spring.langchain.adapters import (
+from springbootai.ai import FakeChatModel, FakeEmbeddingModel
+from springbootai.langchain.adapters import (
     to_langchain_model, to_langchain_embeddings,
     to_spring_model, to_spring_embeddings,
 )
@@ -354,7 +354,7 @@ spring_emb2 = to_spring_embeddings(lc_emb)
 # spring_emb2 又变回了 springbootAI EmbeddingModel
 
 # 验证：消息不丢失
-from spring.ai import Message
+from springbootai.ai import Message
 result = lc_model.invoke([Message.user("你好").to_langchain()])
 print(result.content)
 # 输出: AI: 你好
@@ -362,7 +362,7 @@ print(result.content)
 
 ### 为什么需要双向？
 
-默认场景下你的模型来自 `spring.ai`（springbootAI 原生），LangChain 组件需要 langchain 接口，所以走 spring → langchain。但当你直接用某个 partner（比如 Anthropic）时，`PartnerProviderFactory` 创建的是 langchain 模型，如果你想把它注入到 springbootAI 的 `ChatClient`，就要走 langchain → spring。两条路都通，按需取用。
+默认场景下你的模型来自 `springbootai.ai`（springbootAI 原生），LangChain 组件需要 langchain 接口，所以走 spring → langchain。但当你直接用某个 partner（比如 Anthropic）时，`PartnerProviderFactory` 创建的是 langchain 模型，如果你想把它注入到 springbootAI 的 `ChatClient`，就要走 langchain → spring。两条路都通，按需取用。
 
 ---
 
@@ -382,12 +382,12 @@ print(result.content)
 | 云厂商聚合 | `bedrock` / `together` / `fireworks` / `nvidia` / `ai21` / `databricks` / `perplexity` / `groq` / `sambanova` / `premai` / `edenai` / `friendli` | 各自专属包 |
 | 国内厂商 | `deepseek` / `zhipu` / `moonshot` / `tongyi` / `baichuan` / `hunyuan` / `minimax` / `volcengine` / `ernie` / `spark` | langchain_deepseek / langchain_zhipuai / langchain_community |
 
-完整列表见 `spring/langchain/partners.py` 的 `PARTNER_REGISTRY`。
+完整列表见 `springbootai/langchain/partners.py` 的 `PARTNER_REGISTRY`。
 
 ### 探测与实例化
 
 ```python
-from spring.langchain.partners import (
+from springbootai.langchain.partners import (
     list_partners, list_available_partners, is_partner_available,
     PartnerProviderFactory,
 )
@@ -466,7 +466,7 @@ spring:
 **大白话**：把"把'{text}'翻译成{lang}"这种带空格的句子，填上变量变成完整句子。
 
 ```python
-from spring.langchain.prompts.templates import PromptTemplateFactory
+from springbootai.langchain.prompts.templates import PromptTemplateFactory
 
 factory = PromptTemplateFactory()
 
@@ -518,7 +518,7 @@ print(fs.format(input="大"))
 | `create_constitutional_chain(principles=...)` | `ConstitutionalChain` | AI 安全审查 |
 
 ```python
-from spring.langchain.chains.services import ChainService
+from springbootai.langchain.chains.services import ChainService
 
 # 注入 lcLangChainModel（由 configure_langchain 自动创建）
 service = ChainService(lcLangChainModel=lc_model)
@@ -561,7 +561,7 @@ print(service.run_sequential("SpringBootAI 是一个 Python Web 框架",
 | `xml` | `create_xml_agent` | XML 格式 Agent |
 
 ```python
-from spring.langchain.agents.services import AgentService
+from springbootai.langchain.agents.services import AgentService
 from langchain_community.tools import DuckDuckGoSearchRun
 
 agent_service = AgentService(lcLangChainModel=lc_model)
@@ -596,7 +596,7 @@ print(agent_service.run_agent(executor, "Python 3.12 发布日期？"))
 | `read-only-shared` | `ReadOnlySharedMemory` | 只读共享记忆（多 Agent 共享上下文） |
 
 ```python
-from spring.langchain.memory.memory import MemoryFactory
+from springbootai.langchain.memory.memory import MemoryFactory
 
 # buffer-window：只记最近 5 轮
 memory = MemoryFactory.create("buffer-window", max_messages=5)
@@ -609,7 +609,7 @@ chain_service.run_conversation("你好", memory=memory)
 **大白话**：模型返回的是文本（字符串），Parser 把它变成 Python 对象——列表、日期、JSON、Pydantic 对象。
 
 ```python
-from spring.langchain.parsers.parsers import OutputParserFactory
+from springbootai.langchain.parsers.parsers import OutputParserFactory
 
 # 1. 列表解析（把 "a, b, c" 变成 ['a', 'b', 'c']）
 parser = OutputParserFactory.create("comma-list")
@@ -641,7 +641,7 @@ print(parser.parse('{"name": "张三", "age": 18}'))
 **大白话**：从 txt / csv / pdf / 网页 / 目录读取文档，自动识别格式。
 
 ```python
-from spring.langchain.loaders.loaders import DocumentLoaderRegistry
+from springbootai.langchain.loaders.loaders import DocumentLoaderRegistry
 
 registry = DocumentLoaderRegistry()
 
@@ -674,7 +674,7 @@ docs = registry.load("json", "./data.json")
 | `redis` | `Redis` | langchain_community + redis | 已有 Redis 的用户 |
 
 ```python
-from spring.langchain.vectorstores.stores import VectorStoreFactory
+from springbootai.langchain.vectorstores.stores import VectorStoreFactory
 
 # 1. 内存向量库（无需任何依赖）
 store = VectorStoreFactory.from_texts(
@@ -707,7 +707,7 @@ store = VectorStoreFactory.from_texts(
 | `ensemble` | `EnsembleRetriever` | 混合检索（稀疏+密集） |
 
 ```python
-from spring.langchain.retrievers.retrievers import RetrieverFactory
+from springbootai.langchain.retrievers.retrievers import RetrieverFactory
 
 retriever = RetrieverFactory.create("similarity", vector_store=store, k=3)
 docs = retriever.invoke("SpringBootAI 是什么？")
@@ -719,7 +719,7 @@ docs = retriever.invoke("SpringBootAI 是什么？")
 **大白话**："建立知识库 + 写入文档 + 检索"三步合成一步，一行代码搞定 RAG。
 
 ```python
-from spring.langchain.indexes.index import IndexService
+from springbootai.langchain.indexes.index import IndexService
 
 index_service = IndexService(lcEmbeddings=lc_emb, lcLangChainModel=lc_model)
 
@@ -740,7 +740,7 @@ for doc in results:
 ### 5.10 ToolFactory / ToolRegistry（工具工厂）
 
 ```python
-from spring.langchain.tools.tools import ToolFactory, ToolRegistry
+from springbootai.langchain.tools.tools import ToolFactory, ToolRegistry
 
 # 1. 把普通函数包成 langchain StructuredTool
 def add(a: int, b: int) -> int:
@@ -762,7 +762,7 @@ print(tools)
 LangChain 内置的现成工具，按需懒加载：
 
 ```python
-from spring.langchain.utilities.utils import UtilityRegistry
+from springbootai.langchain.utilities.utils import UtilityRegistry
 
 # 1. DuckDuckGo 搜索（无需 API Key）
 search = UtilityRegistry.create("duckduckgo")
@@ -787,7 +787,7 @@ db = UtilityRegistry.create("sql-database", uri="sqlite:///test.db")
 挂在模型调用流程上的监听器：
 
 ```python
-from spring.langchain.callbacks.handlers import CallbackRegistry
+from springbootai.langchain.callbacks.handlers import CallbackRegistry
 
 # 1. 标准输出回调
 cb = CallbackRegistry.create_stdout_handler()
@@ -805,20 +805,20 @@ result = chain.invoke({"q": "你好"}, config={"callbacks": [cb]})
 
 ## 第6章：自动装配（configure_langchain）
 
-`configure_langchain()` 是模块入口，读取 `spring.langchain.*` 配置，构建并注册全部 `lc*` Bean：
+`configure_langchain()` 是模块入口，读取 `springbootai.langchain.*` 配置，构建并注册全部 `lc*` Bean：
 
 ```python
-from spring.context.registry import BeanRegistry
-from spring.config.config_loader import config_loader
-from spring.ai.autoconfig import configure_ai
-from spring.langchain.autoconfig import configure_langchain
+from springbootai.context.registry import BeanRegistry
+from springbootai.config.config_loader import config_loader
+from springbootai.ai.autoconfig import configure_ai
+from springbootai.langchain.autoconfig import configure_langchain
 
 registry = BeanRegistry()
 
-# 1. 先装配 spring.ai（提供 aiChatModel / aiEmbeddingModel）
+# 1. 先装配 springbootai.ai（提供 aiChatModel / aiEmbeddingModel）
 configure_ai(registry=registry, config=config_loader)
 
-# 2. 再装配 spring.langchain（default-llm=auto 复用 aiChatModel）
+# 2. 再装配 springbootai.langchain（default-llm=auto 复用 aiChatModel）
 beans = configure_langchain(registry=registry, config=config_loader)
 
 # 3. 直接从返回值取 Bean
@@ -933,27 +933,27 @@ curl -X POST http://localhost:8081/api/lc/rag/query \
 
 ---
 
-## 第8章：与 spring.ai 模块的关系
+## 第8章：与 springbootai.ai 模块的关系
 
-`spring.ai` 和 `spring.langchain` 是两个**互补**的模块：
+`springbootai.ai` 和 `springbootai.langchain` 是两个**互补**的模块：
 
-| 维度 | spring.ai | spring.langchain |
+| 维度 | springbootai.ai | springbootai.langchain |
 |------|-----------|------------------|
 | 定位 | Spring AI 2.0 对齐的统一抽象 | LangChain 生态的 Spring 封装 |
-| 模型来源 | 自己实现 Provider（OpenAI/Ollama/DeepSeek/Moonshot/Zhipu） | 复用 spring.ai 的 `aiChatModel`，桥接为 langchain `BaseChatModel` |
+| 模型来源 | 自己实现 Provider（OpenAI/Ollama/DeepSeek/Moonshot/Zhipu） | 复用 springbootai.ai 的 `aiChatModel`，桥接为 langchain `BaseChatModel` |
 | 核心抽象 | `ChatClient` / `Advisor` / `Tools` / RAG | `Chain` / `Agent` / `Memory` / `Retriever` |
-| 配置前缀 | `spring.ai.*` | `spring.langchain.*` |
+| 配置前缀 | `springbootai.ai.*` | `springbootai.langchain.*` |
 | 入口 | `configure_ai()` | `configure_langchain()` |
 | 装配顺序 | 先 | 后（依赖 `aiChatModel`） |
 
 **典型用法**：两个模块一起装。`configure_ai` 提供 `aiChatModel` / `aiEmbeddingModel`，`configure_langchain` 复用它们并封装出 Chain / Agent / Memory 等 LangChain 能力。
 
 ```python
-configure_ai(registry=registry)              # 1. 先装 spring.ai
-configure_langchain(registry=registry)        # 2. 再装 spring.langchain（复用 aiChatModel）
+configure_ai(registry=registry)              # 1. 先装 springbootai.ai
+configure_langchain(registry=registry)        # 2. 再装 springbootai.langchain（复用 aiChatModel）
 ```
 
-想用 Spring AI 风格的 `ChatClient` 链式 API + Advisor？用 `spring.ai`。想用 LangChain 的 `Chain` / `Agent` / `Memory` 抽象？用 `spring.langchain`。两者底层是同一个模型 Bean，不会重复计费。
+想用 Spring AI 风格的 `ChatClient` 链式 API + Advisor？用 `springbootai.ai`。想用 LangChain 的 `Chain` / `Agent` / `Memory` 抽象？用 `springbootai.langchain`。两者底层是同一个模型 Bean，不会重复计费。
 
 ---
 
@@ -1021,7 +1021,7 @@ A：能。设置 `AI_ALLOW_FAKE=true`，`configure_ai` 会降级 `FakeChatModel`
 
 **Q2：怎么换 partner？**
 
-A：两种方式：① 改 `application.yml` 的 `spring.langchain.default-llm` 为 partner 名（如 `anthropic`），并在 `partners.anthropic` 下配 key/model；② 直接 `PartnerProviderFactory.create("anthropic", cfg)` 手动创建。
+A：两种方式：① 改 `application.yml` 的 `springbootai.langchain.default-llm` 为 partner 名（如 `anthropic`），并在 `partners.anthropic` 下配 key/model；② 直接 `PartnerProviderFactory.create("anthropic", cfg)` 手动创建。
 
 **Q3：某个 partner 的包没装会怎样？**
 
@@ -1043,7 +1043,7 @@ A：确认 `@Configuration` 类的 `__init__` 中调用了 `configure_langchain`
 
 A：在 `PARTNER_REGISTRY` 中加一项 `name -> (module, chat_cls, emb_cls)`，然后在 `application.yml` 的 `partners.<name>` 下配置即可。无需改任何 `@Service` 代码。
 
-**Q8：如果 spring.ai 模块没装配，LangChain 模块还能用吗？**
+**Q8：如果 springbootai.ai 模块没装配，LangChain 模块还能用吗？**
 
 A：`configure_langchain` 依赖 `aiChatModel`（通过 `default-llm=auto`），如果 `configure_ai` 没调过，会尝试自动降级。但推荐先调 `configure_ai`。
 
@@ -1068,7 +1068,7 @@ A：可以，用 `SequentialChain` 把多个 Chain 串起来，前一个的输�
 先完成 `configure_ai()` 和 `configure_langchain()`，让容器中存在 `lcChainService`。然后声明服务：
 
 ```python
-from spring.langchain import LangChainCall, LangChainClient
+from springbootai.langchain import LangChainCall, LangChainClient
 
 
 @LangChainClient
@@ -1146,7 +1146,7 @@ async def summary(body):
 单元测试或手动装配时可以显式注入：
 
 ```python
-from spring.langchain import bind_langchain_client
+from springbootai.langchain import bind_langchain_client
 
 assistant = bind_langchain_client(
     Assistant(),

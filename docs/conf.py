@@ -21,9 +21,9 @@ author = 'YuConggen'
 
 # 从 spring 包读取版本号
 try:
-    from spring import __version__ as version
+    from springbootai import __version__ as version
 except ImportError:
-    version = '2.3.2'
+    version = '2.3.3'
 
 release = version
 

@@ -1,7 +1,7 @@
 # SpringBootAI 数据库迁移（Migration）—— 使用指南
 
-> 框架版本：SpringBootAI 2.3.0
-> 源码位置：`spring/orm/migration.py`
+> SpringBootAI 2.3.2
+> 源码位置：`springbootai/orm/migration.py`
 > 对齐 Java：Flyway / Liquibase
 
 ---
@@ -87,7 +87,7 @@ CREATE INDEX idx_users_email ON users(email);
 ### 第二步：执行迁移
 
 ```python
-from spring.orm.migration import MigrationManager
+from springbootai.orm.migration import MigrationManager
 
 # connection_pool 是你的数据库连接池
 manager = MigrationManager(
@@ -228,7 +228,7 @@ MigrationManager(
 **示例：**
 
 ```python
-from spring.orm.migration import MigrationManager
+from springbootai.orm.migration import MigrationManager
 
 # MySQL
 manager = MigrationManager(
@@ -651,7 +651,7 @@ spring:
 ### 在代码中配置
 
 ```python
-from spring.orm.migration import MigrationManager
+from springbootai.orm.migration import MigrationManager
 
 # 直接构造
 manager = MigrationManager(
@@ -669,8 +669,8 @@ manager.migrate()
 ### 在启动类中集成
 
 ```python
-from spring.annotations import SpringBootApplication, PostConstruct
-from spring.orm.migration import MigrationManager
+from springbootai.annotations import SpringBootApplication, PostConstruct
+from springbootai.orm.migration import MigrationManager
 
 
 @SpringBootApplication
@@ -736,7 +736,7 @@ DROP TABLE IF EXISTS users;
 ### 2. 执行正向迁移
 
 ```python
-from spring.orm.migration import MigrationManager
+from springbootai.orm.migration import MigrationManager
 
 # 假设 pool 是已配置好的 MySQL 连接池
 manager = MigrationManager(

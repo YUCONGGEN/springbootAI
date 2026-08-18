@@ -3,9 +3,9 @@ LangChain 聊天服务 - 演示用 ChainService + PromptTemplateFactory 做问�
 
 通过构造器 @Autowired 注入 lcChainService（由 configure_langchain 注册到 BeanFactory）。
 """
-from spring.annotations.core import Autowired, Service, Slf4j
-from spring.langchain.chains.services import ChainService
-from spring.langchain.prompts.templates import PromptTemplateFactory
+from springbootai.annotations.core import Autowired, Service, Slf4j
+from springbootai.langchain.chains.services import ChainService
+from springbootai.langchain.prompts.templates import PromptTemplateFactory
 
 
 @Slf4j

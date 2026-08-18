@@ -6,12 +6,12 @@
 import os
 import xml.etree.ElementTree as ET
 
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping, PatchMapping,
     Autowired, Slf4j, ApplicationEvent, EventListener,
 )
-from spring.event import ApplicationEventPublisher
-from spring.web.result import Result
+from springbootai.event import ApplicationEventPublisher
+from springbootai.web.result import Result
 
 
 class LimitProbeEvent(ApplicationEvent):
@@ -41,7 +41,7 @@ class LimitationsController:
         server_addr = None
 
         try:
-            from spring.cloud.discovery import nacos_client
+            from springbootai.cloud.discovery import nacos_client
             server_addr = getattr(nacos_client, "server_addr", None)
             nacos_available = bool(nacos_client and nacos_client.is_healthy())
             if nacos_available:
@@ -73,7 +73,7 @@ class LimitationsController:
     @GetMapping("/xml-unescape")
     def xml_unescaped_limit(self):
         """分别验证 XML Mapper 中未转义的 <= 和 >=。"""
-        from spring.orm.pymybatis.xml_parser import XmlParser
+        from springbootai.orm.pymybatis.xml_parser import XmlParser
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         xml_path = os.path.join(base_dir, "mappers", "_test_unescaped_ops.xml")
@@ -141,7 +141,7 @@ class LimitationsController:
     def patch_mapping_limit(self):
         """验证 @PatchMapping 已注册为 FastAPI PATCH 路由。"""
         try:
-            from spring.annotations.core import PatchMapping
+            from springbootai.annotations.core import PatchMapping
             implemented = True
         except ImportError:
             implemented = False
@@ -182,13 +182,13 @@ class LimitationsController:
         has_application_event = False
 
         try:
-            from spring.annotations.core import EventListener
+            from springbootai.annotations.core import EventListener
             has_event_listener = True
         except ImportError:
             pass
 
         try:
-            from spring.annotations.core import ApplicationEvent
+            from springbootai.annotations.core import ApplicationEvent
             has_application_event = True
         except ImportError:
             pass
@@ -196,7 +196,7 @@ class LimitationsController:
         # 检查 event 目录
         springboot_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         event_dirs = []
-        for d in ['spring/event', 'spring/events', 'spring/listener']:
+        for d in ['springbootai/event', 'springbootai/events', 'springbootai/listener']:
             full = os.path.join(springboot_dir, d)
             if os.path.isdir(full):
                 event_dirs.append(d)
@@ -220,7 +220,7 @@ class LimitationsController:
     @GetMapping("/config-sync")
     def config_sync_limit(self):
         """验证全局 config_loader 与 ApplicationContext 的 ConfigLoader 不同步"""
-        from spring.config.config_loader import ConfigLoader, config_loader as global_loader
+        from springbootai.config.config_loader import ConfigLoader, config_loader as global_loader
 
         # ApplicationContext 方式: 传入 base_path 指向 example_all
         example_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

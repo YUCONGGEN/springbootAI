@@ -1,12 +1,12 @@
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController,
     RequestMapping,
     GetMapping,
     PostMapping,
     Autowired,
 )
-from spring.web.result import Result
-from spring.aop.comprehensive_aop import (
+from springbootai.web.result import Result
+from springbootai.aop.comprehensive_aop import (
     get_metrics,
     enable_feature,
     disable_feature,

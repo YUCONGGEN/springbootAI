@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from spring.web.web_context import WebApplicationContext
+from springbootai.web.web_context import WebApplicationContext
 
 
 class _ApplicationContextStub:

@@ -12,12 +12,12 @@ import pytest
 
 class TestSentinel:
     def setup_method(self):
-        from spring.cloud.sentinel import sentinel_engine
+        from springbootai.cloud.sentinel import sentinel_engine
         sentinel_engine.reset()
 
     def test_qps_rate_limiting(self):
         """测试QPS限流"""
-        from spring.cloud.sentinel import sentinel_engine, FlowRule, BlockException
+        from springbootai.cloud.sentinel import sentinel_engine, FlowRule, BlockException
         sentinel_engine.load_flow_rules([FlowRule("api_test", count=10.0)])
         
         passed = 0
@@ -34,7 +34,7 @@ class TestSentinel:
 
     def test_circuit_breaker_exception_ratio(self):
         """测试异常比例熔断"""
-        from spring.cloud.sentinel import sentinel_engine, DegradeRule, BlockException
+        from springbootai.cloud.sentinel import sentinel_engine, DegradeRule, BlockException
         sentinel_engine.load_degrade_rules([
             DegradeRule("cb_test", grade="EXCEPTION_RATIO", count=0.5,
                        time_window_sec=5, min_request_amount=3)
@@ -54,7 +54,7 @@ class TestSentinel:
 
     def test_circuit_breaker_recovery(self):
         """测试熔断恢复（半开->闭合）"""
-        from spring.cloud.sentinel import sentinel_engine, DegradeRule, BlockException
+        from springbootai.cloud.sentinel import sentinel_engine, DegradeRule, BlockException
         sentinel_engine.load_degrade_rules([
             DegradeRule("cb_recover", grade="EXCEPTION_COUNT", count=2,
                        time_window_sec=1, min_request_amount=1)
@@ -80,7 +80,7 @@ class TestSentinel:
 
     def test_sentinel_protect_decorator(self):
         """测试sentinel_protect装饰器"""
-        from spring.cloud.sentinel import sentinel_protect, sentinel_engine, FlowRule
+        from springbootai.cloud.sentinel import sentinel_protect, sentinel_engine, FlowRule
         sentinel_engine.load_flow_rules([FlowRule("decorated_api", count=100.0)])
         
         results = []
@@ -94,7 +94,7 @@ class TestSentinel:
 
     def test_stats_tracking(self):
         """测试统计信息记录"""
-        from spring.cloud.sentinel import sentinel_engine
+        from springbootai.cloud.sentinel import sentinel_engine
         for _ in range(5):
             e = sentinel_engine.entry("stats_api")
             time.sleep(0.001)
@@ -109,7 +109,7 @@ class TestSentinel:
 class TestTracer:
     def test_basic_span(self):
         """测试基本Span创建"""
-        from spring.cloud.tracer import Tracer, SpanKind, SpanStatus
+        from springbootai.cloud.tracer import Tracer, SpanKind, SpanStatus
         tracer = Tracer("test-svc")
         with tracer.span("hello", SpanKind.SERVER) as span:
             span.set_attribute("http.method", "GET")
@@ -121,7 +121,7 @@ class TestTracer:
 
     def test_nested_spans(self):
         """测试嵌套Span（父子关系）"""
-        from spring.cloud.tracer import Tracer
+        from springbootai.cloud.tracer import Tracer
         tracer = Tracer("test-svc")
         with tracer.span("parent") as parent:
             with tracer.span("child") as child:
@@ -132,7 +132,7 @@ class TestTracer:
 
     def test_w3c_traceparent_propagation(self):
         """测试W3C traceparent header 传播"""
-        from spring.cloud.tracer import Tracer, _parse_traceparent
+        from springbootai.cloud.tracer import Tracer, _parse_traceparent
         tracer = Tracer("test-svc")
         with tracer.span("propagate") as span:
             tp = tracer.get_traceparent_header()
@@ -145,7 +145,7 @@ class TestTracer:
 
     def test_extract_inject_headers(self):
         """测试headers注入和提取"""
-        from spring.cloud.tracer import Tracer
+        from springbootai.cloud.tracer import Tracer
         tracer = Tracer("svc-a")
         with tracer.span("call"):
             headers = {}
@@ -156,7 +156,7 @@ class TestTracer:
 
     def test_exception_recording(self):
         """测试异常记录"""
-        from spring.cloud.tracer import Tracer, SpanStatus
+        from springbootai.cloud.tracer import Tracer, SpanStatus
         tracer = Tracer("test-svc")
         with pytest.raises(ValueError):
             with tracer.span("failing") as span:
@@ -166,7 +166,7 @@ class TestTracer:
 
     def test_trace_span_decorator(self):
         """测试@trace_span装饰器"""
-        from spring.cloud.tracer import trace_span, get_tracer
+        from springbootai.cloud.tracer import trace_span, get_tracer
         tracer = get_tracer("deco-test")
         tracer.clear()
 
@@ -184,12 +184,12 @@ class TestTracer:
 
 class TestSeataHttpAt:
     def setup_method(self):
-        from spring.cloud.seata import seata_manager
+        from springbootai.cloud.seata import seata_manager
         seata_manager.set_mode("http")
 
     def test_begin_commit(self):
         """测试基本的事务开启和提交"""
-        from spring.cloud.seata import seata_manager
+        from springbootai.cloud.seata import seata_manager
         commits = []
         def on_commit(xid, bid): commits.append(bid)
         def on_rollback(xid, bid): pass
@@ -206,7 +206,7 @@ class TestSeataHttpAt:
 
     def test_begin_rollback(self):
         """测试事务回滚"""
-        from spring.cloud.seata import seata_manager
+        from springbootai.cloud.seata import seata_manager
         rollbacks = []
         def on_commit(xid, bid): pass
         def on_rollback(xid, bid): rollbacks.append(bid)
@@ -220,7 +220,7 @@ class TestSeataHttpAt:
 
     def test_xid_header_propagation(self):
         """测试XID header的注入和提取"""
-        from spring.cloud.seata import seata_manager
+        from springbootai.cloud.seata import seata_manager
         xid = seata_manager.begin_transaction(name="tx3")
         headers = {}
         seata_manager.inject_xid_headers(headers, xid)
@@ -232,7 +232,7 @@ class TestSeataHttpAt:
 
     def test_nested_transaction_returns_same_xid(self):
         """测试嵌套事务（应返回同一XID）"""
-        from spring.cloud.seata import seata_manager
+        from springbootai.cloud.seata import seata_manager
         xid1 = seata_manager.begin_transaction(name="outer")
         xid2 = seata_manager.begin_transaction(name="inner")
         assert xid1 == xid2
@@ -240,7 +240,7 @@ class TestSeataHttpAt:
 
     def test_multi_branch_commit(self):
         """测试多分支提交"""
-        from spring.cloud.seata import seata_manager
+        from springbootai.cloud.seata import seata_manager
         commits = []
         def mk_cb(name):
             def cb(xid, bid): commits.append(name)
@@ -260,7 +260,7 @@ class TestSeataHttpAt:
 class TestGateway:
     def test_route_matching(self):
         """测试路由匹配"""
-        from spring.cloud.gateway import GatewayRouter
+        from springbootai.cloud.gateway import GatewayRouter
         gw = GatewayRouter()
         gw.route("/api/users/**", service_id="user-svc")
         gw.route("/api/orders/{id}", service_id="order-svc")
@@ -273,14 +273,14 @@ class TestGateway:
 
     def test_strip_prefix(self):
         """测试路径前缀去除"""
-        from spring.cloud.gateway import GatewayRouter
+        from springbootai.cloud.gateway import GatewayRouter
         gw = GatewayRouter()
         r = gw.route("/api/users/**", service_id="user-svc", strip_prefix=True)
         assert gw.rewrite_path(r, "/api/users/123") == "/123"
 
     def test_add_prefix(self):
         """测试添加前缀"""
-        from spring.cloud.gateway import GatewayRouter
+        from springbootai.cloud.gateway import GatewayRouter
         gw = GatewayRouter()
         r = gw.route("/ext/**", service_id="ext-svc", prefix="/external", strip_prefix=True)
         rewritten = gw.rewrite_path(r, "/ext/data")
@@ -288,7 +288,7 @@ class TestGateway:
 
     def test_get_routes(self):
         """测试获取路由列表"""
-        from spring.cloud.gateway import GatewayRouter
+        from springbootai.cloud.gateway import GatewayRouter
         gw = GatewayRouter()
         gw.route("/a/**", service_id="a")
         gw.route("/b/**", service_id="b")
@@ -318,7 +318,7 @@ class TestDdlAuto:
 
     def test_generate_create_table_sql(self):
         """测试生成CREATE TABLE语句"""
-        from spring.orm.ddl_auto import DdlAutoManager, table
+        from springbootai.orm.ddl_auto import DdlAutoManager, table
         
         @table("t_user")
         class User:
@@ -339,7 +339,7 @@ class TestDdlAuto:
 
     def test_create_mode_creates_table(self):
         """测试create模式实际创建表"""
-        from spring.orm.ddl_auto import DdlAutoManager, table
+        from springbootai.orm.ddl_auto import DdlAutoManager, table
         
         @table("products")
         class Product:
@@ -369,7 +369,7 @@ class TestDdlAuto:
 
     def test_update_mode_adds_columns(self):
         """测试update模式添加新列"""
-        from spring.orm.ddl_auto import DdlAutoManager, table
+        from springbootai.orm.ddl_auto import DdlAutoManager, table
         
         @table("items_v1")
         class ItemV1:
@@ -400,7 +400,7 @@ class TestDdlAuto:
 
     def test_validate_mode_passes_for_matching_schema(self):
         """测试validate模式对匹配的schema通过"""
-        from spring.orm.ddl_auto import DdlAutoManager, table
+        from springbootai.orm.ddl_auto import DdlAutoManager, table
         
         @table("valid_t")
         class ValidT:
@@ -420,7 +420,7 @@ class TestDdlAuto:
 
     def test_validate_mode_fails_for_missing_table(self):
         """测试validate模式对缺失的表抛出异常"""
-        from spring.orm.ddl_auto import DdlAutoManager, table
+        from springbootai.orm.ddl_auto import DdlAutoManager, table
         
         @table("no_such_table")
         class Missing:
@@ -437,7 +437,7 @@ class TestDdlAuto:
 
     def test_dataclass_entity(self):
         """测试dataclass实体"""
-        from spring.orm.ddl_auto import DdlAutoManager, table
+        from springbootai.orm.ddl_auto import DdlAutoManager, table
         from dataclasses import dataclass
         
         @dataclass
@@ -457,7 +457,7 @@ class TestDdlAuto:
 
     def test_none_mode_does_nothing(self):
         """测试none模式不执行任何DDL"""
-        from spring.orm.ddl_auto import DdlAutoManager, table
+        from springbootai.orm.ddl_auto import DdlAutoManager, table
         
         @table("none_table")
         class Ent:

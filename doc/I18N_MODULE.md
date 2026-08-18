@@ -1,6 +1,6 @@
 # i18n 国际化 —— 中英文自动切换
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -41,7 +41,7 @@ error.not_found=Resource not found
 第二步：在代码中使用：
 
 ```python
-from spring.i18n import (
+from springbootai.i18n import (
     ResourceBundleMessageSource, Locale, LOCALE_CHINA, LOCALE_US,
     AcceptHeaderLocaleResolver, LocaleResolverMiddleware,
 )
@@ -92,7 +92,7 @@ app.add_middleware(
 
 ### MessageFormat 参数插值不严谨 — 低 ⏳ 待处理 (v2.4.0)
 
-**位置**：`spring/i18n/message_source.py` 消息参数格式化
+**位置**：`springbootai/i18n/message_source.py` 消息参数格式化
 
 **现象**：消息参数格式化中对 Java `MessageFormat` 语法（如 `{0,number,#.##}`）的剥离使用简单正则，遇到嵌套花括号或转义字符时可能解析错误，导致最终消息包含原始 `{0}` 占位符。
 

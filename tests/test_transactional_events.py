@@ -1,6 +1,6 @@
 """P1-4 事务事件监听测试。
 
-覆盖 ``spring.tx`` 模块：
+覆盖 ``springbootai.tx`` 模块：
 - ``TransactionSynchronizationManager`` 同步上下文（init/clear/register/trigger/嵌套）
 - ``TransactionSynchronization`` 回调接口与阶段触发
 - ``TransactionalEventPublisher`` 事件延迟到事务阶段、``fallback_execution``、事件类型过滤
@@ -15,8 +15,8 @@ import asyncio
 
 import pytest
 
-from spring.annotations.core import ApplicationEvent
-from spring.tx import (
+from springbootai.annotations.core import ApplicationEvent
+from springbootai.tx import (
     TransactionPhase,
     TransactionSynchronization,
     TransactionSynchronizationManager,

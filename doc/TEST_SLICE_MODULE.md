@@ -1,6 +1,6 @@
 # 测试切片 —— 只测试你关心的部分
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -16,7 +16,7 @@
 ## ② 怎么用
 
 ```python
-from spring.test import SpringBootTest, WebMvcTest, DataJpaTest
+from springbootai.test import SpringBootTest, WebMvcTest, DataJpaTest
 
 # 1. 全量上下文（集成测试）
 with SpringBootTest(MyApp, config={"app": {"name": "demo"}}) as ctx:

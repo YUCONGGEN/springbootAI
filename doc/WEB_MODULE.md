@@ -1,6 +1,6 @@
 # SpringBootAI Web MVC 模块指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -55,7 +55,7 @@
 ### 怎么用？
 
 ```python
-from spring.annotations import RestController, GetMapping
+from springbootai.annotations import RestController, GetMapping
 
 
 @RestController
@@ -98,7 +98,7 @@ class UserController:
 **场景一：方法级别映射**
 
 ```python
-from spring.annotations import RestController, GetMapping, PostMapping
+from springbootai.annotations import RestController, GetMapping, PostMapping
 
 
 @RestController
@@ -121,7 +121,7 @@ class UserController:
 **场景二：@RequestMapping 通用映射**
 
 ```python
-from spring.annotations import RequestMapping
+from springbootai.annotations import RequestMapping
 
 
 @RequestMapping(path="/sync", method=["POST"])  # 指定 method
@@ -169,7 +169,7 @@ def sync_data(self):
 ### 怎么用？
 
 ```python
-from spring.annotations import (
+from springbootai.annotations import (
     RestController, GetMapping, PostMapping,
     RequestParam, PathVariable, RequestBody, RequestHeader, CookieValue,
 )
@@ -251,7 +251,7 @@ class OrderController:
 ### 怎么用？
 
 ```python
-from spring.annotations import RestController, GetMapping, CrossOrigin
+from springbootai.annotations import RestController, GetMapping, CrossOrigin
 
 
 @RestController
@@ -292,11 +292,11 @@ class ApiController:
 ### 怎么用？
 
 ```python
-from spring.annotations import ControllerAdvice, ExceptionHandler, ResponseStatus
-from spring.web.result import Result
+from springbootai.annotations import ControllerAdvice, ExceptionHandler, ResponseStatus
+from springbootai.web.result import Result
 
 
-@ControllerAdvice
+@ControllerAdvice()
 class GlobalExceptionHandler:
     """全局异常处理器——所有 Controller 抛出的异常都会经过这里"""
 
@@ -321,7 +321,7 @@ class UserController:
 ### @ResponseStatus
 
 ```python
-from spring.annotations import ResponseStatus, PostMapping
+from springbootai.annotations import ResponseStatus, PostMapping
 
 
 @RestController
@@ -351,11 +351,11 @@ class UploadController:
 
 | 注解组 | 实现位置 | 测试文件 |
 |--------|---------|---------|
-| 控制器声明 | `spring/annotations/core.py` | `tests/test_web_annotations.py` |
-| 路由映射 | `spring/annotations/core.py` | `tests/test_web_annotations.py` |
-| 参数绑定 | `spring/annotations/core.py` | `tests/test_web_annotations.py` |
-| 跨域控制 | `spring/annotations/core.py` | `tests/test_web_annotations.py` |
-| 全局异常处理 | `spring/web/exception_handler.py` | `tests/test_exception_handler.py` |
+| 控制器声明 | `springbootai/annotations/core.py` | `tests/test_web_annotations.py` |
+| 路由映射 | `springbootai/annotations/core.py` | `tests/test_web_annotations.py` |
+| 参数绑定 | `springbootai/annotations/core.py` | `tests/test_web_annotations.py` |
+| 跨域控制 | `springbootai/annotations/core.py` | `tests/test_web_annotations.py` |
+| 全局异常处理 | `springbootai/web/exception_handler.py` | `tests/test_exception_handler.py` |
 
 完整测试报告见 [TEST_REPORT.md](TEST_REPORT.md)。
 
@@ -416,7 +416,7 @@ class UploadController:
 **包装单个实体 + 链接。** 响应 JSON 会在实体字段之外多一个 `_links` 字段，列出可执行的操作。
 
 ```python
-from spring.web.hateoas import Link, EntityModel
+from springbootai.web.hateoas import Link, EntityModel
 
 user = {'id': 1, 'name': 'Alice'}
 model = EntityModel.of(user)
@@ -442,7 +442,7 @@ result = model.to_dict()
 **包装实体集合 + 链接。** 集合内容放在 `_embedded.items` 下，链接放在 `_links` 下。
 
 ```python
-from spring.web.hateoas import Link, CollectionModel
+from springbootai.web.hateoas import Link, CollectionModel
 
 users = [{'id': 1, 'name': 'Alice'}, {'id': 2, 'name': 'Bob'}]
 collection = CollectionModel.of(users)
@@ -467,7 +467,7 @@ result = collection.to_dict()
 **包装分页集合，自动生成 `first`/`last`/`next`/`prev` 链接 + `page` 元数据。** 客户端可凭链接逐页翻阅，无需自己拼 URL。
 
 ```python
-from spring.web.hateoas import PagedModel
+from springbootai.web.hateoas import PagedModel
 
 users = [{'id': 1}, {'id': 2}]   # 当前页数据
 paged = PagedModel.of(
@@ -505,7 +505,7 @@ result = paged.to_dict()
 **`rel` 字段定义链接的语义关系。** 除标准关系（`self`/`next`/`prev` 等）外，可自定义业务语义的 rel：
 
 ```python
-from spring.web.hateoas import Link, EntityModel, WebMvcLinkBuilder
+from springbootai.web.hateoas import Link, EntityModel, WebMvcLinkBuilder
 
 order = {'id': 100, 'status': 'pending'}
 model = EntityModel.of(order)

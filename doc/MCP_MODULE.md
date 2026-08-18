@@ -41,17 +41,17 @@ pip install -r requirements-mcp.txt
 验证：
 
 ```bash
-python -c "import mcp, spring.mcp; print('MCP ready')"
+python -c "import mcp, springbootai.mcp; print('MCP ready')"
 ```
 
-没有安装 MCP 依赖且 `spring.mcp.enabled=false` 时，核心项目仍可正常运行。
+没有安装 MCP 依赖且 `springbootai.mcp.enabled=false` 时，核心项目仍可正常运行。
 
 ## 3. 第一个注解式 MCP Server
 
 下面代码发布一个加法工具、一份帮助资源和一个提示词：
 
 ```python
-from spring.mcp import (
+from springbootai.mcp import (
     MCPPrompt, MCPResource, MCPServer, MCPTool, build_mcp_server,
 )
 
@@ -99,7 +99,7 @@ python examples/example_mcp/server.py
 再声明客户端。`@MCPClient("demo")` 的名字必须与配置或 `MCPClientProperties.name` 一致：
 
 ```python
-from spring.mcp import (
+from springbootai.mcp import (
     MCPCall, MCPClient, MCPClientProperties,
     bind_mcp_client, build_client_manager,
 )
@@ -162,7 +162,7 @@ spring:
 应用启动装配阶段调用：
 
 ```python
-from spring.mcp import configure_mcp
+from springbootai.mcp import configure_mcp
 
 beans = configure_mcp()
 manager = beans["mcpClientManager"]
@@ -186,7 +186,7 @@ manager = beans["mcpClientManager"]
 LangChain Agent 可把 Spring AI 工具转换为 LangChain 工具后使用。LangGraph 节点可以复用 `langGraphRuntime.tool_registry`，也可以在一个普通节点中调用注解客户端：
 
 ```python
-from spring.langgraph import GraphNode
+from springbootai.langgraph import GraphNode
 
 class OrderFlow:
     def __init__(self, order_client):
@@ -206,7 +206,7 @@ stdio 适合由客户端启动本机工具进程：
 
 ```python
 import sys
-from spring.mcp import MCPClientProperties
+from springbootai.mcp import MCPClientProperties
 
 props = MCPClientProperties(
     name="local-calc",

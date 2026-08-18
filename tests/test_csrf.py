@@ -20,7 +20,7 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.web.csrf import (
+from springbootai.web.csrf import (
     CSRFTokenManager,
     CSRFMiddleware,
     init_csrf,
@@ -94,7 +94,7 @@ class TestCSRFTokenManager:
         token = manager.generate_token()  # 使用真实时间生成（timestamp = T0）
         # 将 time.time 推进至过期之后（T0 + 3601）
         future = _real_time.time() + 3601
-        with patch("spring.web.csrf.time.time", return_value=future):
+        with patch("springbootai.web.csrf.time.time", return_value=future):
             assert manager.validate_token(token) is False
         # 恢复真实时间后应再次有效
         assert manager.validate_token(token) is True
@@ -198,7 +198,7 @@ class TestCSRFMiddleware:
 @pytest.fixture
 def reset_csrf_global():
     """保存并复位全局 CSRF Token 管理器状态，测试后恢复。"""
-    from spring.web import csrf as csrf_module
+    from springbootai.web import csrf as csrf_module
     saved = csrf_module._csrf_token_manager
     csrf_module._csrf_token_manager = None
     yield

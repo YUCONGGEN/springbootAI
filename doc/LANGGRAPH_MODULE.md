@@ -26,14 +26,14 @@
 | Interrupt | 在付款、删数据等危险动作前按下暂停键 |
 | thread_id | 一张审批单的唯一编号 |
 
-本项目的 `spring.langgraph` 只是 Spring 风格的配置和安全外壳，真正的图执行交给官方 `langgraph`，不会重新实现图引擎。模型、重试、熔断和工具权限统一复用 `spring.ai`，避免一套应用维护两套 AI 客户端。
+本项目的 `springbootai.langgraph` 只是 Spring 风格的配置和安全外壳，真正的图执行交给官方 `langgraph`，不会重新实现图引擎。模型、重试、熔断和工具权限统一复用 `springbootai.ai`，避免一套应用维护两套 AI 客户端。
 
 ## 目录
 
 1. [安装可选依赖](#1-安装可选依赖)
 2. [五分钟跑通 demo](#2-五分钟跑通-demo)
 3. [看懂最小代码](#3-看懂最小代码)
-4. [把 Fake 模型换成 spring.ai](#4-把-fake-模型换成-springai)
+4. [把 Fake 模型换成 springbootai.ai](#4-把-fake-模型换成-springai)
 5. [写条件分支](#5-写条件分支)
 6. [人工审核和恢复](#6-人工审核和恢复)
 7. [application.yml 配置](#7-applicationyml-配置)
@@ -97,7 +97,7 @@ python examples/example_langgraph/demo.py
 ```python
 from typing import TypedDict
 from langgraph.graph import END
-from spring.langgraph import LangGraphProperties, LangGraphWorkflow
+from springbootai.langgraph import LangGraphProperties, LangGraphWorkflow
 
 # 1. 定义流程中会传递哪些字段
 class State(TypedDict, total=False):
@@ -132,15 +132,15 @@ print(result["value"])  # 2
 4. 节点可以只返回部分字段，LangGraph 会把它合并回原状态。
 5. `invoke` 是同步调用。Web 的 `async def` 路由请使用 `ainvoke`，见第 9 章。
 
-## 4. 把 Fake 模型换成 spring.ai
+## 4. 把 Fake 模型换成 springbootai.ai
 
 不要在每个节点里写 `ChatOpenAI(...)`，也不要把 API Key 写进代码。先让 AI 模块统一创建 `aiChatModel`，LangGraph 再拿来使用：
 
 ```python
-from spring.context.registry import BeanRegistry
-from spring.ai.autoconfig import configure_ai
-from spring.langgraph.autoconfig import configure_langgraph
-from spring.ai.core import Message
+from springbootai.context.registry import BeanRegistry
+from springbootai.ai.autoconfig import configure_ai
+from springbootai.langgraph.autoconfig import configure_langgraph
+from springbootai.ai.core import Message
 
 registry = BeanRegistry()
 configure_ai(registry=registry)
@@ -155,7 +155,7 @@ def answer(state):
     return {"answer": response.content()}
 ```
 
-`runtime.call_model` 会复用 `spring.ai` 的 provider、重试、熔断和工具策略。配置真实模型只需要设置环境变量，例如：
+`runtime.call_model` 会复用 `springbootai.ai` 的 provider、重试、熔断和工具策略。配置真实模型只需要设置环境变量，例如：
 
 ```powershell
 $env:AI_PROVIDER = "openai"
@@ -213,7 +213,7 @@ def approval(state):
 调用时必须使用检查点和线程号：
 
 ```python
-from spring.langgraph import LangGraphProperties, LangGraphWorkflow
+from springbootai.langgraph import LangGraphProperties, LangGraphWorkflow
 
 graph = LangGraphWorkflow(
     LangGraphProperties(
@@ -245,8 +245,8 @@ resumed = graph.resume(
 可选依赖包含官方 `langgraph-checkpoint-sqlite`。下面的工厂会关闭 pickle fallback，并只允许内置安全类型反序列化：
 
 ```python
-from spring.langgraph import LangGraphProperties, LangGraphWorkflow
-from spring.langgraph import open_sqlite_checkpointer
+from springbootai.langgraph import LangGraphProperties, LangGraphWorkflow
+from springbootai.langgraph import open_sqlite_checkpointer
 
 properties = LangGraphProperties(
     enabled=True,
@@ -320,7 +320,7 @@ configure_langgraph() -> langGraphRuntime
 LangGraph 默认关闭，所以旧应用不会因为没有安装 extra 而启动失败。打开后可以从 `BeanRegistry` 获取：
 
 ```python
-from spring.context.registry import BeanRegistry
+from springbootai.context.registry import BeanRegistry
 
 runtime = BeanRegistry().get("langGraphRuntime")
 workflow = runtime.workflow(state_schema=State, name="order_flow")
@@ -411,7 +411,7 @@ LangGraphProperties(checkpointer="memory", allow_in_memory=True)
 
 ### `LangGraph execution timed out`
 
-降低单次图的工作量，并检查 `spring.ai` provider 的 HTTP timeout、重试和熔断配置。不要只把 LangGraph timeout 调得无限大。
+降低单次图的工作量，并检查 `springbootai.ai` provider 的 HTTP timeout、重试和熔断配置。不要只把 LangGraph timeout 调得无限大。
 
 ## 12. 生产上线前检查
 
@@ -419,7 +419,7 @@ LangGraphProperties(checkpointer="memory", allow_in_memory=True)
 2. 生产使用持久化 checkpointer，绝不使用 `InMemorySaver`；多 worker 共享同一数据库后端，不能共享本地 SQLite 文件。
 3. 所有调用带稳定的 `thread_id` 和 `tenant_id`，并在服务端校验租户归属。
 4. 付款、发消息、写库等节点具备幂等键、超时、重试上限和审计日志。
-5. 工具继续使用 `spring.ai` 的白名单、参数大小限制、执行超时和人工审批策略。
+5. 工具继续使用 `springbootai.ai` 的白名单、参数大小限制、执行超时和人工审批策略。
 6. 不在节点里保存 API Key、数据库密码或全局连接；统一从 Spring 配置和 Bean 获取。
 7. 生产压测覆盖普通路径、条件分支、模型慢响应、checkpointer 故障、重复恢复和并发线程。
 8. 监控图名、节点耗时、失败原因、重试次数和中断恢复次数，但过滤提示词和业务敏感字段。
@@ -435,7 +435,7 @@ LangGraph 的官方定位和基础概念参见[官方概览](https://docs.langch
 
 ```python
 from typing import TypedDict
-from spring.langgraph import GraphEdge, GraphInvoke, GraphNode, LangGraph
+from springbootai.langgraph import GraphEdge, GraphInvoke, GraphNode, LangGraph
 
 
 class State(TypedDict):
@@ -515,7 +515,7 @@ result = await flow.run_async(
 异步占位方法会调用 `workflow.ainvoke()`。普通占位方法调用 `workflow.invoke()`。第一次调用会构建并编译图，实例内部缓存同一个 workflow；并发首次调用使用锁，避免重复构建。对延迟敏感的生产服务仍建议在 startup 中显式预构建：
 
 ```python
-from spring.langgraph import build_langgraph
+from springbootai.langgraph import build_langgraph
 
 flow = RiskFlow()
 build_langgraph(flow)

@@ -11,7 +11,7 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, Controller, RequestMapping, GetMapping, PostMapping,
     PutMapping, PatchMapping, DeleteMapping, RequestParam, PathVariable,
     RequestBody, RequestHeader, CookieValue, CrossOrigin, ResponseStatus,

@@ -24,8 +24,8 @@ pytest.importorskip("langgraph")
 
 from langgraph.graph import END
 
-from spring.context.registry import BeanRegistry
-from spring.langgraph.config import (
+from springbootai.context.registry import BeanRegistry
+from springbootai.langgraph.config import (
     LangGraphConfigurationError,
     LangGraphProperties,
     bind_langgraph_config,
@@ -34,22 +34,22 @@ from spring.langgraph.config import (
     _float,
     _value,
 )
-from spring.langgraph.runtime import (
+from springbootai.langgraph.runtime import (
     LangGraphRuntime,
     LangGraphWorkflow,
 )
-from spring.langgraph.annotations import (
+from springbootai.langgraph.annotations import (
     GraphEdge,
     GraphInvoke,
     GraphNode,
     GraphRoute,
     LangGraph,
 )
-from spring.langgraph.annotation_runtime import (
+from springbootai.langgraph.annotation_runtime import (
     LangGraphAnnotationRuntime,
     build_langgraph,
 )
-from spring.langgraph.autoconfig import configure_langgraph
+from springbootai.langgraph.autoconfig import configure_langgraph
 
 
 # ============================================================

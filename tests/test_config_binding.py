@@ -1,6 +1,6 @@
 """P1-5 配置松散绑定与校验测试。
 
-覆盖 ``spring.config.binding`` 模块：
+覆盖 ``springbootai.config.binding`` 模块：
 - 松散绑定（kebab-case / camelCase / snake_case / SCREAMING_SNAKE 等价匹配）
 - 嵌套绑定（``@NestedConfigurationProperties`` 递归绑定子字典）
 - 类型强转（int/float/bool/str）
@@ -8,23 +8,23 @@
 - ApplicationContext 集成（``@ConfigurationProperties`` + ``@Validated`` 端到端）
 
 复用既有范式：``@NestedConfigurationProperties`` 继承 ``SpringAnnotation``，
-校验复用 ``spring.validation.BeanValidator``，不重复造轮子。
+校验复用 ``springbootai.validation.BeanValidator``，不重复造轮子。
 """
 import os
 import tempfile
 
 import pytest
 
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     Component, ConfigurationProperties, Validated,
 )
-from spring.config.binding import (
+from springbootai.config.binding import (
     NestedConfigurationProperties,
     ConfigurationPropertiesBinder,
     validate_configuration_properties,
     _normalize,
 )
-from spring.validation import (
+from springbootai.validation import (
     BeanValidator, NotBlank, Min, Max, ValidationError,
 )
 
@@ -286,8 +286,8 @@ class TestApplicationContextIntegration:
         return path
 
     def test_configuration_properties_loose_and_nested_binding_via_context(self, monkeypatch):
-        from spring.context.application_context import ApplicationContext
-        from spring.annotations.core import SpringBootApplication
+        from springbootai.context.application_context import ApplicationContext
+        from springbootai.annotations.core import SpringBootApplication
 
         config_path = self._write_config(
             "my-app:\n"
@@ -315,11 +315,11 @@ class TestApplicationContextIntegration:
             database: DbProps = None
 
         # 指向临时配置文件构造 ConfigLoader
-        from spring.config.config_loader import ConfigLoader
+        from springbootai.config.config_loader import ConfigLoader
         loader = ConfigLoader(config_path=config_path)
         ctx = ApplicationContext(App, config_loader=loader)
         # 手动注册配置属性 Bean 并触发绑定
-        from spring.context.bean_definition import BeanDefinition
+        from springbootai.context.bean_definition import BeanDefinition
         definition = BeanDefinition(bean_class=MyAppProps, bean_name="my_app_props")
         definition.add_annotation(ConfigurationProperties("my-app"))
         ctx.bean_factory.register_bean_definition("my_app_props", definition)
@@ -335,8 +335,8 @@ class TestApplicationContextIntegration:
         os.unlink(config_path)
 
     def test_validated_configuration_raises_on_invalid_via_context(self, monkeypatch):
-        from spring.context.application_context import ApplicationContext
-        from spring.annotations.core import SpringBootApplication
+        from springbootai.context.application_context import ApplicationContext
+        from springbootai.annotations.core import SpringBootApplication
 
         config_path = self._write_config(
             "bad-app:\n"
@@ -359,10 +359,10 @@ class TestApplicationContextIntegration:
                 self.name = ""
                 self.port = 0
 
-        from spring.config.config_loader import ConfigLoader
+        from springbootai.config.config_loader import ConfigLoader
         loader = ConfigLoader(config_path=config_path)
         ctx = ApplicationContext(App, config_loader=loader)
-        from spring.context.bean_definition import BeanDefinition
+        from springbootai.context.bean_definition import BeanDefinition
         definition = BeanDefinition(bean_class=BadAppProps, bean_name="bad_app_props")
         definition.add_annotation(ConfigurationProperties("bad-app"))
         definition.add_annotation(Validated())

@@ -12,7 +12,7 @@ configure_langchain 内部会双重注册（BeanRegistry + 活跃 ApplicationCon
 """
 import logging
 
-from spring.annotations.core import Configuration, Slf4j
+from springbootai.annotations.core import Configuration, Slf4j
 
 logger = logging.getLogger("Spring.LangChain")
 
@@ -24,31 +24,31 @@ class LangChainAppConfig:
 
     def __init__(self):
         """实例化时立即装配 AI 与 LangChain 模块（在 @Service 实例化前完成）。"""
-        from spring.context.registry import BeanRegistry
-        from spring.config.config_loader import config_loader
-        from spring.ai.autoconfig import configure_ai
-        from spring.langchain.autoconfig import configure_langchain
-        from spring.langgraph.autoconfig import configure_langgraph
+        from springbootai.context.registry import BeanRegistry
+        from springbootai.config.config_loader import config_loader
+        from springbootai.ai.autoconfig import configure_ai
+        from springbootai.langchain.autoconfig import configure_langchain
+        from springbootai.langgraph.autoconfig import configure_langgraph
 
         registry = BeanRegistry()
-        # 1. 先装配 spring.ai（提供 aiChatModel / aiEmbeddingModel）
+        # 1. 先装配 springbootai.ai（提供 aiChatModel / aiEmbeddingModel）
         try:
             ai_beans = configure_ai(registry=registry, config=config_loader)
         except Exception as exc:
-            logger.warning("spring.ai 装配失败（LangChain 将无底层模型）: %s", exc)
+            logger.warning("springbootai.ai 装配失败（LangChain 将无底层模型）: %s", exc)
             ai_beans = {}
-        # 2. 再装配 spring.langchain（default-llm=auto 复用 aiChatModel）
+        # 2. 再装配 springbootai.langchain（default-llm=auto 复用 aiChatModel）
         try:
             lc_beans = configure_langchain(registry=registry, config=config_loader)
         except Exception as exc:
-            logger.error("spring.langchain 装配失败: %s", exc)
+            logger.error("springbootai.langchain 装配失败: %s", exc)
             lc_beans = {}
 
         try:
             lg_beans = configure_langgraph(registry=registry, config=config_loader)
         except Exception as exc:
-            logger.error("spring.langgraph auto-configuration failed: %s", exc)
-            lg_config = config_loader.get_prefix_config("spring.langgraph") or {}
+            logger.error("springbootai.langgraph auto-configuration failed: %s", exc)
+            lg_config = config_loader.get_prefix_config("springbootai.langgraph") or {}
             enabled = str(lg_config.get("enabled", False)).strip().lower() in {
                 "true", "1", "yes", "on"
             }

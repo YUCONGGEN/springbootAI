@@ -8,7 +8,7 @@ import pytest
 from dataclasses import dataclass, field
 from typing import Optional
 
-from spring.utils import BeanUtils
+from springbootai.utils import BeanUtils
 
 
 # ---------------- 测试夹具 ----------------
@@ -307,10 +307,10 @@ class TestPopulateDescribe:
 
 class TestExport:
     def test_export_from_spring_utils(self):
-        from spring.utils import BeanUtils as BU
+        from springbootai.utils import BeanUtils as BU
         assert BU is BeanUtils
 
     def test_export_from_spring_top(self):
-        import spring
-        # 顶层 spring.utils 应可访问 BeanUtils
-        assert hasattr(spring.utils, "BeanUtils")
+        import springbootai
+        # 顶层 springbootai.utils 应可访问 BeanUtils
+        assert hasattr(springbootai.utils, "BeanUtils")

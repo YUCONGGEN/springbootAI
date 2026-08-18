@@ -13,7 +13,7 @@ ORM 实体模型示例 — @Entity + @Table JPA 风格（v2.2.3）
   - name: int = Id()        → 保留原 Id，不覆盖
   - _xxx: dict = {}         → 私有字段，跳过
 """
-from spring.orm import Entity, Table, Column, Id, Index, CreateTime
+from springbootai.orm import Entity, Table, Column, Id, Index, CreateTime, Required, Text
 
 
 # ============ 1. 推荐写法：@Entity + @Table 分离 ============
@@ -26,7 +26,7 @@ from spring.orm import Entity, Table, Column, Id, Index, CreateTime
 )
 class AdminUser:
     """管理员实体 — JPA @Entity + @Table 分离风格"""
-    id: int = Id()                          # 主键，显式 Id
+    id: int = Id()                          # 主键，显式声明 Id
     username: str = ""                      # 赋值 → Column(default="")
     password_hash: str = ""                 # 赋值 → Column(default="")
     display_name: str = "系统管理员"         # 赋值 → Column(default="系统管理员")
@@ -55,5 +55,5 @@ class Product:
 class SysLog:
     """系统日志实体 — 一体化风格，完全兼容"""
     id: int = Id()
-    module: str = Column(nullable=False, length=50)
-    message: str = Column(nullable=False, length=500)
+    module: str = Required(length=50)
+    message: str = Text(required=True)

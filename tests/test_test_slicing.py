@@ -1,6 +1,6 @@
 """P1-6 测试切片测试。
 
-覆盖 ``spring.test`` 模块：
+覆盖 ``springbootai.test`` 模块：
 - ``SpringBootTest``：全量上下文装配 + Bean 获取 + 事件发布 + 配置注入
 - ``WebMvcTest``：仅 Controller 切片，依赖 Mock 注入，FastAPI TestClient 路由可达
 - ``DataJpaTest``：内存 SQLite 建表 + Repository 工厂 CRUD
@@ -10,12 +10,12 @@
 """
 import pytest
 
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     SpringBootApplication, Component, Service,
     RestController, RequestMapping, GetMapping, PostMapping, EventListener, ApplicationEvent,
 )
-from spring.orm.ddl_auto import entity, Id, Column
-from spring.test import SpringBootTest, WebMvcTest, DataJpaTest
+from springbootai.orm.ddl_auto import entity, Id, Column
+from springbootai.test import SpringBootTest, WebMvcTest, DataJpaTest
 
 
 # ==================== 测试组件定义 ====================
@@ -85,7 +85,7 @@ class SliceUser:
 class TestSpringBootTest:
     def test_full_context_boots_and_resolves_beans(self):
         # 手动注册组件到上下文（避免依赖包扫描路径）
-        from spring.context.bean_definition import BeanDefinition
+        from springbootai.context.bean_definition import BeanDefinition
         with SpringBootTest(_MinimalApp, config={"app": {"name": "demo"}}) as ctx:
             ctx.get_context().bean_factory.register_bean_definition(
                 "greeting_service",
@@ -102,7 +102,7 @@ class TestSpringBootTest:
             assert ctx.get_context().get_value("app.name") == "demo"
 
     def test_event_publishing(self):
-        from spring.context.bean_definition import BeanDefinition
+        from springbootai.context.bean_definition import BeanDefinition
         with SpringBootTest(_MinimalApp) as ctx:
             listener = GreetingListener()
             ctx.get_context().bean_factory.register_bean_definition(

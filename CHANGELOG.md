@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.3.3] - 2026-08-18
+
+### 测试补充与文档完善
+
+- 补充单元测试覆盖核心模块：新增 `test_core.py`（22个，覆盖 typing_utils/graceful_shutdown）、`test_retry.py`（29个，覆盖 Backoff/Retryable/@retry/recovery）、`test_scheduling.py`（18个，覆盖 cron解析/调度器）、`test_tracing.py`（17个，覆盖 LocalSpan/SkyWalkingTracer 降级）共86个测试用例
+- 文档中文化：将 `doc/LOMBOK_MODULE.md` 等英文文档完整翻译为中文
+- 安全加固：生产环境配置校验强化；取消 GitHub Actions 定时测试触发
+- 完整测试套件 2964+ 个测试通过
+
+## [2.3.2] - 2026-08-16
+
+### 文档与打包修正
+
+- 统一框架、文档和构建元数据版本；修正测试目录、可选依赖和生产 Profile 示例。
+
 ## [2.3.0] - 2026-08-15
 
 ### 新增
@@ -14,21 +29,21 @@
   - `@EnableDataRest` — 启用 Spring Data REST（自动暴露 Repository 为 CRUD API）
   - `@BatchJob` / `@BatchStep` — 标记批处理作业和步骤
   - `@RepositoryRestResource` — 标记 Repository 为 REST 资源
-- **OAuth2 资源服务器**：新增 `spring/security/oauth2.py`，支持 JWT Access Token 验证，HS256 对称密钥和 RS256 公钥（JWKS）两种算法。
-- **CSRF 防护**：新增 `spring/web/csrf.py`，实现 Double Submit Cookie 模式中间件。
-- **Kafka 支持**：新增 `spring/messaging/kafka.py`，提供 `KafkaClient`（生产者+消费者管理）和 `@KafkaListener`/`KafkaTemplate` 注解。
-- **DevTools 热重载**：新增 `spring/devtools.py`，提供 `FileWatcher`（轮询文件变更）和 `RestartTrigger`（静默期防抖）。
+- **OAuth2 资源服务器**：新增 `springbootai/security/oauth2.py`，支持 JWT Access Token 验证，HS256 对称密钥和 RS256 公钥（JWKS）两种算法。
+- **CSRF 防护**：新增 `springbootai/web/csrf.py`，实现 Double Submit Cookie 模式中间件。
+- **Kafka 支持**：新增 `springbootai/messaging/kafka.py`，提供 `KafkaClient`（生产者+消费者管理）和 `@KafkaListener`/`KafkaTemplate` 注解。
+- **DevTools 热重载**：新增 `springbootai/devtools.py`，提供 `FileWatcher`（轮询文件变更）和 `RestartTrigger`（静默期防抖）。
 - **数据库迁移完善**：新增 Undo 回滚迁移（U{version}__{desc}.sql）、迁移锁（MySQL/PostgreSQL/SQLite）、变量替换（${var}）、validate 校验方法。
 - **Actuator /heapdump 端点**：返回 tracemalloc 内存分配快照 + GC 统计（JSON 格式），对齐 Spring Boot /actuator/heapdump。
-- **配置元数据**：新增 `spring/config/spring-configuration-metadata.json`，IDE 可读取提供配置自动补全。
-- **项目脚手架**：新增 `spring/cli/scaffold.py`，支持 `springbootai init` 命令创建新项目。
-- **Spring CLI**：新增 `spring/cli/main.py`，提供 `springbootai` 统一命令入口（version/info/list/init/run/docs）。
+- **配置元数据**：新增 `springbootai/config/spring-configuration-metadata.json`，IDE 可读取提供配置自动补全。
+- **项目脚手架**：新增 `springbootai/cli/scaffold.py`，支持 `springbootai init` 命令创建新项目。
+- **Spring CLI**：新增 `springbootai/cli/main.py`，提供 `springbootai` 统一命令入口（version/info/list/init/run/docs）。
 - **Starter 机制**：pyproject.toml 新增 `web`/`cloud`/`all` 组合 Starter extras。
-- **Spring Cloud Config**：新增 `spring/cloud/config_center.py`，支持 HTTP 和本地文件后端。
-- **Spring Cloud Bus**：新增 `spring/cloud/bus.py`，支持进程内和 MQ 后端事件总线。
-- **Spring Batch**：新增 `spring/batch/`，支持 Job/Step/Reader/Processor/Writer 组件。
-- **Spring Data REST**：新增 `spring/data/rest.py`，自动生成 Repository CRUD REST 端点。
-- **Spring HATEOAS**：新增 `spring/web/hateoas.py`，包含 Link/EntityModel/CollectionModel/PagedModel。
+- **Spring Cloud Config**：新增 `springbootai/cloud/config_center.py`，支持 HTTP 和本地文件后端。
+- **Spring Cloud Bus**：新增 `springbootai/cloud/bus.py`，支持进程内和 MQ 后端事件总线。
+- **Spring Batch**：新增 `springbootai/batch/`，支持 Job/Step/Reader/Processor/Writer 组件。
+- **Spring Data REST**：新增 `springbootai/data/rest.py`，自动生成 Repository CRUD REST 端点。
+- **Spring HATEOAS**：新增 `springbootai/web/hateoas.py`，包含 Link/EntityModel/CollectionModel/PagedModel。
 - **Sphinx API 文档**：新增 `docs/conf.py` 和 `docs/index.rst`。
 
 ### 测试
@@ -53,7 +68,7 @@
 
 ### 新增
 
-- **Seata AT 数据源代理**：新增 `spring/cloud/seata_at_proxy.py`（500 行），在 ORM 拦截器层自动记录 SQL 的 before/after image，生成 undo_log，全局事务回滚时自动反向恢复数据。支持 MySQL(`%s`) 和 SQLite(`?`) 占位符自动适配。Seata 模式从三模式（local/http/distributed）扩展为四模式（新增 `at`）。
+- **Seata AT 数据源代理**：新增 `springbootai/cloud/seata_at_proxy.py`（500 行），在 ORM 拦截器层自动记录 SQL 的 before/after image，生成 undo_log，全局事务回滚时自动反向恢复数据。支持 MySQL(`%s`) 和 SQLite(`?`) 占位符自动适配。Seata 模式从三模式（local/http/distributed）扩展为四模式（新增 `at`）。
 - **AT 代理测试**：新增 `tests/test_seata_at_proxy.py`（18 项全通过），覆盖 SQL 解析、undo_log CRUD、undo 反向恢复（INSERT→DELETE / UPDATE→UPDATE before / DELETE→INSERT before）、AT 拦截器记录、提交删除 undo_log。
 
 ### 重构
@@ -102,9 +117,12 @@
 ### 新增
 
 - ORM 实体字段自动推断：类型注解无需显式 `= Column(...)` 赋值，对齐 Java JPA 字段自动映射。
-  - `name: str` → 自动创建 `Column()`（无默认值，仅记录类型）
-  - `name: str = ""` → 自动创建 `Column(default="")`（赋值即为默认值）
-  - `name: int = 0` → 自动创建 `Column(default=0)`
+  -
+ame: str` → 自动创建 `Column()`（无默认值，仅记录类型）
+  -
+ame: str = ""` → 自动创建 `Column(default="")`（赋值即为默认值）
+  -
+ame: int = 0` → 自动创建 `Column(default=0)`
   - 已有 `Column()`/`Id()`/`CreateTime()` 等描述符的字段保留不覆盖
   - 以 `_` 开头的私有字段自动跳过
 
@@ -179,9 +197,9 @@
 
 ### 新增
 
-- 新增独立 `spring.langgraph` 模块，锁定 `langgraph==1.2.9`，提供状态图、条件路由、人工中断、恢复、流式调用和注解式工作流。
+- 新增独立 `springbootai.langgraph` 模块，锁定 `langgraph==1.2.9`，提供状态图、条件路由、人工中断、恢复、流式调用和注解式工作流。
 - 新增官方 SQLite checkpointer 安全工厂；关闭 pickle fallback、限制反序列化类型，并验证连接关闭后重新打开仍能恢复流程。
-- 新增 `spring.mcp` 客户端和服务端，基于官方 MCP Python SDK，支持 Tool、Resource、Prompt 及注解调用。
+- 新增 `springbootai.mcp` 客户端和服务端，基于官方 MCP Python SDK，支持 Tool、Resource、Prompt 及注解调用。
 - 新增 LangChain 和 LangGraph 注解 API；注解只负责声明，执行继续委托官方框架。
 - 压测新增 AI、LangChain、LangGraph、MCP workload，并纳入 9 小时 mixed 稳定性脚本。
 - CI 新增真实 MySQL、Redis、RabbitMQ、Nacos、Seata TCC 集成测试和依赖停机测试。

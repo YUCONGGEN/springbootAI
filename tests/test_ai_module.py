@@ -15,7 +15,7 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.ai import (
+from springbootai.ai import (
     Advisor, AdvisorRequest, ChatClient, ChatClientBuilder, ChatModel,
     ChatResponse, EmbeddingModel, Generation, Message, MessageType,
     AiClient, Tool, AiAdvisor, AiMemory,
@@ -27,8 +27,8 @@ from spring.ai import (
     ToolRegistry, FakeChatModel, FakeEmbeddingModel, OpenAIChatModel, OpenAIEmbeddingModel,
     OllamaChatModel, AIProperties, bind_ai_config, configure_ai,
 )
-from spring.annotations.core import get_spring_annotations
-from spring.context.registry import BeanRegistry
+from springbootai.annotations.core import get_spring_annotations
+from springbootai.context.registry import BeanRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -227,7 +227,7 @@ class TestVectorStore:
     def test_inmemory_vectorstore_empty_query_returns_empty(self):
         """无 embedding 且无 embedding_model 时返回空"""
         store = SimpleInMemoryVectorStore()
-        store.add([__import__("spring.ai.vectorstore", fromlist=["Document"]).Document(
+        store.add([__import__("springbootai.ai.vectorstore", fromlist=["Document"]).Document(
             id="1", content="x", embedding=[1.0])])
         # 无 query embedding → 返回空
         results = store.similarity_search(SearchRequest(query=""))
@@ -437,8 +437,8 @@ class TestAdvisors:
 
     def test_question_answer_advisor_harden_can_be_disabled(self):
         """harden_injection=False 时回退到默认模板"""
-        from spring.ai.advisors import QuestionAnswerAdvisor
-        from spring.ai import SimpleInMemoryVectorStore
+        from springbootai.ai.advisors import QuestionAnswerAdvisor
+        from springbootai.ai import SimpleInMemoryVectorStore
         emb = FakeEmbeddingModel()
         store = SimpleInMemoryVectorStore(embedding_model=emb)
         # 交由 embedding_model 自动嵌入，保证查询与文档可检索到
@@ -542,7 +542,7 @@ class TestAutoConfig:
         """configure_ai 装配 ChatModel/Memory/ChatClient/VectorStore Bean"""
         # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
         monkeypatch.setenv("AI_ALLOW_FAKE", "true")
-        from spring.config.config_loader import ConfigLoader
+        from springbootai.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {
             "spring": {"ai": {"default-provider": "unknown"}}
@@ -564,7 +564,7 @@ class TestAutoConfig:
         """配置 openai 但无 api-key → 降级 FakeChatModel"""
         # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
         monkeypatch.setenv("AI_ALLOW_FAKE", "true")
-        from spring.config.config_loader import ConfigLoader
+        from springbootai.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {
             "spring": {"ai": {
@@ -581,7 +581,7 @@ class TestAutoConfig:
         """装配后的 ChatClient 可直接调用"""
         # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
         monkeypatch.setenv("AI_ALLOW_FAKE", "true")
-        from spring.config.config_loader import ConfigLoader
+        from springbootai.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {"default-provider": "fake"}}}
         registry = BeanRegistry()
@@ -611,7 +611,7 @@ class TestIntegrationScenarios:
         assert len(chunks) >= 1
 
         # 2. 入库
-        from spring.ai.vectorstore import Document as VDoc
+        from springbootai.ai.vectorstore import Document as VDoc
         for i, chunk in enumerate(chunks):
             store.add([VDoc(id=f"c{i}", content=chunk.content,
                             metadata=chunk.metadata)])
@@ -657,7 +657,7 @@ class TestFunctionCallingClosure:
 
     def test_tool_call_loop_executes_and_continues(self):
         """FakeChatModel 模拟工具调用：第一轮标记 tool_calls，基类执行→回填→第二轮最终回复"""
-        from spring.ai import ToolRegistry
+        from springbootai.ai import ToolRegistry
         registry = ToolRegistry()
 
         def get_weather(city: str = "北京") -> str:
@@ -687,7 +687,7 @@ class TestFunctionCallingClosure:
 
     def test_tool_call_max_iterations_guard(self):
         """工具调用超过最大轮数有保护"""
-        from spring.ai import ToolRegistry
+        from springbootai.ai import ToolRegistry
         registry = ToolRegistry()
 
         def loop_tool() -> str:
@@ -721,7 +721,7 @@ class TestEmbeddingAutoconfigAndRedisVectorStore:
         """configure_ai 装配 aiEmbeddingModel Bean"""
         # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
         monkeypatch.setenv("AI_ALLOW_FAKE", "true")
-        from spring.config.config_loader import ConfigLoader
+        from springbootai.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {"default-provider": "unknown"}}}
         registry = BeanRegistry()
@@ -735,7 +735,7 @@ class TestEmbeddingAutoconfigAndRedisVectorStore:
         """VectorStore 注入了 EmbeddingModel，可自动嵌入检索"""
         # safe-by-default：AI_ALLOW_FAKE 默认 false，需显式 true 才允许降级 Fake
         monkeypatch.setenv("AI_ALLOW_FAKE", "true")
-        from spring.config.config_loader import ConfigLoader
+        from springbootai.config.config_loader import ConfigLoader
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {"default-provider": "unknown"}}}
         registry = BeanRegistry()
@@ -749,7 +749,7 @@ class TestEmbeddingAutoconfigAndRedisVectorStore:
 
     def test_redis_vector_store_without_client_is_noop(self):
         """RedisVectorStore 无 client 时安全降级"""
-        from spring.ai import RedisVectorStore
+        from springbootai.ai import RedisVectorStore
         store = RedisVectorStore(redis_client=None)
         store.add([VectorDocument(id="1", content="x")])  # 不抛异常
         assert store.similarity_search(SearchRequest(query="x")) == []
@@ -768,7 +768,7 @@ class TestEmbeddingAutoconfigAndRedisVectorStore:
             def delete(self, key):
                 self._h.pop(key, None)
 
-        from spring.ai import RedisVectorStore
+        from springbootai.ai import RedisVectorStore
         fake = FakeRedis()
         emb = FakeEmbeddingModel(dim=8)
         store = RedisVectorStore(redis_client=fake, collection="test",
@@ -874,8 +874,8 @@ class TestRedisReuse:
 
     def test_configure_ai_auto_reuses_framework_global_redis_when_type_redis(self):
         """configure_ai 在 vector-store.type=redis 且未传 client 时自动复用框架全局 redis_client"""
-        from spring.config.config_loader import ConfigLoader
-        from spring.utils.redis_client import redis_client as global_redis
+        from springbootai.config.config_loader import ConfigLoader
+        from springbootai.utils.redis_client import redis_client as global_redis
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {
             "default-provider": "openai",
@@ -896,7 +896,7 @@ class TestResilience:
 
     def test_retry_retries_on_transient_error(self):
         """resilient_call 对 TransientError 重试"""
-        from spring.ai import resilient_call, TransientError
+        from springbootai.ai import resilient_call, TransientError
         calls = {"n": 0}
 
         def flaky():
@@ -912,7 +912,7 @@ class TestResilience:
 
     def test_circuit_breaker_opens_after_threshold(self):
         """AICircuitBreaker 失败达阈值后 OPEN，拒绝请求"""
-        from spring.ai import AICircuitBreaker, CircuitOpenError, TransientError
+        from springbootai.ai import AICircuitBreaker, CircuitOpenError, TransientError
         cb = AICircuitBreaker(failure_threshold=3, recovery_timeout=60)
 
         def always_fail():
@@ -929,7 +929,7 @@ class TestResilience:
 
     def test_circuit_breaker_half_open_recovery(self):
         """AICircuitBreaker 经过 recovery_timeout 后 HALF_OPEN，成功恢复 CLOSED"""
-        from spring.ai import AICircuitBreaker, TransientError
+        from springbootai.ai import AICircuitBreaker, TransientError
         import time
         cb = AICircuitBreaker(failure_threshold=2, recovery_timeout=0.1)
 
@@ -1000,12 +1000,12 @@ class TestObservability:
 
     def test_ai_metrics_singleton(self):
         """AIMetrics 是单例"""
-        from spring.ai import AIMetrics, ai_metrics
+        from springbootai.ai import AIMetrics, ai_metrics
         assert AIMetrics() is ai_metrics
 
     def test_record_call_does_not_raise(self):
         """record_call 记录调用不抛异常（即使 Prometheus 不可用也降级）"""
-        from spring.ai import ai_metrics
+        from springbootai.ai import ai_metrics
         # 不抛异常即通过
         ai_metrics.record_call("openai", "gpt-4o", "success", 0.5,
                                {"prompt_tokens": 10, "completion_tokens": 20})
@@ -1015,15 +1015,15 @@ class TestObservability:
 
     def test_provider_call_records_metrics(self):
         """OpenAIChatModel.call 经 Fake 降级路径仍能记录指标（不抛异常）"""
-        from spring.ai import FakeChatModel
+        from springbootai.ai import FakeChatModel
         model = FakeChatModel(prefix="AI:")
         resp = model.call([Message.user("metric")])
         assert resp.content() == "AI: metric"
 
     def test_autoconfig_creates_circuit_breaker_for_provider(self):
         """autoconfig 为 provider 创建熔断器"""
-        from spring.config.config_loader import ConfigLoader
-        from spring.ai import AICircuitBreaker
+        from springbootai.config.config_loader import ConfigLoader
+        from springbootai.ai import AICircuitBreaker
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {
             "default-provider": "openai",
@@ -1121,14 +1121,14 @@ class TestAIPropertiesBinding:
 
     def test_circuit_breaker_disabled_returns_none(self):
         """circuit-breaker.enabled=false 时 _build_circuit_breaker 返回 None"""
-        from spring.ai.autoconfig import _build_circuit_breaker
+        from springbootai.ai.autoconfig import _build_circuit_breaker
         props = bind_ai_config({"circuit-breaker": {"enabled": "false"}})
         assert _build_circuit_breaker(props) is None
 
     def test_configure_ai_uses_typed_props_for_openai_circuit_breaker(self):
         """configure_ai 经类型化绑定装配 OpenAIChatModel + 熔断器参数"""
-        from spring.config.config_loader import ConfigLoader
-        from spring.ai import AICircuitBreaker
+        from springbootai.config.config_loader import ConfigLoader
+        from springbootai.ai import AICircuitBreaker
         loader = ConfigLoader()
         loader._config = {"spring": {"ai": {
             "default-provider": "openai",
@@ -1153,11 +1153,11 @@ class TestP1Fixes:
 
     def test_ai_allow_fake_false_raises_on_missing_key(self, monkeypatch):
         """AI_ALLOW_FAKE=false + api_key 缺失 → ValueError"""
-        from spring.ai.autoconfig import bind_ai_config
+        from springbootai.ai.autoconfig import bind_ai_config
         monkeypatch.setenv("AI_ALLOW_FAKE", "false")
         # 重新导入触发模块级 env 读取
         import importlib
-        import spring.ai.autoconfig as ac
+        import springbootai.ai.autoconfig as ac
         importlib.reload(ac)
         props = bind_ai_config({"default-provider": "openai",
                                 "openai": {"api-key": ""}})
@@ -1168,19 +1168,19 @@ class TestP1Fixes:
         """AI_ALLOW_FAKE=true（显式启用）+ api_key 缺失 → FakeChatModel"""
         monkeypatch.setenv("AI_ALLOW_FAKE", "true")
         import importlib
-        import spring.ai.autoconfig as ac
+        import springbootai.ai.autoconfig as ac
         importlib.reload(ac)
         props = ac.bind_ai_config({"default-provider": "openai",
                                    "openai": {"api-key": ""}})
         model = ac._build_chat_model(props)
-        from spring.ai.providers import FakeChatModel
+        from springbootai.ai.providers import FakeChatModel
         assert isinstance(model, FakeChatModel)
 
     def test_ai_allow_fake_false_raises_on_unknown_provider(self, monkeypatch):
         """AI_ALLOW_FAKE=false + 未知 provider → ValueError"""
         monkeypatch.setenv("AI_ALLOW_FAKE", "false")
         import importlib
-        import spring.ai.autoconfig as ac
+        import springbootai.ai.autoconfig as ac
         importlib.reload(ac)
         props = ac.bind_ai_config({"default-provider": "nonexistent"})
         with pytest.raises(ValueError, match="AI_ALLOW_FAKE=false"):
@@ -1188,7 +1188,7 @@ class TestP1Fixes:
 
     def test_resilient_call_passes_provider_to_metrics(self):
         """resilient_call provider 参数透传给熔断器指标"""
-        from spring.ai.resilience import resilient_call, AICircuitBreaker
+        from springbootai.ai.resilience import resilient_call, AICircuitBreaker
         cb = AICircuitBreaker(name="test_provider")
         call_log = []
         def _mock_func():
@@ -1203,7 +1203,7 @@ class TestP1Fixes:
 
     def test_redis_vectorstore_max_scan_limits(self):
         """RedisVectorStore max_scan 限制扫描文档数"""
-        from spring.ai.vectorstore import RedisVectorStore, Document
+        from springbootai.ai.vectorstore import RedisVectorStore, Document
         # 模拟原生 Redis 接口（hset 支持 key, field, value 格式）
         class FakeRedis:
             def __init__(self):
@@ -1224,14 +1224,14 @@ class TestP1Fixes:
                                 embedding=[float(i)])])
         assert store.count() == 5  # count 不受限
         # similarity_search 应受 max_scan 限制
-        from spring.ai.vectorstore import SearchRequest
+        from springbootai.ai.vectorstore import SearchRequest
         results = store.similarity_search(SearchRequest(
             query="", embedding=[0.0], top_k=10))
         assert len(results) <= 2  # max_scan=2
 
     def test_circuit_breaker_accepts_redis_client(self):
         """AICircuitBreaker 接受 redis_client 参数，Redis 可用时同步状态"""
-        from spring.ai.resilience import AICircuitBreaker
+        from springbootai.ai.resilience import AICircuitBreaker
         class FakeRedisClient:
             def __init__(self):
                 self._data = {}
@@ -1253,7 +1253,7 @@ class TestP1Fixes:
 
     def test_stream_retry_not_raise_on_network_error(self, monkeypatch):
         """流式 SSE 网络中断不抛异常，降级 yield 错误提示"""
-        from spring.ai.providers import OpenAIChatModel
+        from springbootai.ai.providers import OpenAIChatModel
         import json
         import requests
         call_count = [0]
@@ -1289,7 +1289,7 @@ class TestOptimizationFixes:
 
     def test_stream_persists_conversation_memory(self):
         """流式模式调用 advise_response 保存会话记忆（修复：之前流式不保存）"""
-        from spring.ai import (ChatClientBuilder, FakeChatModel,
+        from springbootai.ai import (ChatClientBuilder, FakeChatModel,
                                InMemoryChatMemory, MessageChatMemoryAdvisor)
         memory = InMemoryChatMemory(max_messages=20)
         advisor = MessageChatMemoryAdvisor(memory)
@@ -1308,7 +1308,7 @@ class TestOptimizationFixes:
 
     def test_stream_accumulates_full_content(self):
         """流式聚合后输出完整内容（无丢块）"""
-        from spring.ai import ChatClientBuilder, FakeChatModel
+        from springbootai.ai import ChatClientBuilder, FakeChatModel
         model = FakeChatModel(prefix="AI:")
         client = ChatClientBuilder(model).build()
         chunks = list(client.prompt().user("流式测试").stream())
@@ -1316,7 +1316,7 @@ class TestOptimizationFixes:
 
     def test_is_transient_http_exc_classification(self):
         """瞬态/永久 HTTP 错误分类正确"""
-        from spring.ai.providers import _is_transient_http_exc
+        from springbootai.ai.providers import _is_transient_http_exc
         import requests
 
         class R:
@@ -1334,7 +1334,7 @@ class TestOptimizationFixes:
 
     def test_http_post_json_retries_transient(self, monkeypatch):
         """_http_post_json：429 视为瞬态并重试至成功"""
-        from spring.ai.providers import _http_post_json
+        from springbootai.ai.providers import _http_post_json
         import requests
         calls = {"n": 0}
 
@@ -1360,7 +1360,7 @@ class TestOptimizationFixes:
 
     def test_http_post_json_does_not_retry_auth_error(self, monkeypatch):
         """_http_post_json：401 鉴权错误不重试，直接抛出"""
-        from spring.ai.providers import _http_post_json
+        from springbootai.ai.providers import _http_post_json
         import requests
         calls = {"n": 0}
 
@@ -1390,7 +1390,7 @@ class TestMultiProviderLangChain:
     )
     def test_compat_model_degrades_to_http_without_langchain(self):
         """未安装专用 langchain 包时 _llm 为 None，自动走 HTTP 降级"""
-        from spring.ai.providers import OpenAICompatChatModel
+        from springbootai.ai.providers import OpenAICompatChatModel
         m = OpenAICompatChatModel(
             provider="deepseek", api_key="sk-x",
             base_url="https://api.deepseek.com", model="deepseek-chat",
@@ -1402,7 +1402,7 @@ class TestMultiProviderLangChain:
     def test_compat_call_via_http_injects_tools(self, monkeypatch):
         """HTTP 路径注入 tools schema 并解析 tool_calls"""
         import json  # noqa: F401
-        from spring.ai.providers import OpenAICompatChatModel
+        from springbootai.ai.providers import OpenAICompatChatModel
         captured = {}
 
         def fake_http(url, *, json_body, headers=None, timeout, max_retries,
@@ -1413,7 +1413,7 @@ class TestMultiProviderLangChain:
                 {"id": "c1", "function": {"name": "f1", "arguments": "{}"}}]}}],
                 "usage": {"total_tokens": 5}}
 
-        monkeypatch.setattr("spring.ai.providers._http_post_json", fake_http)
+        monkeypatch.setattr("springbootai.ai.providers._http_post_json", fake_http)
         m = OpenAICompatChatModel(provider="deepseek", api_key="sk-x",
                                   model="deepseek-chat")
         reg = ToolRegistry()
@@ -1428,7 +1428,7 @@ class TestMultiProviderLangChain:
         """HTTP 流式解析 SSE data 行，逐块 yield"""
         import json
         import requests
-        from spring.ai.providers import OpenAICompatChatModel
+        from springbootai.ai.providers import OpenAICompatChatModel
         m = OpenAICompatChatModel(provider="moonshot", api_key="sk-x",
                                   model="moonshot-v1-8k")
         lines = ["data: " + json.dumps({"choices": [{"delta": {"content": "你"}}]}),
@@ -1452,7 +1452,7 @@ class TestMultiProviderLangChain:
 
     def test_autoconfig_deepseek_builds_compat_model(self, monkeypatch):
         """provider=deepseek + api_key → 构建 OpenAICompatChatModel"""
-        from spring.ai.autoconfig import bind_ai_config, _build_chat_model
+        from springbootai.ai.autoconfig import bind_ai_config, _build_chat_model
         monkeypatch.setenv("AI_PROVIDER", "deepseek")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-d")
         props = bind_ai_config({})
@@ -1463,25 +1463,25 @@ class TestMultiProviderLangChain:
     def test_autoconfig_deepseek_no_key_degrades_to_fake(self, monkeypatch):
         """provider=deepseek 无 api_key + AI_ALLOW_FAKE=true → FakeChatModel"""
         import importlib
-        import spring.ai.autoconfig as ac
+        import springbootai.ai.autoconfig as ac
         monkeypatch.setenv("AI_PROVIDER", "deepseek")
         monkeypatch.setenv("AI_ALLOW_FAKE", "true")
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         importlib.reload(ac)
-        from spring.ai.autoconfig import bind_ai_config, _build_chat_model
-        from spring.ai.providers import FakeChatModel
+        from springbootai.ai.autoconfig import bind_ai_config, _build_chat_model
+        from springbootai.ai.providers import FakeChatModel
         model = _build_chat_model(bind_ai_config({}))
         assert isinstance(model, FakeChatModel)
 
     def test_autoconfig_deepseek_no_key_strict_raises(self, monkeypatch):
         """provider=deepseek 无 api_key + AI_ALLOW_FAKE=false → ValueError"""
         import importlib
-        import spring.ai.autoconfig as ac
+        import springbootai.ai.autoconfig as ac
         monkeypatch.setenv("AI_PROVIDER", "deepseek")
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         monkeypatch.setenv("AI_ALLOW_FAKE", "false")
         importlib.reload(ac)
-        from spring.ai.autoconfig import bind_ai_config, _build_chat_model
+        from springbootai.ai.autoconfig import bind_ai_config, _build_chat_model
         with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
             _build_chat_model(bind_ai_config({}))
 

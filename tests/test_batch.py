@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from spring.batch import (
+from springbootai.batch import (
     BatchStatus,
     CsvItemReader,
     CsvItemWriter,

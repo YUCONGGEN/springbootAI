@@ -27,7 +27,7 @@ def test_01_module_imports():
     print("=" * 60)
 
     modules = {
-        # Controller (8)
+        # Controller（8）
         "AllWebController": "example_all.controller.AllWebController",
         "AopController": "example_all.controller.AopController",
         "SecurityController": "example_all.controller.SecurityController",
@@ -36,7 +36,8 @@ def test_01_module_imports():
         "CloudController": "example_all.controller.CloudController",
         "MessagingController": "example_all.controller.MessagingController",
         "LimitationsController": "example_all.controller.LimitationsController",
-        # Service (8)
+        "FeatureCatalogController": "example_all.controller.FeatureCatalogController",
+        # Service（8）
         "AllAnnotationService": "example_all.service.AllAnnotationService",
         "AopService": "example_all.service.AopService",
         "AsyncService": "example_all.service.AsyncService",
@@ -48,14 +49,14 @@ def test_01_module_imports():
         "PrimaryService": "example_all.service.AllAnnotationService",
         "SecondaryService": "example_all.service.AllAnnotationService",
         "LazyService": "example_all.service.AllAnnotationService",
-        # Config (2)
+        # Config（2）
         "AppConfig": "example_all.config.AppConfig",
         "AppProperties": "example_all.config.AppConfig",
-        # Repository (1)
+        # Repository（1）
         "UserRepository": "example_all.repository.UserRepository",
-        # Mapper (1)
+        # Mapper（1）
         "UserMapper": "example_all.mappers.UserMapper",
-        # Interceptor (2)
+        # Interceptor（2）
         "LoggingInterceptor": "example_all.interceptor.AllInterceptor",
         "SecurityHeaderInterceptor": "example_all.interceptor.AllInterceptor",
     }
@@ -82,7 +83,7 @@ def test_02_xml_mapper_parsing():
     print("测试2: XML Mapper 解析 (MySQL版)")
     print("=" * 60)
 
-    from spring.orm.pymybatis.xml_parser import XmlParser
+    from springbootai.orm.pymybatis.xml_parser import XmlParser
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     xml_path = os.path.join(base_dir, "mappers", "UserMapper.xml")
@@ -146,7 +147,7 @@ def test_04_component_scan():
             "example_all.controller.AllWebController.ViewController",
             "example_all.controller.AopController.AopController",
             "example_all.controller.SecurityController.SecurityController",
-            "example_all.controller.ExceptionController.GlobalExceptionHandler",
+            "example_all.common.advice.GlobalExceptionHandler",
             "example_all.controller.ExceptionController.ErrorTriggerController",
             "example_all.controller.OrmController.OrmController",
             "example_all.controller.OrmController.ScheduleController",
@@ -205,7 +206,7 @@ def test_05_http_api():
 
     def run_server():
         from example_all.Application import Application
-        from spring.main import create_app
+        from springbootai.main import create_app
         try:
             app = create_app(Application)
             server_started.set()
@@ -262,7 +263,7 @@ def test_05_http_api():
         ("GET", "/api/orm/annotation/search?username=john", 200, "@Select 动态条件"),
         ("GET", "/api/orm/stats", 200, "ORM stats MySQL"),
 
-        # === Cloud (2) ===
+        # === Cloud（2）===
         ("GET", "/api/cloud/status", 200, "@Cloud status"),
         ("GET", "/api/cloud/loadbalance/status", 200, "@LoadBalanced"),
 
@@ -316,8 +317,8 @@ def test_06_entity_jpa_style():
     print("=" * 60)
 
     from example_all.models.EntityModels import AdminUser, Product, SysLog
-    from spring.orm.ddl_auto import DdlAutoManager
-    from spring.orm import Column, Id, CreateTime
+    from springbootai.orm.ddl_auto import DdlAutoManager
+    from springbootai.orm import Column, Id, CreateTime
 
     ok = 0; fail = 0
 

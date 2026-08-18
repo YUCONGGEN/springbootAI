@@ -1,6 +1,6 @@
 # Actuator —— 系统健康检查面板
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -31,7 +31,7 @@
 ## ② 怎么用
 
 ```python
-from spring.web.actuator import configure_actuator
+from springbootai.web.actuator import configure_actuator
 
 # 在应用初始化后注册端点
 configure_actuator(
@@ -87,13 +87,94 @@ Spring Boot Admin 是 Spring 生态专门的 **Actuator 可视化面板**——�
 
 ### 4.2 怎么用
 
-只要 Actuator 已注册，**无需任何额外配置**，直接浏览器访问：
+应用内置面板只要 Actuator 已注册即可直接访问：
 
 ```
 http://127.0.0.1:8080/actuator/admin
 ```
 
 > 末尾带不带斜杠都行：`/actuator/admin/` 同样可访问。
+
+### 4.2.1 在 application.yml 配置内置面板
+
+Admin 面板开箱即用，未配置时使用框架内置默认值：标题为
+`SpringBootAI Admin Dashboard`、每 30 秒刷新、日志与 Bean 每页 10 条。
+如需覆盖，在应用自己的 `application.yml` 中加入：
+
+```yaml
+management:
+  admin:
+    title: 我的应用运维面板
+    subtitle: 生产环境监控
+    refresh-interval-seconds: 30
+    page-size: 10
+    # 可选：框架自动建表并记录请求，显示在“线程概览”右侧。
+    # 默认 false；开启后项目无需编写实体、Mapper、Controller 或拦截器。
+    request-metrics:
+      enabled: true
+      title: 业务请求监控（数据库持久化）
+      # 可选：业务接口统一以 /api 开头的项目，建议明确白名单，防止非业务页面被采集。
+      include-paths:
+        - /api/**
+      # 可选：在框架默认排除项外，继续排除项目自己的非业务接口。
+      exclude-paths:
+        - /internal/**
+```
+
+四个字段均可选。字段未写、空字符串或数值不合法时，框架会只对该字段回退到
+内置默认值；`refresh-interval-seconds` 的有效范围为 1-3600，`page-size` 为 1-100。
+`request-metrics` 默认为关闭。开启后框架会创建 `springbootai_request_metrics` 表、
+自动记录业务 HTTP 请求，并通过受 Actuator 鉴权保护的
+`/actuator/request-metrics` 端点向面板提供请求总数、错误总数、平均耗时和最常访问路径。
+项目不需要提供任何业务监控接口。
+
+采集范围的规则是：框架始终排除 `/actuator/**`、`/docs/**`、`/doc/**`、`/redoc/**`、
+`/openapi.json` 和 `/favicon.ico`，因此健康检查、Admin 自动轮询、Prometheus 抓取等运维请求不会进入业务统计。
+`include-paths` 未配置时，其他所有 HTTP 路径都会采集，以兼容不使用 `/api` 前缀的项目；如果项目业务 API 有统一前缀，建议配置白名单（如 `/api/**`）。
+`exclude-paths` 用于增加项目专用的排除规则。框架启动时还会清理表中与当前规则不匹配的旧历史记录，避免升级前的运维数据继续显示在面板中。
+
+内置 Admin 的“健康状态”仅显示已启用的组件。Redis、Nacos、RabbitMQ、Seata 等未启用时仍会在
+`/actuator/health` 的 `components` 中以 `enabled: false` 返回，方便自动化诊断，但不会在可视化面板显示，也不会被误判为故障。
+
+### 4.2.1.1 配置来源、优先级与容错
+
+上述 `management.*` 配置不绑定本地 `application.yml`：框架始终从 `ApplicationContext` 的最终配置读取。
+优先级为：命令行参数 > 环境变量 > Nacos 远程配置 > profile 配置 > 本地配置 > 框架默认值。
+因此生产环境可只保留 Nacos 的业务配置，或仅以环境变量控制面板：
+
+```text
+MANAGEMENT_ADMIN_REQUEST_METRICS_ENABLED=true
+MANAGEMENT_ADMIN_REQUEST_METRICS_INCLUDE_PATHS=/api/**
+MANAGEMENT_ADMIN_REQUEST_METRICS_EXCLUDE_PATHS=/internal/**
+MANAGEMENT_ADMIN_REQUEST_METRICS_TABLE=springbootai_request_metrics
+MANAGEMENT_ADMIN_PAGE_SIZE=20
+MANAGEMENT_ENDPOINTS_WEB_SECURITY_ENABLED=true
+MANAGEMENT_ENDPOINTS_WEB_SECURITY_ROLES=ROLE_ADMIN,ACTUATOR
+```
+
+路径列表使用逗号分隔。空值、类型错误、非法分页数和不可用的请求监控数据库均不会阻断应用启动：
+前者回退到安全默认值；后者使 `/actuator/request-metrics` 返回 `persistent: false` 与简短错误状态，业务接口继续正常运行。
+
+### 4.2.2 注册到独立 Spring Boot Admin Server
+
+内置 `/actuator/admin` 不需要注册。若要在 `http://localhost:1111` 的独立 Spring Boot Admin Server 中看到应用，必须由应用主动 `POST /instances` 注册；仅在 Server 容器设置 `SPRING_BOOT_ADMIN_INSTANCE_*` 环境变量不会注册实例。
+
+1. 启动监控栈：`docker compose -f monitoring/docker-compose.yml up -d`。
+2. 在应用环境设置下列变量。`SERVICE_URL` 必须从 Admin Server 容器可访问；本机运行应用时使用 `host.docker.internal`。
+
+```powershell
+$env:SPRING_BOOT_ADMIN_CLIENT_ENABLED = "true"
+$env:SPRING_BOOT_ADMIN_URL = "http://localhost:1111"
+$env:SPRING_BOOT_ADMIN_NAME = "springbootai-demo"
+$env:SPRING_BOOT_ADMIN_SERVICE_URL = "http://host.docker.internal:8000"
+$env:SPRING_BOOT_ADMIN_MANAGEMENT_URL = "http://host.docker.internal:8000/actuator"
+$env:SPRING_BOOT_ADMIN_HEALTH_URL = "http://host.docker.internal:8000/actuator/health"
+python -m myapp.Application
+```
+
+3. 日志出现 `Registered with Spring Boot Admin` 后，打开 `http://localhost:1111`，实例状态应为 `UP`。关闭应用时会向 `/instances/{id}` 注销。
+
+生产环境将这些值写入部署环境，而不是提交到仓库；当 Admin Server 与应用同一 Docker 网络时，改用服务 DNS，例如 `http://myapp:8080`。
 
 ### 4.3 面板内容
 
@@ -222,7 +303,7 @@ mkdir -p $PROMETHEUS_MULTIPROC_DIR
 ### 6.1 通过 PrometheusMetrics 单例创建指标
 
 ```python
-from spring.monitoring.prometheus import prometheus_metrics
+from springbootai.monitoring.prometheus import prometheus_metrics
 
 # 计数器：累计请求数
 http_counter = prometheus_metrics.create_counter(
@@ -348,7 +429,7 @@ docker --version
 
 ```bash
 # 在项目根目录下执行
-python -m spring.main
+python -m springbootai.main
 ```
 
 应用启动后，浏览器打开 http://localhost:8000/actuator/health ，如果看到 `{"status":"UP"}` 就说明应用正常运行了。
@@ -719,7 +800,7 @@ Admin 面板 30 秒刷新一次，等一会儿再看。或者手动点页面右�
 
 ### 新增端点未纳入鉴权体系 — 高 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/web/actuator.py` /actuator/prometheus、/actuator/sysmetrics
+**位置**：`springbootai/web/actuator.py` /actuator/prometheus、/actuator/sysmetrics
 
 **现象**：`/actuator/prometheus`、`/actuator/sysmetrics` 两个新端点未挂载鉴权依赖。sysmetrics 暴露进程 RSS、CPU、线程数、FD 数；prometheus 暴露 python_*/process_* 指标。
 
@@ -727,7 +808,7 @@ Admin 面板 30 秒刷新一次，等一会儿再看。或者手动点页面右�
 
 ### 死代码函数 _check_actuator_auth() — 低 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/web/actuator.py`
+**位置**：`springbootai/web/actuator.py`
 
 **现象**：`_check_actuator_auth()` 永远 `raise HTTPException(401)`，且未被任何端点调用（实际鉴权由 `_create_actuator_dependency` 返回的闭包完成）。
 

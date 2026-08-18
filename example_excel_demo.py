@@ -24,7 +24,7 @@ from decimal import Decimal
 # 让脚本在未安装时也能从仓库根目录导入
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from spring.excel import (
+from springbootai.excel import (
     EasyExcel, ExcelProperty, ExcelIgnore, excel_sheet,
     BigDecimalConverter, Converter, read_excel, write_excel,
 )

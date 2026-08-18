@@ -1,6 +1,6 @@
 """
 example_langchain 应用入口
-演示如何把 spring.langchain 模块集成进 SpringBootAI 应用。
+演示如何把 springbootai.langchain 模块集成进 SpringBootAI 应用。
 
 启动流程：
 1. @SpringBootApplication 触发组件扫描（发现 @Configuration / @Service / @RestController）
@@ -25,7 +25,7 @@ for _p in (_PROJECT_ROOT, _EXAMPLES_DIR):
 # 无 key 环境下自动降级 FakeChatModel（生产环境请删除此行并配置真实 key）
 os.environ.setdefault("AI_ALLOW_FAKE", "true")
 
-from spring import SpringBootApplication
+from springbootai import SpringBootApplication
 
 
 @SpringBootApplication(scan_base_packages=["example_langchain"])
@@ -34,5 +34,5 @@ class Application:
 
 
 if __name__ == "__main__":
-    from spring import run
+    from springbootai import run
     run(Application, port=8081)

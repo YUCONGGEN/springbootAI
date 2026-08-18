@@ -7,11 +7,11 @@ import time
 import httpx
 from fastapi import FastAPI
 
-from spring.annotations.cloud import FeignClient
-from spring.annotations.core import GetMapping
-from spring.cloud.feign import FeignClientProxy, create_declared_feign_client
-from spring.cloud.gateway import GatewayRouter
-from spring.web.web_context import WebApplicationContext
+from springbootai.annotations.cloud import FeignClient
+from springbootai.annotations.core import GetMapping
+from springbootai.cloud.feign import FeignClientProxy, create_declared_feign_client
+from springbootai.cloud.gateway import GatewayRouter
+from springbootai.web.web_context import WebApplicationContext
 
 
 def _request(path: str = "/"):

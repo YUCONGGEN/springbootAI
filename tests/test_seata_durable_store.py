@@ -3,7 +3,7 @@ import threading
 
 import pytest
 
-from spring.cloud.seata import BranchStatus, SeataTransactionManager
+from springbootai.cloud.seata import BranchStatus, SeataTransactionManager
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 # SpringBootAI CSV 模块 —— 小白也能看懂的使用指南
 
-> 模块版本：SpringBootAI CSV 2.3.0 ｜ 框架版本：SpringBootAI 2.3.0
+> 模块随 SpringBootAI 2.3.2 发布
 > CSV 模块基于 Python 标准库 `csv`，**零额外依赖**，`pip install springbootAI` 即可用。
 
 ---
@@ -54,7 +54,7 @@ with open("users.csv", "r", encoding="utf-8-sig") as f:
 
 ```python
 # ✅ 用 CSV 模块（定义类 + 一行代码）
-from spring.csv import read_csv
+from springbootai.csv import read_csv
 
 rows = read_csv("users.csv", UserCsv)
 # rows: [UserCsv(id=1, name="张三", age=28, ...), ...]
@@ -122,7 +122,7 @@ python -m pip install springbootAI
 ```python
 # demo/csv_entity.py
 from datetime import datetime
-from spring.csv import CsvProperty, CsvIgnore, CsvFile
+from springbootai.csv import CsvProperty, CsvIgnore, CsvFile
 
 
 @CsvFile("用户列表", delimiter=",", encoding="utf-8-sig")
@@ -159,7 +159,7 @@ class UserCsv:
 
 ```python
 # demo/write_csv_demo.py
-from spring.csv import EasyCsv, write_csv
+from springbootai.csv import EasyCsv, write_csv
 from demo.csv_entity import UserCsv
 
 # 准备数据
@@ -187,7 +187,7 @@ write_csv("users2.csv", UserCsv, data)
 
 ```python
 # demo/read_csv_demo.py
-from spring.csv import EasyCsv, read_csv
+from springbootai.csv import EasyCsv, read_csv
 from demo.csv_entity import UserCsv
 
 # 方式1：流式读取
@@ -222,7 +222,7 @@ rows2 = read_csv("users.csv", UserCsv)
 
 | Excel 模块 | CSV 模块 |
 |----------|---------|
-| `from spring.excel import ...` | `from spring.csv import ...` |
+| `from springbootai.excel import ...` | `from springbootai.csv import ...` |
 | `@ExcelProperty` | `@CsvProperty` |
 | `@ExcelIgnore` | `@CsvIgnore` |
 | `@ExcelSheet` | `@CsvFile` |
@@ -233,7 +233,7 @@ rows2 = read_csv("users.csv", UserCsv)
 
 ```python
 # Excel 版本
-from spring.excel import ExcelProperty, ExcelIgnore, ExcelSheet
+from springbootai.excel import ExcelProperty, ExcelIgnore, ExcelSheet
 
 @ExcelSheet("用户列表")
 class UserExcel:
@@ -244,7 +244,7 @@ class UserExcel:
 
 ```python
 # CSV 版本（只需改 3 行）
-from spring.csv import CsvProperty, CsvIgnore, CsvFile
+from springbootai.csv import CsvProperty, CsvIgnore, CsvFile
 
 @CsvFile("用户列表", encoding="utf-8-sig")
 class UserCsv:
@@ -271,7 +271,7 @@ CSV 本身就是纯文本，理论上不存在精度丢失。Excel 会把 `76543
 
 ```python
 from decimal import Decimal
-from spring.csv import CsvProperty, CsvFile
+from springbootai.csv import CsvProperty, CsvFile
 
 # 方式 1：用 big_number=True，强制按字符串读写
 @CsvFile("data")
@@ -293,7 +293,7 @@ class Data2:
 
 ## 第五章：自定义转换器
 
-CSV 模块**复用 Excel 模块的转换器**（`spring.excel.converters`）。这意味着：
+CSV 模块**复用 Excel 模块的转换器**（`springbootai.excel.converters`）。这意味着：
 - 内置转换器（int/float/bool/str/date/Decimal）完全一样
 - 自定义转换器写法也一样
 
@@ -309,7 +309,7 @@ CSV 模块**复用 Excel 模块的转换器**（`spring.excel.converters`）。�
 自定义转换器示例：
 
 ```python
-from spring.csv import Converter, CsvProperty, CsvFile
+from springbootai.csv import Converter, CsvProperty, CsvFile
 
 
 # 自定义转换器：列表 ↔ 分号分隔的字符串
@@ -429,7 +429,7 @@ class Data:
 
 ❌ **错误想法**：CSV 有自己的转换器实现。
 
-✅ **实际情况**：CSV 模块**直接复用** Excel 的转换器（`spring.excel.converters`，这个模块不依赖 openpyxl）。所以方法名还叫 `to_excel` / `from_excel`——因为它们共享同一份代码。
+✅ **实际情况**：CSV 模块**直接复用** Excel 的转换器（`springbootai.excel.converters`，这个模块不依赖 openpyxl）。所以方法名还叫 `to_excel` / `from_excel`——因为它们共享同一份代码。
 
 ---
 
@@ -574,7 +574,7 @@ class Demo:
 > **提示：** `CsvFile` 是类级装饰器（也可作元数据类使用），与 ORM `@Table` 风格一致。框架还提供了小写函数别名向后兼容，推荐统一用大写。
 >
 > ```python
-> from spring.csv import CsvFile
+> from springbootai.csv import CsvFile
 >
 > @CsvFile("用户列表", delimiter=",", encoding="utf-8-sig")
 > class DemoData:
@@ -587,12 +587,12 @@ class Demo:
 
 | 文件 | 职责 |
 |------|------|
-| `spring/csv/annotations.py` | `@CsvProperty` / `@CsvIgnore` / `@CsvFile` 注解定义 |
-| `spring/csv/converters.py` | 复用 Excel 模块的 `Converter` 接口和内置转换器 |
-| `spring/csv/reader.py` | `CsvReader` 读取引擎 |
-| `spring/csv/writer.py` | `CsvWriter` 写入引擎 |
-| `spring/csv/easy_csv.py` | `EasyCsv` 流式 API 入口 + `read_csv` / `write_csv` 便捷函数 |
-| `spring/csv/exceptions.py` | `CsvError` 异常族 |
+| `springbootai/csv/annotations.py` | `@CsvProperty` / `@CsvIgnore` / `@CsvFile` 注解定义 |
+| `springbootai/csv/converters.py` | 复用 Excel 模块的 `Converter` 接口和内置转换器 |
+| `springbootai/csv/reader.py` | `CsvReader` 读取引擎 |
+| `springbootai/csv/writer.py` | `CsvWriter` 写入引擎 |
+| `springbootai/csv/easy_csv.py` | `EasyCsv` 流式 API 入口 + `read_csv` / `write_csv` 便捷函数 |
+| `springbootai/csv/exceptions.py` | `CsvError` 异常族 |
 
 与 Excel 模块的核心区别：CSV 使用 Python 标准库 `csv`，**零依赖**；无单元格样式（CSV 格式本身不支持）；转换器复用 Excel 模块。
 
@@ -618,7 +618,7 @@ class User:
         self.email = email
 
 # 直接导出，不需要 @CsvFile
-from spring.csv import EasyCsv
+from springbootai.csv import EasyCsv
 EasyCsv.write("users.csv").doWrite(users)
 # CSV 表头自动生成为：Id / Name / Age / Email
 ```
@@ -628,7 +628,7 @@ EasyCsv.write("users.csv").doWrite(users)
 在已有类的属性上加 `@CsvProperty`，只改你想控制的列：
 
 ```python
-from spring.csv import CsvProperty, CsvIgnore
+from springbootai.csv import CsvProperty, CsvIgnore
 
 class User:
     id = CsvProperty("用户ID", order=1)      # 自定义表头和顺序
@@ -650,7 +650,7 @@ class User:
 用类型注解声明字段，未标注 `@CsvProperty` 的字段也会自动建列：
 
 ```python
-from spring.csv import CsvProperty, CsvFile
+from springbootai.csv import CsvProperty, CsvFile
 
 @CsvFile("用户列表")
 class User:
@@ -675,12 +675,12 @@ class User:
 ## API 速查
 
 ```python
-from spring.csv import (
+from springbootai.csv import (
     # 注解
     CsvProperty, CsvIgnore, CsvFile,
     # 引擎
     EasyCsv, read_csv, write_csv,
-    # 转换器（复用 Excel 模块，也可从 spring.csv 导入）
+    # 转换器（复用 Excel 模块，也可从 springbootai.csv 导入）
     Converter, StringConverter, IntegerConverter, FloatConverter,
     BooleanConverter, DateStringConverter, BigDecimalConverter,
     # 异常
@@ -719,7 +719,7 @@ A: 两个系统之间传数据、数据量大（>5 万行）→ CSV。导出报�
 
 **Q: CSV 模块需要装 openpyxl 吗？**
 
-A: 不需要。CSV 模块用 Python 自带的 `csv` 库，零额外依赖。转换器虽然复用 Excel 模块的代码，但 `spring.excel.converters` 不依赖 openpyxl，可以安全导入。
+A: 不需要。CSV 模块用 Python 自带的 `csv` 库，零额外依赖。转换器虽然复用 Excel 模块的代码，但 `springbootai.excel.converters` 不依赖 openpyxl，可以安全导入。
 
 **Q: 为什么 Windows Excel 打开中文 CSV 是乱码？**
 
@@ -731,7 +731,7 @@ A: 必须一致。用 `utf-8-sig` 写就用 `utf-8-sig` 读，用 `utf-8` 写就
 
 **Q: CSV 模块和 Excel 模块的代码可以共用吗？**
 
-A: 几乎可以。把 `spring.excel` 改成 `spring.csv`，`ExcelProperty` 改成 `CsvProperty`，`@ExcelSheet` 改成 `@CsvFile` 就行。功能上会少掉样式和多 Sheet。
+A: 几乎可以。把 `springbootai.excel` 改成 `springbootai.csv`，`ExcelProperty` 改成 `CsvProperty`，`@ExcelSheet` 改成 `@CsvFile` 就行。功能上会少掉样式和多 Sheet。
 
 **Q: CSV 模块和 ORM 模块有什么关系？**
 
@@ -740,7 +740,7 @@ A: 没有直接关系。CSV 管文件读写，ORM 管数据库操作。你可以
 **Q: 从一个已有的 Excel 实体类改成 CSV 实体类需要改什么？**
 
 A: 只需三步：
-1. `from spring.excel` → `from spring.csv`
+1. `from springbootai.excel` → `from springbootai.csv`
 2. `ExcelProperty` → `CsvProperty`、`ExcelIgnore` → `CsvIgnore`
 3. `@ExcelSheet` → `@CsvFile`
 
@@ -750,7 +750,7 @@ A: 只需三步：
 
 ### 大文件读取未流式处理，内存溢出风险 — 高 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/csv/reader.py` doRead()
+**位置**：`springbootai/csv/reader.py` doRead()
 
 **现象**：CSV 读取使用 `csv.reader()` 虽然逐行读取，但结果列表全部收集后返回。10 万行以上的大文件内存占用可能超过 1GB。
 

@@ -12,12 +12,12 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.config.config_loader import ConfigLoader, ConfigurationError
-from spring.context.registry import BeanRegistry
-from spring.event.publisher import ApplicationEventPublisher
-from spring.annotations.core import ApplicationEvent, EventListener, get_spring_annotations
-from spring.retry.retry_decorator import retry
-from spring.retry.retry_annotations import Backoff
+from springbootai.config.config_loader import ConfigLoader, ConfigurationError
+from springbootai.context.registry import BeanRegistry
+from springbootai.event.publisher import ApplicationEventPublisher
+from springbootai.annotations.core import ApplicationEvent, EventListener, get_spring_annotations
+from springbootai.retry.retry_decorator import retry
+from springbootai.retry.retry_annotations import Backoff
 
 
 # ==================== ConfigLoader 测试 ====================

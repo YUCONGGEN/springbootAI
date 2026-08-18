@@ -1,7 +1,7 @@
 """Small stdio MCP Server used by the client example and integration tests."""
 
-from spring.ai import ToolExecutionPolicy, ToolRegistry
-from spring.mcp import MCPServerAdapter, MCPServerProperties
+from springbootai.ai import ToolExecutionPolicy, ToolRegistry
+from springbootai.mcp import MCPServerAdapter, MCPServerProperties
 
 
 tools = ToolRegistry(policy=ToolExecutionPolicy(allowed_tools={"multiply"}))

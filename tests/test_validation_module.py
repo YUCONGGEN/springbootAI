@@ -13,7 +13,7 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.validation import (
+from springbootai.validation import (
     BeanValidator, BeanValidate,
     NotNull, NotBlank, NotEmpty, Size, Min, Max,
     Positive, PositiveOrZero, Negative, NegativeOrZero,
@@ -231,7 +231,7 @@ def _apply_aop(cls):
     ``MethodValidationPostProcessor`` 代理的语义：注解本身只声明元数据，代理负责包裹。
     """
     import inspect as _inspect
-    from spring.aop.comprehensive_aop import apply_annotations
+    from springbootai.aop.comprehensive_aop import apply_annotations
 
     for name, method in _inspect.getmembers(cls):
         if not name.startswith('_') and _inspect.isfunction(method):
@@ -277,8 +277,8 @@ class TestBeanValidateAop:
 
     def test_bean_validate_registered_in_aop(self):
         # 验证 @BeanValidate 已注册到 comprehensive_aop 分发表
-        from spring.aop.comprehensive_aop import ANNOTATION_DECORATORS
-        from spring.validation.aop import BeanValidate as _BV
+        from springbootai.aop.comprehensive_aop import ANNOTATION_DECORATORS
+        from springbootai.validation.aop import BeanValidate as _BV
         assert _BV in ANNOTATION_DECORATORS
 
     def test_none_param_skipped(self):
@@ -323,7 +323,7 @@ class TestBeanValidateAop:
         # 不调用 _apply_aop，方法未被代理包裹
         assert Svc().create(UserDto(name="")) == "raw"
         # 元数据已登记
-        from spring.aop.comprehensive_aop import apply_annotations
+        from springbootai.aop.comprehensive_aop import apply_annotations
         wrapped = apply_annotations(None, Svc.create)
         with pytest.raises(ValidationError):
             wrapped(Svc(), UserDto(name=""))

@@ -2,7 +2,7 @@
 PagingAndSortingRepository 的 CRUD/分页/排序/动态查询。
 
 对齐 tests/test_jpa_version_transient.py 的 pytest + 内存 sqlite 风格。复用
-``spring.orm.ddl_auto`` 的实体注解（@entity/Id/Column），用 ``DdlAutoManager``
+``springbootai.orm.ddl_auto`` 的实体注解（@entity/Id/Column），用 ``DdlAutoManager``
 建表，验证 Repository 的真实 SQL 行为。
 """
 import sqlite3
@@ -15,8 +15,8 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.orm.ddl_auto import DdlAutoManager, entity, Id, Column
-from spring.data import (
+from springbootai.orm.ddl_auto import DdlAutoManager, entity, Id, Column
+from springbootai.data import (
     Direction, Order, Sort, Pageable, Page,
     Specifications,
     PagingAndSortingRepository, DataRepository, get_data_repository_entity,
@@ -447,7 +447,7 @@ class TestEntityParsingReuse:
 
     def test_repository_columns_exclude_transient(self):
         # _columns 排除 transient 列
-        from spring.orm.ddl_auto import Transient
+        from springbootai.orm.ddl_auto import Transient
         @entity("with_trans")
         class Wt:
             id = Id()

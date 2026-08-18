@@ -12,7 +12,7 @@ if os.getenv("RUN_FAILURE_INTEGRATION_TESTS") != "1":
 
 
 def test_redis_outage_fails_closed():
-    from spring.utils.redis_client import RedisClient
+    from springbootai.utils.redis_client import RedisClient
 
     client = RedisClient(host="127.0.0.1", port=6379, db=15, timeout=1)
     with pytest.raises(Exception):
@@ -20,7 +20,7 @@ def test_redis_outage_fails_closed():
 
 
 def test_seata_bridge_outage_fails_closed():
-    from spring.cloud.seata_bridge import SeataBridgeClient, SeataBridgeError
+    from springbootai.cloud.seata_bridge import SeataBridgeClient, SeataBridgeError
 
     client = SeataBridgeClient(
         "http://127.0.0.1:18091",

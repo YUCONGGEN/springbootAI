@@ -8,10 +8,10 @@ include requirements-langgraph.txt
 include requirements-mcp.txt
 include pyproject.toml
 
-graft spring
+graft springbootai
 graft sql
 
-# 排除开发/构建产物
+# 鎺掗櫎寮€鍙?鏋勫缓浜х墿
 global-exclude __pycache__
 global-exclude *.pyc
 global-exclude *.pyo

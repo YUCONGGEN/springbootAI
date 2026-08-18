@@ -14,7 +14,7 @@ import threading
 import unittest
 from unittest.mock import MagicMock
 
-from spring.cloud.seata_at_proxy import (
+from springbootai.cloud.seata_at_proxy import (
     SeataATProxy,
     SeataATInterceptor,
     UndoLogManager,

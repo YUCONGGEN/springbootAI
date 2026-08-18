@@ -1,7 +1,7 @@
 """
 定时任务服务 — 测试 @Scheduled (fixed_rate, fixed_delay, cron)
 """
-from spring.annotations.core import Component, Scheduled, Slf4j
+from springbootai.annotations.core import Component, Scheduled, Slf4j
 
 
 @Slf4j

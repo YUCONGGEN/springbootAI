@@ -1,7 +1,7 @@
 """
 用户数据仓库 — 测试 @Repository 注解
 """
-from spring.annotations.core import Repository, Slf4j, PostConstruct
+from springbootai.annotations.core import Repository, Slf4j, PostConstruct
 
 
 @Slf4j

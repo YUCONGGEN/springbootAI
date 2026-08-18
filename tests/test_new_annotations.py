@@ -13,7 +13,7 @@
 """
 import pytest
 
-from spring.annotations import (
+from springbootai.annotations import (
     EnableOAuth2,
     EnableCsrf,
     EnableDevTools,
@@ -25,7 +25,7 @@ from spring.annotations import (
     BatchStep,
     RepositoryRestResource,
 )
-from spring.annotations.core import SpringAnnotation, get_spring_annotations
+from springbootai.annotations.core import SpringAnnotation, get_spring_annotations
 
 
 # ==================== @EnableOAuth2 测试 ====================
@@ -383,7 +383,7 @@ class TestMultipleAnnotations:
 
     def test_enable_annotations_with_spring_boot_application(self):
         """与 @SpringBootApplication 组合使用"""
-        from spring.annotations import SpringBootApplication
+        from springbootai.annotations import SpringBootApplication
 
         @SpringBootApplication
         @EnableOAuth2
@@ -414,7 +414,7 @@ class TestFindAnnotation:
     """SpringApplication._find_annotation 方法测试"""
 
     def test_find_annotation_returns_match(self):
-        from spring.main import SpringApplication
+        from springbootai.main import SpringApplication
 
         @EnableOAuth2(issuer="https://test.com")
         @EnableCsrf
@@ -427,7 +427,7 @@ class TestFindAnnotation:
         assert ann.issuer == "https://test.com"
 
     def test_find_annotation_returns_none_when_absent(self):
-        from spring.main import SpringApplication
+        from springbootai.main import SpringApplication
 
         class App:
             pass
@@ -437,7 +437,7 @@ class TestFindAnnotation:
         assert ann is None
 
     def test_find_annotation_with_multiple_types(self):
-        from spring.main import SpringApplication
+        from springbootai.main import SpringApplication
 
         @EnableBus
         @EnableDevTools

@@ -1,10 +1,10 @@
 """配置元数据文件完整性测试。
 
-测试 ``spring/config/spring-configuration-metadata.json`` 的结构与内容：
+测试 ``springbootai/config/spring-configuration-metadata.json`` 的结构与内容：
 - 文件存在性与 JSON 合法性
 - version / metadata / properties 顶层字段
 - 每个 property 必备 name / description 字段
-- 关键配置项（server.port、spring.application.name、spring.security.jwt.secret-key 等）存在
+- 关键配置项（server.port、springbootai.application.name、springbootai.security.jwt.secret-key 等）存在
 - name 唯一性、type 字段合法性、defaultValue 覆盖度
 """
 import json
@@ -27,8 +27,8 @@ VALID_JAVA_TYPE_PREFIXES = (
 # 关键配置项（必须存在）
 KNOWN_CONFIG_KEYS = [
     "server.port",
-    "spring.application.name",
-    "spring.security.jwt.secret-key",
+    "springbootai.application.name",
+    "springbootai.security.jwt.secret-key",
 ]
 
 

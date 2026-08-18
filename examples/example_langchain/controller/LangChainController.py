@@ -15,12 +15,12 @@ LangChain REST 控制器 - 暴露 /api/lc/* 接口演示迁移后的全部能力
 - GET  /api/lc/capabilities  列出模块全部能力
 - POST /api/lc/embed         文本嵌入
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     Autowired, GetMapping, PostMapping, RequestMapping,
     RestController, Slf4j,
 )
-from spring.annotations.security import Authenticate
-from spring.web.result import Result
+from springbootai.annotations.security import Authenticate
+from springbootai.web.result import Result
 from example_langchain.service.LangChainChatService import LangChainChatService
 from example_langchain.service.LangChainAgentService import LangChainAgentService
 from example_langchain.service.LangChainRagService import LangChainRagService
@@ -140,7 +140,7 @@ class LangChainController:
     @GetMapping("/providers")
     def providers(self):
         """列出当前环境已安装的 partner 提供商。"""
-        from spring.langchain.partners import list_partners, list_available_partners
+        from springbootai.langchain.partners import list_partners, list_available_partners
         return Result.success(data={
             "total": len(list_partners()),
             "available": list_available_partners(),
@@ -150,12 +150,12 @@ class LangChainController:
     @GetMapping("/capabilities")
     def capabilities(self):
         """列出模块全部能力。"""
-        from spring.langchain.memory.memory import MemoryFactory
-        from spring.langchain.loaders.loaders import DocumentLoaderRegistry
-        from spring.langchain.retrievers.retrievers import RetrieverFactory
-        from spring.langchain.vectorstores.stores import VectorStoreFactory
-        from spring.langchain.agents.services import AgentService
-        from spring.langchain.utilities.utils import UtilityRegistry
+        from springbootai.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.loaders.loaders import DocumentLoaderRegistry
+        from springbootai.langchain.retrievers.retrievers import RetrieverFactory
+        from springbootai.langchain.vectorstores.stores import VectorStoreFactory
+        from springbootai.langchain.agents.services import AgentService
+        from springbootai.langchain.utilities.utils import UtilityRegistry
         return Result.success(data={
             "memory": MemoryFactory.supported_types(),
             "loaders": DocumentLoaderRegistry.supported_types(),
@@ -168,7 +168,7 @@ class LangChainController:
     @PostMapping("/embed")
     def embed(self, body: dict):
         """文本嵌入。body: {"texts": ["a", "b"]}"""
-        from spring.context.registry import BeanRegistry
+        from springbootai.context.registry import BeanRegistry
         texts = body.get("texts", [])
         emb_model = BeanRegistry().get("aiEmbeddingModel")
         if emb_model is None:

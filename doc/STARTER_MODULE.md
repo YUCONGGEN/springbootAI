@@ -1,6 +1,6 @@
 # SpringBootAI Starter 机制 —— 依赖管理指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 > 配置位置：`pyproject.toml` 的 `[project.optional-dependencies]` 段
 > 对齐 Java：Spring Boot Starter（`spring-boot-starter-*`）
 
@@ -133,7 +133,7 @@ SpringBootAI 的所有直接依赖使用 `==` **精确版本锁定**，这是有
 
 | Starter 名称 | 安装命令 | 包含的依赖 | 用途 |
 |--------------|----------|-----------|------|
-| `ai` | `pip install "springbootAI[ai]"` | `langchain-openai==1.4.2`、`langchain-core==1.5.4`、`langchain-classic==1.0.8`、`langchain-text-splitters==1.1.2`、`langchain-community==0.4.2`、`numpy==2.3.0`、`pydantic==2.13.4` | Spring AI 风格的 ChatClient/Advisor/Tools/RAG |
+| `ai` | `pip install "springbootAI[ai]"` | `langchain-openai==1.4.2`、`langchain-core==1.5.4`、`langchain-classic==1.0.8`、`langchain-text-splitters==1.1.2`、`langchain-community==0.4.2`、`numpy==2.2.6`、`pydantic==2.13.4` | Spring AI 风格的 ChatClient/Advisor/Tools/RAG |
 
 > **设计说明**：AI 模块采用"可选依赖 + 降级"设计——未安装时仍可用（降级为原生 HTTP + FakeChatModel），不会启动失败。
 
@@ -278,7 +278,7 @@ pip install "springbootAI[web]"
 ```
 
 ```python
-from spring.annotations import SpringBootApplication, RestController, GetMapping
+from springbootai.annotations import SpringBootApplication, RestController, GetMapping
 
 
 @SpringBootApplication
@@ -295,7 +295,7 @@ class HelloController:
 
 
 if __name__ == "__main__":
-    from spring.main import SpringApplication
+    from springbootai.main import SpringApplication
     SpringApplication(Application).run()
 ```
 
@@ -320,7 +320,7 @@ database:
 ```
 
 ```python
-from spring.annotations import SpringBootApplication, MapperScan
+from springbootai.annotations import SpringBootApplication, MapperScan
 
 
 @SpringBootApplication(scan_base_packages=["app"])
@@ -375,7 +375,7 @@ pip install "springbootAI[langchain]"
 ```
 
 ```python
-from spring.ai import ChatClient, UserMessage
+from springbootai.ai import ChatClient, UserMessage
 
 
 chat_client = ChatClient.builder().build()
@@ -411,12 +411,12 @@ pip install "springbootAI[web,mysql,dev]"
 
 ```
 # requirements.txt
-springbootAI[web,mysql,redis]==2.3.0
+$12.3.2
 ```
 
 ```
 # 或者用组合 Starter
-springbootAI[cloud]==2.3.0
+$12.3.2
 ```
 
 ### 示例 8：在 pyproject.toml 中使用（自己的项目）
@@ -427,7 +427,7 @@ springbootAI[cloud]==2.3.0
 name = "my-app"
 version = "1.0.0"
 dependencies = [
-    "springbootAI[web,mysql,redis]==2.3.0",
+    "$12.3.2",
 ]
 ```
 
@@ -478,7 +478,7 @@ pip install "springbootAI[web]"
 # 或在 pyproject.toml
 [project]
 dependencies = [
-    "springbootAI[web]==2.3.0",
+    "$12.3.2",
 ]
 ```
 
@@ -532,23 +532,23 @@ pip install "springbootAI[all]"
 pip install "springbootAI[web]"
 
 # ✅ 安全：锁定版本
-pip install "springbootAI[web]==2.3.0"
+pip install "$12.3.2"
 ```
 
 ```
 # requirements.txt
-springbootAI[web,mysql,redis]==2.3.0
+$12.3.2
 ```
 
 ### 3. 开发/生产环境分开
 
 ```
 # requirements.txt（生产）
-springbootAI[web,mysql,redis]==2.3.0
+$12.3.2
 
 # requirements-dev.txt（开发，额外加测试工具）
 -r requirements.txt
-springbootAI[dev]==2.3.0
+$12.3.2
 ```
 
 ```bash
@@ -577,7 +577,7 @@ SpringBootAI 的 AI 模块设计为"可选依赖 + 降级"——不装 `ai` Star
 
 ```python
 # 即使没装 springbootAI[ai]，这段代码也能启动
-from spring.ai import ChatClient
+from springbootai.ai import ChatClient
 
 # 但调用时会提示安装 ai Starter
 chat_client = ChatClient.builder().build()
@@ -646,17 +646,17 @@ A:
 
 **Q3: 装了 `web` Starter 还需要单独装 fastapi 吗？**
 
-A: 不需要。`web` Starter 已经包含 `fastapi==0.115.6`，直接 `pip install "springbootAI[web]"` 即可。
+A: 不需要。`web` Starter 已经包含 `fastapi==0.141.1`，直接 `pip install "springbootAI[web]"` 即可。
 
 **Q4: Starter 里的版本号能改吗？**
 
 A: 可以，但不推荐。Starter 内的版本号经过测试验证，改了可能不兼容。如果必须改（比如安全漏洞），建议：
-1. 在 `requirements.txt` 中覆盖版本：`springbootAI[web]==2.3.0` + `fastapi==0.115.7`
+1. 在 `requirements.txt` 中覆盖版本：`$12.3.2` + `fastapi==0.141.1`
 2. 充分测试后部署
 
 **Q5: 为什么 `web` Starter 里的 fastapi 版本（0.115.6）和核心依赖里的（0.141.1）不一样？**
 
-A: 核心依赖 `dependencies` 段的 `fastapi==0.141.1` 是框架运行所需的最低版本；`web` Starter 里的 `fastapi==0.115.6` 是脚手架工具生成新项目时用的版本。两者不冲突——实际安装时 pip 会取两者中较新的。建议以核心依赖的版本为准。
+A: 核心依赖 `dependencies` 段的 `fastapi==0.141.1` 是框架运行所需的最低版本；`web` Starter 里的 `fastapi==0.141.1` 是脚手架工具生成新项目时用的版本。两者现在保持一致，安装时不会产生版本冲突。建议以核心依赖的版本为准。
 
 **Q6: 装了 `mysql` Starter 后，还需要在代码里做什么？**
 

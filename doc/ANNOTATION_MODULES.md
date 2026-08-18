@@ -1,6 +1,6 @@
 # SpringBootAI 常用注解模块指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -41,7 +41,7 @@
 **步骤一：在类属性上声明校验规则**
 
 ```python
-from spring.validation import BeanValidator, Email, Min, NotBlank, Size
+from springbootai.validation import BeanValidator, Email, Min, NotBlank, Size
 
 
 class CreateUserRequest:
@@ -82,8 +82,8 @@ BeanValidator.validate_or_raise(request)
 **步骤三（可选）：在 Service 中自动校验**
 
 ```python
-from spring.annotations import Service
-from spring.validation import BeanValidate
+from springbootai.annotations import Service
+from springbootai.validation import BeanValidate
 
 
 @Service
@@ -147,7 +147,7 @@ features:
 ```
 
 ```python
-from spring.annotations import ConditionalOnProperty, Service
+from springbootai.annotations import ConditionalOnProperty, Service
 
 
 @ConditionalOnProperty("features.audit", having_value="True")
@@ -160,7 +160,7 @@ class AuditService:
 **场景二：别人有就用别人的，没有才用自己的**
 
 ```python
-from spring.annotations import ConditionalOnMissingBean, Service
+from springbootai.annotations import ConditionalOnMissingBean, Service
 
 
 @ConditionalOnMissingBean(bean_name="mailSender")
@@ -199,8 +199,8 @@ class DefaultMailSender:
 ### 怎么用？
 
 ```python
-from spring.annotations import Cacheable, Service
-from spring.annotations.cache import CacheConfig, CacheEvict, CachePut
+from springbootai.annotations import Cacheable, Service
+from springbootai.annotations.cache import CacheConfig, CacheEvict, CachePut
 
 
 @CacheConfig(cache_names=["users"])  # 默认缓存名
@@ -256,7 +256,7 @@ class UserService:
 ### 怎么用？
 
 ```python
-from spring.csv import CsvIgnore, CsvProperty, csv_file, read_csv, write_csv
+from springbootai.csv import CsvIgnore, CsvProperty, csv_file, read_csv, write_csv
 
 
 @csv_file("users", encoding="utf-8-sig")  # utf-8-sig 编码让 Excel 正确显示中文
@@ -311,7 +311,7 @@ print(rows[0].name)
 ### 怎么用？
 
 ```python
-from spring.orm import (
+from springbootai.orm import (
     Column,
     Entity,
     Id,
@@ -372,11 +372,11 @@ except OptimisticLockError:
 
 | 模块 | 实现位置 | 测试文件 | 用例数 |
 |------|---------|---------|--------|
-| Bean Validation | `spring/validation/` | `tests/test_validation_module.py` | 30 |
-| 条件装配 | `spring/annotations/conditional.py` | `tests/test_conditional_annotations.py` | 45 |
-| 缓存增强 | `spring/annotations/cache.py` | `tests/test_cache_annotations.py` | 25 |
-| CSV 注解 | `spring/csv/` | `tests/test_csv_module.py` | 46 |
-| @Version / @Transient | `spring/orm/` | `tests/test_jpa_version_transient.py` | 20 |
+| Bean Validation | `springbootai/validation/` | `tests/test_validation_module.py` | 30 |
+| 条件装配 | `springbootai/annotations/conditional.py` | `tests/test_conditional_annotations.py` | 45 |
+| 缓存增强 | `springbootai/annotations/cache.py` | `tests/test_cache_annotations.py` | 25 |
+| CSV 注解 | `springbootai/csv/` | `tests/test_csv_module.py` | 46 |
+| @Version / @Transient | `springbootai/orm/` | `tests/test_jpa_version_transient.py` | 20 |
 
 完整测试报告见 [TEST_REPORT.md](TEST_REPORT.md)。
 
@@ -408,7 +408,7 @@ except OptimisticLockError:
 
 ### Validation Size 约束对非字符串/集合类型静默通过 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/validation/constraints.py` Size 约束类
+**位置**：`springbootai/validation/constraints.py` Size 约束类
 
 **现象**：`Size` 约束使用 `len(value)` 检查长度，但若 value 是 `int`/`float`/`None`，`len()` 会抛 `TypeError`，当前实现可能 catch 异常并静默通过，导致无效数据未被拦截。
 

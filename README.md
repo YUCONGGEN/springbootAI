@@ -21,7 +21,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.3.0`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
+当前版本是 `2.3.2`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -48,8 +48,8 @@ Linux/macOS 激活命令是 `source .venv/bin/activate`，其余 Python 命令�
 创建 `demo/Application.py`：
 
 ```python
-from spring.annotations import SpringBootApplication
-from spring.main import run
+from springbootai.annotations import SpringBootApplication
+from springbootai.main import run
 
 
 @SpringBootApplication(scan_base_packages=["demo"])
@@ -64,8 +64,8 @@ if __name__ == "__main__":
 创建 `demo/controller/HelloController.py`：
 
 ```python
-from spring.annotations import GetMapping, RequestMapping, RestController
-from spring.web.swagger import Operation, Tag
+from springbootai.annotations import GetMapping, RequestMapping, RestController
+from springbootai.web.swagger import Operation, Tag
 
 
 @Tag(name="入门接口", description="确认应用已经正常运行")
@@ -126,10 +126,11 @@ curl http://127.0.0.1:8080/api/hello/Alice
 | 📦 MCP | [MCP_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/MCP_MODULE.md) | `pip install springbootAI[mcp]` | MCP Client / Server / Tool / Resource / Prompt / 注解调用 |
 | ✅ 内嵌 PyMyBatis ORM | [ORM_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ORM_MODULE.md) | 随核心包 | Mapper 注解 / XML Mapper / 分页 / SQL 安全 / DDL 自动建表 / Repository 分页查询 |
 | ✅ JPA 实体与仓库 | [JPA_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/JPA_MODULE.md) | 随核心包 | `@Entity` + `@Table` / 字段自动推断 / `@CreateTime` / Repository / DataJpaTest |
+| ✅ Lombok 模型注解 | [LOMBOK_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LOMBOK_MODULE.md) | 随核心包 | `@Data` / `@Get` / `@Set` / `@ToString` 消除模型样板代码 |
 | ✅ Cloud 微服务 | [CLOUD_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CLOUD_MODULE.md) | 随核心包 | 服务注册发现 / 配置刷新 / Feign / Sentinel / Gateway / 分布式事务 |
 | 📦 消息队列 | [MESSAGING_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/MESSAGING_MODULE.md) | `pip install springbootAI[rabbitmq]` | `@RabbitListener` / `RabbitTemplate` RabbitMQ 消息收发 |
 | 📦 Excel 读写 | [EXCEL_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/EXCEL_MODULE.md) | `pip install springbootAI[excel]` | `@ExcelProperty` / `@ExcelIgnore` 注解驱动读写 |
-| 📦 CSV 读写 | [CSV_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CSV_MODULE.md) | `pip install springbootAI[csv]` | `@CsvProperty` / `@CsvIgnore` 注解驱动读写 |
+| ✅ CSV 读写 | [CSV_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CSV_MODULE.md) | 随核心包（Python 标准库 `csv`） | `@CsvProperty` / `@CsvIgnore` 注解驱动读写 |
 | ✅ Swagger 文档 | [SWAGGER_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SWAGGER_MODULE.md) | 随核心包 | `@Tag` / `@Operation` 注解驱动 API 文档 |
 | ✅ 安全 | [SECURITY.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/SECURITY.md) | 随核心包 | JWT 生成校验 / 密码加密 / SQL 注入防护 / 访问控制 |
 | ✅ BeanUtils | [BEAN_UTILS.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEAN_UTILS.md) | 随核心包 | `copy_properties` / `clone` 属性复制工具 |
@@ -201,10 +202,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `spring` 框架 API | 2.3.0 |
-| `spring.orm.pymybatis` | 2.3.0 |
-| `spring.ai` AI 模块 | 2.3.0 |
-| `spring.langchain` LangChain 模块 | 2.3.0 |
+| `springbootai` 框架 API | 2.3.2 |
+| `springbootai.orm.pymybatis` | 2.3.2 |
+| `springbootai.ai` AI 模块 | 2.3.2 |
+| `springbootai.langchain` LangChain 模块 | 2.3.2 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景
@@ -302,7 +303,7 @@ python -m pip install springbootAI
 
 只有准备修改框架源码的贡献者，才需要先 `git clone`，进入仓库后执行 `python -m pip install -e .`。
 
-核心依赖包含 FastAPI、Uvicorn、PyYAML、python-dotenv、DBUtils、PyJWT、cryptography、bcrypt 和 Pydantic。**核心安装已包含内嵌 `spring.orm.pymybatis`，使用 Mapper 模式不需要再安装独立 `pymybatis`。**
+核心依赖包含 FastAPI、Uvicorn、PyYAML、python-dotenv、DBUtils、PyJWT、cryptography、bcrypt 和 Pydantic。**核心安装已包含内嵌 `springbootai.orm.pymybatis`，使用 Mapper 模式不需要再安装独立 `pymybatis`。**
 
 ### 3.3 可选 extras
 
@@ -322,7 +323,6 @@ python -m pip install "springbootAI[mcp]"
 ```bash
 python -m pip install -e ".[mysql]"             # PyMySQL
 python -m pip install -e ".[postgresql]"        # psycopg2-binary
-python -m pip install -e ".[oracle]"            # cx-Oracle
 python -m pip install -e ".[sqlalchemy]"        # SQLAlchemy 模式
 python -m pip install -e ".[redis]"             # Redis 能力
 python -m pip install -e ".[ast]"               # sqlglot AST 校验
@@ -354,8 +354,8 @@ pip install langchain-chroma         # Chroma 向量库
 ### 3.4 验证安装
 
 ```bash
-python -c "import spring; print(spring.__version__)"
-python -c "from spring.orm.pymybatis import __version__; print(__version__)"
+python -c "import springbootai; print(springbootai.__version__)"
+python -c "from springbootai.orm.pymybatis import __version__; print(__version__)"
 ```
 
 ### 3.5 最小应用
@@ -377,8 +377,8 @@ demo/
 创建 `demo/Application.py`：
 
 ```python
-from spring.annotations import SpringBootApplication
-from spring.main import run
+from springbootai.annotations import SpringBootApplication
+from springbootai.main import run
 
 
 @SpringBootApplication(scan_base_packages=["demo"])
@@ -393,7 +393,7 @@ if __name__ == "__main__":
 创建 `demo/controller/HelloController.py`：
 
 ```python
-from spring.annotations import GetMapping, RequestMapping, RestController
+from springbootai.annotations import GetMapping, RequestMapping, RestController
 
 
 @RequestMapping("/api")
@@ -452,7 +452,7 @@ curl http://127.0.0.1:8080/actuator/info
 
 ```python
 # asgi.py
-from spring.main import create_app
+from springbootai.main import create_app
 from demo.Application import Application
 
 app = create_app(Application)
@@ -523,7 +523,7 @@ database:
 ### 4.5 在代码里读配置
 
 ```python
-from spring.config import ConfigLoader
+from springbootai.config import ConfigLoader
 
 loader = ConfigLoader("./myapp/application.yml")
 port = loader.get("server.port", 8080)
@@ -536,7 +536,7 @@ snapshot = loader.get_config()
 ### 4.6 Profile 的真实行为
 
 ```python
-from spring.annotations import Profile, Service
+from springbootai.annotations import Profile, Service
 
 
 @Profile("dev")
@@ -598,7 +598,7 @@ Profile 用于 Bean 过滤和生产安全校验。多环境配置可使用以下
 | scan_base_packages | List[str] | None | 扫描的基础包路径 |
 
 ```python
-from spring.annotations import SpringBootApplication
+from springbootai.annotations import SpringBootApplication
 
 @SpringBootApplication(scan_base_packages=["com.example.service", "com.example.controller"])
 class Application:
@@ -612,7 +612,7 @@ class Application:
 #### @Component / @Service / @Repository
 
 ```python
-from spring.annotations import Component, Service, Repository
+from springbootai.annotations import Component, Service, Repository
 
 @Component
 class EmailUtil:
@@ -633,7 +633,7 @@ class UserRepository:
 #### @Autowired
 
 ```python
-from spring.annotations import Service, Autowired
+from springbootai.annotations import Service, Autowired
 
 @Service
 class UserService:
@@ -656,7 +656,7 @@ class UserService:
 `@RestController` 组合了 `@Controller` 和 `@ResponseBody`，返回值自动序列化为 JSON。
 
 ```python
-from spring.annotations import RestController, GetMapping
+from springbootai.annotations import RestController, GetMapping
 
 @RestController
 class UserController:
@@ -668,7 +668,7 @@ class UserController:
 #### @RequestMapping / @GetMapping / @PostMapping / @PutMapping / @PatchMapping / @DeleteMapping
 
 ```python
-from spring.annotations import RestController, GetMapping, PostMapping, PutMapping, PatchMapping, DeleteMapping
+from springbootai.annotations import RestController, GetMapping, PostMapping, PutMapping, PatchMapping, DeleteMapping
 
 @RestController
 class UserController:
@@ -696,9 +696,9 @@ class UserController:
 #### @ControllerAdvice / @ExceptionHandler
 
 ```python
-from spring.annotations import ControllerAdvice, ExceptionHandler
+from springbootai.annotations import ControllerAdvice, ExceptionHandler
 
-@ControllerAdvice
+@ControllerAdvice()
 class GlobalExceptionHandler:
     @ExceptionHandler(ValueError, TypeError)
     def handle_validation_error(self, e: Exception):
@@ -729,7 +729,7 @@ class GlobalExceptionHandler:
 ### 5.5 配置与属性注解
 
 ```python
-from spring.annotations import Configuration, Bean, Service, Value, ConfigurationProperties, Component
+from springbootai.annotations import Configuration, Bean, Service, Value, ConfigurationProperties, Component
 
 @Configuration
 class AppConfig:
@@ -744,7 +744,7 @@ class AppService:
         self.app_name = value
 
 @Component
-@ConfigurationProperties(prefix="spring.datasource")
+@ConfigurationProperties(prefix="springbootai.datasource")
 class DataSourceProperties:
     def __init__(self):
         self.url = ""
@@ -755,7 +755,7 @@ class DataSourceProperties:
 ### 5.6 日志与生命周期
 
 ```python
-from spring.annotations import Service, Slf4j, PostConstruct, PreDestroy
+from springbootai.annotations import Service, Slf4j, PostConstruct, PreDestroy
 
 @Service
 @Slf4j  # 自动创建 self.logger
@@ -779,8 +779,8 @@ class InitService:
 ### 5.7 应用事件
 
 ```python
-from spring.annotations import ApplicationEvent, Autowired, EventListener, Service
-from spring.event import ApplicationEventPublisher
+from springbootai.annotations import ApplicationEvent, Autowired, EventListener, Service
+from springbootai.event import ApplicationEventPublisher
 
 
 class UserCreatedEvent(ApplicationEvent):
@@ -813,7 +813,7 @@ class UserService:
 **解决什么问题**：限制接口被调用的频率，防止被刷爆。
 
 ```python
-from spring.annotations import RateLimit, Service
+from springbootai.annotations import RateLimit, Service
 
 @Service
 class OrderService:
@@ -833,7 +833,7 @@ class OrderService:
 **解决什么问题**：当某个方法持续失败时，暂时停止调用它（"熔断"），等一段时间后再试。
 
 ```python
-from spring.annotations import CircuitBreaker, Service
+from springbootai.annotations import CircuitBreaker, Service
 
 @Service
 class PaymentService:
@@ -852,7 +852,7 @@ class PaymentService:
 **解决什么问题**：用户手抖点了两次"下单"，保证只有一次生效。
 
 ```python
-from spring.annotations import Idempotent, Service
+from springbootai.annotations import Idempotent, Service
 
 @Service
 class OrderService:
@@ -868,8 +868,8 @@ class OrderService:
 ### 5.9 事务、缓存、任务与异步注解
 
 ```python
-from spring.annotations import Service, Transactional, Cacheable, Retryable, Async, Scheduled
-from spring.retry.retry_annotations import Backoff
+from springbootai.annotations import Service, Transactional, Cacheable, Retryable, Async, Scheduled
+from springbootai.retry.retry_annotations import Backoff
 
 @Service
 class OrderService:
@@ -971,7 +971,7 @@ def create(self, order_id: str, amount: float):
 ### 6.2 构造器注入（推荐方式）
 
 ```python
-from spring.annotations import Autowired, Service
+from springbootai.annotations import Autowired, Service
 
 
 @Service
@@ -996,7 +996,7 @@ class UserService:
 ### 6.4 配置类和 @Bean
 
 ```python
-from spring.annotations import Bean, Configuration
+from springbootai.annotations import Bean, Configuration
 
 
 @Configuration
@@ -1010,7 +1010,7 @@ class AppConfig:
 ### 6.5 生命周期
 
 ```python
-from spring.annotations import Component, PostConstruct, PreDestroy
+from springbootai.annotations import Component, PostConstruct, PreDestroy
 
 
 @Component
@@ -1039,7 +1039,7 @@ class ResourceHolder:
 ### 7.1 类和方法映射
 
 ```python
-from spring.annotations import (
+from springbootai.annotations import (
     DeleteMapping, GetMapping, PatchMapping, PostMapping, PutMapping,
     RequestMapping, RestController,
 )
@@ -1074,7 +1074,7 @@ class UserController:
 ### 7.2 统一返回值
 
 ```python
-from spring.web import Result
+from springbootai.web import Result
 
 return Result.success({"id": 1}, message="创建成功")
 return Result.bad_request("姓名不能为空")
@@ -1084,12 +1084,12 @@ return Result.not_found("用户不存在")
 ### 7.3 全局异常处理 & CORS & 拦截器
 
 ```python
-from spring.annotations import ControllerAdvice, ExceptionHandler, Component
-from spring.web import Result
-from spring.web.interceptor import HandlerInterceptor
+from springbootai.annotations import ControllerAdvice, ExceptionHandler, Component
+from springbootai.web import Result
+from springbootai.web.interceptor import HandlerInterceptor
 
 
-@ControllerAdvice
+@ControllerAdvice()
 class GlobalExceptionHandler:
     @ExceptionHandler(ValueError)
     def handle_value_error(self, error: ValueError):
@@ -1130,7 +1130,7 @@ server:
 ### 9.1 Service 事务
 
 ```python
-from spring.annotations import Autowired, Service, Transactional
+from springbootai.annotations import Autowired, Service, Transactional
 
 
 @Service
@@ -1192,7 +1192,7 @@ jwt:
 ### 10.2 access/refresh token
 
 ```python
-from spring.security.jwt_utils import JwtUtils, jwt_utils
+from springbootai.security.jwt_utils import JwtUtils, jwt_utils
 
 access = jwt_utils.generate_token({"sub": "user-1"})
 refresh = jwt_utils.generate_refresh_token({"sub": "user-1"})
@@ -1205,7 +1205,7 @@ new_access = jwt_utils.refresh_token(refresh)
 ### 10.3 方法权限
 
 ```python
-from spring.annotations import Authenticate, GetMapping, PreAuthorize, RequestMapping, RestController
+from springbootai.annotations import Authenticate, GetMapping, PreAuthorize, RequestMapping, RestController
 
 
 @RestController
@@ -1222,7 +1222,7 @@ class AdminController:
 
 ### 10.4 安全基线
 
-- `SPRING_PROFILES_ACTIVE=production` + `STARTUP_FAIL_FAST=true`
+- `SPRING_PROFILES_ACTIVE=prod` + `STARTUP_FAIL_FAST=true`
 - `JWT_SECRET_KEY` 使用至少 32 字符的随机密钥
 - `CORS_ALLOW_CREDENTIALS=true` 时不能用 `*` 来源
 - SQL 值始终使用 `#{name}` 参数绑定
@@ -1234,7 +1234,7 @@ class AdminController:
 ### 11.1 @Cacheable
 
 ```python
-from spring.annotations import Service, Cacheable
+from springbootai.annotations import Service, Cacheable
 
 @Service
 class UserService:
@@ -1248,8 +1248,8 @@ class UserService:
 ### 11.2 @Retryable
 
 ```python
-from spring.annotations import Retryable
-from spring.retry.retry_annotations import Backoff
+from springbootai.annotations import Retryable
+from springbootai.retry.retry_annotations import Backoff
 
 @Retryable(value=(ConnectionError,), max_retries=3, backoff=Backoff(delay=1000, multiplier=2.0))
 def call_remote(self):
@@ -1261,7 +1261,7 @@ def call_remote(self):
 重试耗尽后可以使用 `@Recover`：
 
 ```python
-from spring.annotations import Recover, Retryable
+from springbootai.annotations import Recover, Retryable
 
 @Retryable(value=(ConnectionError,), max_attempts=3, backoff=200)
 def call_remote(self, key):
@@ -1277,7 +1277,7 @@ def recover_remote(self, error, key):
 ### 11.3 @Async & @Scheduled
 
 ```python
-from spring.annotations import Service, Async, Scheduled
+from springbootai.annotations import Service, Async, Scheduled
 
 @Service
 class EmailService:
@@ -1318,14 +1318,14 @@ class CleanupJob:
 
 > 完整文档：[LANGCHAIN_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGCHAIN_MODULE.md)。安装：`pip install springbootAI[langchain]`。
 >
-> 封装 langchain classic 全套：Chains / Agents(6 种) / Memory / Retrievers / VectorStores / Parsers / Loaders + 30+ 提供商。双向适配器复用 `spring.ai` 的模型 Bean。
+> 封装 langchain classic 全套：Chains / Agents(6 种) / Memory / Retrievers / VectorStores / Parsers / Loaders + 30+ 提供商。双向适配器复用 `springbootai.ai` 的模型 Bean。
 
 **最小示例**（无需 API Key）：
 
 ```python
-from spring.context.registry import BeanRegistry
-from spring.ai.autoconfig import configure_ai
-from spring.langchain.autoconfig import configure_langchain
+from springbootai.context.registry import BeanRegistry
+from springbootai.ai.autoconfig import configure_ai
+from springbootai.langchain.autoconfig import configure_langchain
 
 registry = BeanRegistry()
 configure_ai(registry=registry)
@@ -1377,7 +1377,7 @@ print(chain.run_llm_chain("回答: {q}", q="你好"))
 **推荐构造器注入**：
 
 ```python
-from spring.annotations import Autowired, Service
+from springbootai.annotations import Autowired, Service
 
 @Service
 class UserService:
@@ -1413,7 +1413,7 @@ Python：
 ```python
 from dataclasses import dataclass
 from typing import Optional
-from spring.orm import Mapper, Param, Select
+from springbootai.orm import Mapper, Param, Select
 
 
 @dataclass
@@ -1434,7 +1434,7 @@ class UserMapper:
 | Java | SpringBootAI | 说明 |
 |---|---|---|
 | `@EnableDiscoveryClient` + Nacos | `@EnableDiscoveryClient` + `discovery` 配置 | 需部署 Nacos 并做集成测试 |
-| `@FeignClient` | 同名 + `spring.cloud.feign` | 不兼容 Java interface proxy |
+| `@FeignClient` | 同名 + `springbootai.cloud.feign` | 不兼容 Java interface proxy |
 | `@SentinelResource` | 同名 | 已内嵌引擎，无需 Dashboard |
 | JPA `hibernate.ddl-auto` | `@entity` + `ddl-auto` 配置 | 支持 create/update/validate/create-drop |
 
@@ -1502,7 +1502,7 @@ database:
 
 **生产启动**：
 ```bash
-export SPRING_PROFILES_ACTIVE=production
+export SPRING_PROFILES_ACTIVE=prod
 export JWT_SECRET_KEY="使用密钥管理系统注入至少32字符的随机值"
 export STARTUP_FAIL_FAST=true
 uvicorn myapp.asgi:app --host 0.0.0.0 --port 8080 --workers 4
@@ -1610,7 +1610,7 @@ python -m pytest -q tests
 
 ### 17.5 生产启动拒绝 JWT
 
-设置 `SPRING_PROFILES_ACTIVE=production`、`STARTUP_FAIL_FAST=true`、`JWT_SECRET_KEY=<至少32字符随机密钥>`。
+设置 `SPRING_PROFILES_ACTIVE=prod`、`STARTUP_FAIL_FAST=true`、`JWT_SECRET_KEY=<至少32字符随机密钥>`。
 
 ### 17.6 Nacos / PATCH / 配置同步排错
 
@@ -1799,7 +1799,7 @@ pip install springbootAI[langgraph]
 pip install -r requirements-langgraph.txt
 ```
 
-完整的小白入门、配置说明、`spring.ai` 模型复用、持久化 checkpointer、异步调用和测试命令请阅读 [LANGGRAPH_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGGRAPH_MODULE.md)。可选依赖已包含官方 SQLite checkpointer，适合本地单进程恢复测试；多 worker 生产环境必须注入共享数据库后端。无 LangGraph 依赖时保持 `spring.langgraph.enabled=false`，不会影响其他模块。
+完整的小白入门、配置说明、`springbootai.ai` 模型复用、持久化 checkpointer、异步调用和测试命令请阅读 [LANGGRAPH_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/LANGGRAPH_MODULE.md)。可选依赖已包含官方 SQLite checkpointer，适合本地单进程恢复测试；多 worker 生产环境必须注入共享数据库后端。无 LangGraph 依赖时保持 `springbootai.langgraph.enabled=false`，不会影响其他模块。
 
 ## MCP 客户端与服务端
 

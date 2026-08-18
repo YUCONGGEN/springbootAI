@@ -176,8 +176,8 @@ my-first-app/
 
 ```python
 # 导入框架提供的"启动应用"注解和运行函数
-from spring.annotations import SpringBootApplication
-from spring.main import run
+from springbootai.annotations import SpringBootApplication
+from springbootai.main import run
 
 
 # @SpringBootApplication 告诉框架："这是一个 SpringBootAI 应用"
@@ -197,8 +197,8 @@ if __name__ == "__main__":
 
 ```python
 # 导入需要的注解
-from spring.annotations import GetMapping, RequestMapping, RestController
-from spring.web.swagger import Operation, Tag
+from springbootai.annotations import GetMapping, RequestMapping, RestController
+from springbootai.web.swagger import Operation, Tag
 
 
 # @Tag 在 Swagger 文档页面上给这组接口起个名字
@@ -295,7 +295,7 @@ curl http://127.0.0.1:8080/actuator/health/liveness
 
 # ---------- 以下是完整可运行代码，可直接复制粘贴 ----------
 
-from spring.annotations import Autowired, GetMapping, RequestMapping, RestController, Service
+from springbootai.annotations import Autowired, GetMapping, RequestMapping, RestController, Service
 
 
 # Service = 后厨大厨，负责"怎么做"
@@ -429,7 +429,7 @@ python -m demo.Application
 
 ```python
 # 文件：asgi.py（放在项目根目录）
-from spring.main import create_app
+from springbootai.main import create_app
 from demo.Application import Application
 
 # create_app 生成一个 ASGI 应用对象，交给 uvicorn 管理
@@ -455,7 +455,7 @@ uvicorn asgi:app --host 0.0.0.0 --port 8080 --workers 4
 
 | 排名 | 你看到的错误 | 最可能的原因 | 怎么解决 |
 |---|---|---|---|
-| **1** | `ModuleNotFoundError: No module named 'spring'` | 虚拟环境没激活，或者安装没成功 | 先激活 `.venv`，再 `pip install springbootAI`，最后用 `python -c "import spring; print(spring.__version__)"` 验证 |
+| **1** | `ModuleNotFoundError: No module named 'springbootai'` | 虚拟环境没激活，或者安装没成功 | 先激活 `.venv`，再 `pip install springbootAI`，最后用 `python -c "import springbootai; print(springbootai.__version__)"` 验证 |
 | **2** | Controller 写好了但 `/docs` 里看不到 | 包目录缺 `__init__.py`，或 `scan_base_packages` 没包含那个包 | 检查每个目录是否有 `__init__.py`（可以为空但必须有），确认 `scan_base_packages` 里写了正确的包名 |
 | **3** | `@Transactional` 或 `@Cacheable` 不生效 | 对象是手动 `ClassName()` 创建的，不是容器给的 | 改用 `@Autowired` 构造器注入获取对象，不要自己 `new` |
 | **4** | `Address already in use`（端口被占用） | 8080 端口被上次没关的进程占着 | 改端口：`$env:SERVER_PORT='9000'`；或者用 `netstat -ano | findstr 8080` 找到占用进程并关掉 |
@@ -497,7 +497,7 @@ uvicorn asgi:app --host 0.0.0.0 --port 8080 --workers 4
     │
     └─→ 5. 去社区/同事那里求助，记得带上以下信息：
            ① Python 版本：python --version
-           ② 框架版本：python -c "import spring; print(spring.__version__)"
+           ② 框架版本：python -c "import springbootai; print(springbootai.__version__)"
            ③ 完整的错误信息（从 Traceback 第一个字到最后一行）
            ④ 你执行了什么命令
            ⑤ demo/ 下面有什么文件

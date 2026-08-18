@@ -1,4 +1,4 @@
-from spring.annotations.core import Configuration, Bean, Profile, Primary
+from springbootai.annotations.core import Configuration, Bean, Profile, Primary
 
 
 @Configuration

@@ -18,7 +18,7 @@ python -m pip install -r requirements-ai.txt
 python -m pip install -r requirements-langgraph.txt
 python -m pip install -r requirements-mcp.txt
 
-python -m pytest tests tests_runtime -q `
+python -m pytest tests tests/runtime -q `
   --cov=spring --cov-report=term --cov-fail-under=60
 ```
 
@@ -31,7 +31,7 @@ docker compose -f docker-compose.integration.yml up -d --build --wait
 $env:RUN_INTEGRATION_TESTS = "1"
 $env:RUN_SEATA_INTEGRATION_TESTS = "1"
 $env:SEATA_BRIDGE_TOKEN = "springpy-integration-secret"
-python -m pytest tests_integration -m integration -v
+python -m pytest tests/integration -m integration -v
 ```
 
 预期：MySQL、Redis、RabbitMQ、Nacos 和 Seata TCC 测试全部通过。测试完成后可执行：
@@ -73,10 +73,10 @@ python -m twine check dist\*
 python -m zipfile -l dist\springbootai-2.2.0-py3-none-any.whl
 ```
 
-确认 wheel 包含 `spring/langchain`、`spring/langgraph` 和 `spring/mcp`，并从新虚拟环境安装 wheel 后执行：
+确认 wheel 包含 `springbootai/langchain`、`springbootai/langgraph` 和 `springbootai/mcp`，并从新虚拟环境安装 wheel 后执行：
 
 ```powershell
-python -c "import spring, spring.ai, spring.langchain, spring.langgraph, spring.mcp; print(spring.__version__)"
+python -c "import springbootai, springbootai.ai, springbootai.langchain, springbootai.langgraph, springbootai.mcp; print(springbootai.__version__)"
 ```
 
 ## 6. GitHub 与 PyPI 发布顺序

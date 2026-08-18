@@ -13,7 +13,7 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.orm import (
+from springbootai.orm import (
     entity, Id, Version, Transient, Column, version_column, transient_field,
     DdlAutoManager, DdlAutoMode,
     OptimisticLockExecutor, OptimisticLockError,
@@ -172,7 +172,7 @@ class TestDdlParsing:
             id = Id()
             name = Column()
             def __init__(self, id=None, name=None): self.id = id; self.name = name
-        from spring.orm.ddl_auto import _find_version_column
+        from springbootai.orm.ddl_auto import _find_version_column
         assert _find_version_column(NoVer) is None
 
 

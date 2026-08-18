@@ -7,7 +7,7 @@ from typing import TypedDict
 
 import pytest
 
-from spring.langchain import LangChainCall, LangChainClient, bind_langchain_client
+from springbootai.langchain import LangChainCall, LangChainClient, bind_langchain_client
 
 
 def _run(coroutine):
@@ -116,7 +116,7 @@ def test_langchain_annotation_rejects_oversized_or_invalid_summary_input():
 
 pytest.importorskip("langgraph")
 
-from spring.langgraph import (  # noqa: E402
+from springbootai.langgraph import (  # noqa: E402
     GraphEdge,
     GraphInvoke,
     GraphNode,

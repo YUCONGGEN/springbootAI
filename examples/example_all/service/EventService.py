@@ -4,7 +4,7 @@ Event/Listener 事件发布订阅服务
 测试: @EventListener + ApplicationEvent + ApplicationEventPublisher
 """
 from typing import List
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     Service, EventListener, ApplicationEvent, Slf4j, PostConstruct,
 )
 

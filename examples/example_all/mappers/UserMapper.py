@@ -2,7 +2,7 @@
 用户 Mapper 接口 — 测试 PyMyBatis ORM 所有注解（MySQL 版）
 @Mapper, @Select, @Insert, @Update, @Delete
 """
-from spring.orm import (
+from springbootai.orm import (
     Mapper, Select, Insert, Update, Delete,
 )
 

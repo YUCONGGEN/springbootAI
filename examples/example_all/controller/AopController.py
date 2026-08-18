@@ -3,12 +3,12 @@ AOP 注解控制器 — 测试企业级 AOP 注解
 @RateLimit, @CircuitBreaker, @Idempotent, @AuditLog,
 @FeatureToggle, @Lock, @Metrics, @Synchronized, @Validate, @Trace
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping,
     Autowired, Slf4j,
 )
-from spring.web.result import Result
-from spring.aop.comprehensive_aop import (
+from springbootai.web.result import Result
+from springbootai.aop.comprehensive_aop import (
     get_metrics, enable_feature, disable_feature, reset_circuit_breaker,
 )
 from example_all.service.AopService import AopService

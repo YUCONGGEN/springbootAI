@@ -11,7 +11,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.annotations import (
+from springbootai.annotations import (
     Component,
     Conditional,
     ConditionalOnBean,
@@ -19,9 +19,9 @@ from spring.annotations import (
     ConditionalOnMissingBean,
     ConditionalOnProperty,
 )
-from spring.context.application_context import ApplicationContext
-from spring.context.bean_definition import BeanDefinition
-from spring.context.bean_factory import BeanFactory
+from springbootai.context.application_context import ApplicationContext
+from springbootai.context.bean_definition import BeanDefinition
+from springbootai.context.bean_factory import BeanFactory
 
 
 class StaticConfigLoader:
@@ -46,7 +46,7 @@ def make_components(count):
             {"__module__": __name__},
         )
         component = Component()(component)
-        component = ConditionalOnClass(name="spring.context.bean_factory.BeanFactory")(component)
+        component = ConditionalOnClass(name="springbootai.context.bean_factory.BeanFactory")(component)
         component = ConditionalOnMissingBean(bean_name=f"missing-{index}")(component)
         component = ConditionalOnBean(bean_name="assemblyAnchor")(component)
         expected_value = "disabled" if index % 5 == 0 else "enabled"

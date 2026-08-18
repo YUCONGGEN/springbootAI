@@ -18,7 +18,7 @@ server:
 spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:default}
-  # AI 模块配置（对齐 Spring AI 的 spring.ai.*）
+  # AI 模块配置（对齐 Spring AI 的 springbootai.ai.*）
   ai:
     default-provider: ${AI_PROVIDER:openai}   # openai | ollama
     max-retries: ${AI_MAX_RETRIES:3}
@@ -50,7 +50,7 @@ spring:
   # 详见 doc/LANGCHAIN_MODULE.md
   langchain:
     enabled: ${LC_ENABLED:true}
-    # default-llm: auto=复用 spring.ai 的 aiChatModel；或指定 partner 名（openai/anthropic/ollama/...）
+    # default-llm: auto=复用 springbootai.ai 的 aiChatModel；或指定 partner 名（openai/anthropic/ollama/...）
     default-llm: ${LC_DEFAULT_LLM:auto}
     chains:
       default-verbose: ${LC_CHAIN_VERBOSE:false}
@@ -73,7 +73,7 @@ spring:
       max-messages: ${LC_MEMORY_MAX:20}
     # 各 partner 提供商配置：按 name 启用并配 key/model。
     # 未列出的 partner 缺省不启用；列出但依赖未安装的会自动跳过并告警。
-    # 支持的全部 partner 见 spring.langchain.partners.PARTNER_REGISTRY
+    # 支持的全部 partner 见 springbootai.langchain.partners.PARTNER_REGISTRY
     partners:
       openai:
         api-key: ${OPENAI_API_KEY:}

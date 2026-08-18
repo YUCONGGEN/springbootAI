@@ -2,9 +2,9 @@
 消息队列控制器 — 测试 RabbitMQ 消息收发
 - @RabbitListener, RabbitTemplate
 """
-from spring.annotations.core import RestController, RequestMapping, GetMapping, PostMapping, Autowired, Slf4j
-from spring.annotations.messaging import RabbitListener
-from spring.web.result import Result
+from springbootai.annotations.core import RestController, RequestMapping, GetMapping, PostMapping, Autowired, Slf4j
+from springbootai.annotations.messaging import RabbitListener
+from springbootai.web.result import Result
 from example_all.service.MessagingService import MessagingService
 
 

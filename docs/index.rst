@@ -29,118 +29,154 @@ docstring 生成，覆盖 ``spring`` 包下的所有公开 API。
 核心 IoC / AOP / 注解
 ---------------------
 
-.. automodule:: spring.annotations
+.. automodule:: springbootai.annotations
    :members:
 
-.. automodule:: spring.context.application_context
+.. automodule:: springbootai.context.application_context
    :members:
 
-.. automodule:: spring.context.bean_factory
+.. automodule:: springbootai.context.bean_factory
    :members:
 
-.. automodule:: spring.aop.aspect
+.. automodule:: springbootai.aop.aspect
    :members:
 
 Web MVC / Actuator / CSRF
 -------------------------
 
-.. automodule:: spring.web.actuator
+.. automodule:: springbootai.web.actuator
    :members:
 
-.. automodule:: spring.web.csrf
+.. automodule:: springbootai.web.csrf
    :members:
 
-.. automodule:: spring.web.interceptor
+.. automodule:: springbootai.web.interceptor
    :members:
 
 ORM / MyBatis / 数据库迁移
 -------------------------
 
-.. automodule:: spring.orm.database
+.. automodule:: springbootai.orm.database
    :members:
 
-.. automodule:: spring.orm.ddl_auto
+.. automodule:: springbootai.orm.ddl_auto
    :members:
 
-.. automodule:: spring.orm.migration
+.. automodule:: springbootai.orm.migration
    :members:
 
-.. automodule:: spring.orm.pymybatis.core.sql_session
+.. automodule:: springbootai.orm.pymybatis.core.sql_session
    :members:
 
 安全 / JWT / OAuth2
 -------------------
 
-.. automodule:: spring.security.jwt_utils
+.. automodule:: springbootai.security.jwt_utils
    :members:
 
-.. automodule:: spring.security.oauth2
+.. automodule:: springbootai.security.oauth2
    :members:
 
-.. automodule:: spring.security.security_aop
+.. automodule:: springbootai.security.security_aop
    :members:
 
 消息队列 / Kafka / RabbitMQ
 ---------------------------
 
-.. automodule:: spring.messaging.kafka
+.. automodule:: springbootai.messaging.kafka
    :members:
 
-.. automodule:: spring.messaging.rabbitmq
+.. automodule:: springbootai.messaging.rabbitmq
    :members:
 
 Cloud / Seata / Gateway
 -----------------------
 
-.. automodule:: spring.cloud.seata
+.. automodule:: springbootai.cloud.seata
    :members:
 
-.. automodule:: spring.cloud.seata_at_proxy
+.. automodule:: springbootai.cloud.seata_at_proxy
    :members:
 
-.. automodule:: spring.cloud.gateway
+.. automodule:: springbootai.cloud.gateway
    :members:
 
-.. automodule:: spring.cloud.feign
+.. automodule:: springbootai.cloud.feign
    :members:
 
-.. automodule:: spring.cloud.discovery
+.. automodule:: springbootai.cloud.discovery
    :members:
 
 AI / LangChain / LangGraph / MCP
 --------------------------------
 
-.. automodule:: spring.ai.core
+.. automodule:: springbootai.ai.core
    :members:
 
-.. automodule:: spring.ai.annotations
+.. automodule:: springbootai.ai.annotations
    :members:
 
-.. automodule:: spring.langchain.core
+.. automodule:: springbootai.langchain.core
    :members:
 
-.. automodule:: spring.langgraph.runtime
+.. automodule:: springbootai.langgraph.runtime
    :members:
 
-.. automodule:: spring.mcp.client
+.. automodule:: springbootai.mcp.client
    :members:
 
-.. automodule:: spring.mcp.server
+.. automodule:: springbootai.mcp.server
    :members:
 
 DevTools / CLI / 配置
 ---------------------
 
-.. automodule:: spring.devtools
+.. automodule:: springbootai.devtools
    :members:
 
-.. automodule:: spring.cli.scaffold
+.. automodule:: springbootai.cli.scaffold
    :members:
 
-.. automodule:: spring.config.binding
+.. automodule:: springbootai.config.binding
    :members:
 
-.. automodule:: spring.config.config_loader
+.. automodule:: springbootai.config.config_loader
+   :members:
+
+批处理 / 数据 / 校验 / 文件处理
+--------------------------------
+
+.. automodule:: springbootai.batch
+   :members:
+
+.. automodule:: springbootai.data.repository
+   :members:
+
+.. automodule:: springbootai.data.rest
+   :members:
+
+.. automodule:: springbootai.validation.validator
+   :members:
+
+.. automodule:: springbootai.csv.easy_csv
+   :members:
+
+.. automodule:: springbootai.excel.easy_excel
+   :members:
+
+基础设施 / 国际化 / WebSocket / 事务
+-------------------------------------
+
+.. automodule:: springbootai.i18n.middleware
+   :members:
+
+.. automodule:: springbootai.websocket.router
+   :members:
+
+.. automodule:: springbootai.tx.events
+   :members:
+
+.. automodule:: springbootai.datasource.dynamic
    :members:
 
 索引

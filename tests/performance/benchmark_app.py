@@ -9,8 +9,8 @@ import threading
 import time
 from typing import TypedDict
 
-from spring import create_app
-from spring.annotations import (
+from springbootai import create_app
+from springbootai.annotations import (
     ApplicationEvent,
     Autowired,
     CacheEvict,
@@ -31,17 +31,17 @@ from spring.annotations import (
     SpringBootApplication,
     Validated,
 )
-from spring.cloud.gateway import GatewayRouter
-from spring.ai import ChatClient, FakeChatModel
-from spring.config.binding import (
+from springbootai.cloud.gateway import GatewayRouter
+from springbootai.ai import ChatClient, FakeChatModel
+from springbootai.config.binding import (
     ConfigurationPropertiesBinder,
     NestedConfigurationProperties,
     validate_configuration_properties,
 )
-from spring.context.application_context import ApplicationContext
-from spring.annotations.conditional import all_conditions_match
-from spring.csv import CsvIgnore, CsvProperty, EasyCsv, csv_file
-from spring.data import (
+from springbootai.context.application_context import ApplicationContext
+from springbootai.annotations.conditional import all_conditions_match
+from springbootai.csv import CsvIgnore, CsvProperty, EasyCsv, csv_file
+from springbootai.data import (
     DataRepository,
     Order,
     Pageable,
@@ -49,14 +49,14 @@ from spring.data import (
     Sort,
     Specifications,
 )
-from spring.datasource import DS, Master, Slave, DynamicRoutingDataSource
-from spring.datasource.context import DataSourceContextHolder
-from spring.i18n import Locale, StaticMessageSource
-from spring.langchain import LangChainCall, LangChainClient, bind_langchain_client
-from spring.langchain.adapters import to_langchain_model
-from spring.langchain.chains import ChainService
-from spring.langgraph import GraphEdge, GraphInvoke, GraphNode, LangGraph
-from spring.mcp import (
+from springbootai.datasource import DS, Master, Slave, DynamicRoutingDataSource
+from springbootai.datasource.context import DataSourceContextHolder
+from springbootai.i18n import Locale, StaticMessageSource
+from springbootai.langchain import LangChainCall, LangChainClient, bind_langchain_client
+from springbootai.langchain.adapters import to_langchain_model
+from springbootai.langchain.chains import ChainService
+from springbootai.langgraph import GraphEdge, GraphInvoke, GraphNode, LangGraph
+from springbootai.mcp import (
     MCPCall,
     MCPClient,
     MCPClientConnection,
@@ -67,15 +67,15 @@ from spring.mcp import (
     bind_mcp_client,
     build_mcp_server,
 )
-from spring.orm import Column, Id, OptimisticLockExecutor, Transient, Version, entity
-from spring.tx import (
+from springbootai.orm import Column, Id, OptimisticLockExecutor, Transient, Version, entity
+from springbootai.tx import (
     TransactionPhase,
     TransactionSynchronizationManager,
     TransactionalEventListener,
     transaction_sync_scope,
 )
-from spring.validation import BeanValidate, Email, Min, NotBlank, Size
-from spring.websocket import (
+from springbootai.validation import BeanValidate, Email, Min, NotBlank, Size
+from springbootai.websocket import (
     MessageEndpoint,
     MessageMapping,
     SendTo,
@@ -84,7 +84,7 @@ from spring.websocket import (
     SubscribeMapping,
     WebSocketRouter,
 )
-from spring.web.swagger import (
+from springbootai.web.swagger import (
     ApiResponse,
     Operation,
     Parameter,
@@ -372,7 +372,7 @@ class BenchmarkFeatureService:
 @ConditionalOnProperty("benchmark.features.conditional", having_value="enabled")
 @ConditionalOnBean(bean_name="application_event_publisher")
 @ConditionalOnMissingBean(bean_name="benchmark_disabled_marker")
-@ConditionalOnClass(name="spring.context.application_context.ApplicationContext")
+@ConditionalOnClass(name="springbootai.context.application_context.ApplicationContext")
 @Service
 class ConditionalBenchmarkService:
     def __init__(self):
@@ -867,7 +867,7 @@ benchmark_context = app.state.spring_application.application_context
 
 # 性能基准测试禁用 Actuator 鉴权（性能测试不验证安全行为，专注于框架路径执行）
 # 生产环境默认 enabled=true，由专门的安全测试覆盖鉴权行为。
-import spring.web.actuator as _actuator_mod
+import springbootai.web.actuator as _actuator_mod
 _actuator_mod._actuator_secured = False
 
 gateway = GatewayRouter(

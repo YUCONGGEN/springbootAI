@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from spring.cloud.config_center import (
+from springbootai.cloud.config_center import (
     ConfigCenterClient,
     ConfigCenterError,
     config_client,

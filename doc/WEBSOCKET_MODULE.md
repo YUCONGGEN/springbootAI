@@ -1,6 +1,6 @@
 # WebSocket —— 像微信一样实时通信
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -18,7 +18,7 @@
 方式一：简单回声（JSR-356 风格）
 
 ```python
-from spring.websocket import ServerEndpoint
+from springbootai.websocket import ServerEndpoint
 
 @ServerEndpoint("/ws/echo")
 class EchoEndpoint:
@@ -38,7 +38,7 @@ class EchoEndpoint:
 方式二：聊天室（Spring STOMP 风格）
 
 ```python
-from spring.websocket import ServerEndpoint, MessageMapping, SendTo, SendToUser
+from springbootai.websocket import ServerEndpoint, MessageMapping, SendTo, SendToUser
 
 @ServerEndpoint("/ws/chat")
 class ChatEndpoint:
@@ -58,7 +58,7 @@ class ChatEndpoint:
 安装到 FastAPI：
 
 ```python
-from spring.websocket import WebSocketRouter, discover_server_endpoints
+from springbootai.websocket import WebSocketRouter, discover_server_endpoints
 
 router = WebSocketRouter()
 for endpoint_cls in discover_server_endpoints():   # 自动发现所有 @ServerEndpoint
@@ -94,7 +94,7 @@ HTTP 是"你问我才答"，每次请求建立新连接。WebSocket 是"建立�
 
 ### Session 注册表广播无速率限制 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/websocket/session.py` broadcast() / send_to_user()
+**位置**：`springbootai/websocket/session.py` broadcast() / send_to_user()
 
 **现象**：`broadcast()` 和 `send_to_user()` 遍历所有 session 同步发送消息，无速率限制。恶意客户端高频触发广播可导致事件循环阻塞。
 
@@ -102,7 +102,7 @@ HTTP 是"你问我才答"，每次请求建立新连接。WebSocket 是"建立�
 
 ### Session close() 非线程安全 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/websocket/session.py` close() / mark_closed()
+**位置**：`springbootai/websocket/session.py` close() / mark_closed()
 
 **现象**：`close()` 和 `mark_closed()` 修改 `_closed` 标志时无锁保护，并发调用可能导致状态不一致。
 

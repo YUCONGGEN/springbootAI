@@ -2,7 +2,7 @@
 Cloud注解测试控制器
 暴露Cloud注解测试的API端点
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController,
     GetMapping,
     PostMapping,
@@ -10,7 +10,7 @@ from spring.annotations.core import (
     Autowired,
     Slf4j,
 )
-from spring.aop.cloud_aop import (
+from springbootai.aop.cloud_aop import (
     get_sentinel_stats,
     get_transaction_context,
     get_refresh_scope_cache,

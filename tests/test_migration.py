@@ -24,8 +24,8 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.orm.migration import MigrationManager, MigrationRecord, MigrationError
-from spring.orm.pymybatis.pool import create_connection_pool
+from springbootai.orm.migration import MigrationManager, MigrationRecord, MigrationError
+from springbootai.orm.pymybatis.pool import create_connection_pool
 
 
 # ==================== 辅助夹具 ====================

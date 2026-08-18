@@ -1,6 +1,6 @@
 # SpringBootAI 消息队列模块指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -54,7 +54,7 @@
 **步骤一：写一个 `@Service`，方法上贴 `@RabbitListener`**
 
 ```python
-from spring.annotations import RabbitListener, Service
+from springbootai.annotations import RabbitListener, Service
 
 
 @Service
@@ -141,7 +141,7 @@ class OrderConsumer:
 **场景一：直接发到队列（最常用）**
 
 ```python
-from spring.annotations.messaging import rabbit_template
+from springbootai.annotations.messaging import rabbit_template
 
 # 发送一个 dict，框架会自动 json.dumps 序列化
 rabbit_template.send("order.create", {"order_id": 1, "amount": 99.9})
@@ -153,7 +153,7 @@ rabbit_template.send("notification", "订单已创建")
 **场景二：通过交换机 + 路由键发送**
 
 ```python
-from spring.annotations.messaging import rabbit_template
+from springbootai.annotations.messaging import rabbit_template
 
 # 走 orders 交换机，按 order.created 路由键投递
 rabbit_template.send(
@@ -168,9 +168,9 @@ rabbit_template.send(
 **场景三：在 Controller / Service 中发送**
 
 ```python
-from spring.annotations import RestController, PostMapping, Service
-from spring.annotations.messaging import rabbit_template
-from spring.web.result import Result
+from springbootai.annotations import RestController, PostMapping, Service
+from springbootai.annotations.messaging import rabbit_template
+from springbootai.web.result import Result
 
 
 @RestController
@@ -203,7 +203,7 @@ class OrderService:
 
 | ❌ 错误做法 | ✅ 正确做法 |
 |------------|------------|
-| 自己 `RabbitTemplate()` new 实例 | 直接用全局单例 `from spring.annotations.messaging import rabbit_template`，new 出来的也能用但没必要 |
+| 自己 `RabbitTemplate()` new 实例 | 直接用全局单例 `from springbootai.annotations.messaging import rabbit_template`，new 出来的也能用但没必要 |
 | 发送前忘了开 `rabbitmq.enabled` | 发送依赖底层连接，`enabled=false` 时连接没建立，`send()` 会抛连接异常 |
 | 发送不可序列化对象（如自定义类实例） | `body` 只支持 `dict`/`list`/`str` 等可序列化类型。自定义对象请先转成 `dict` |
 | 以为 `queue` 参数在走交换机时没用 | 走交换机时 `queue` 主要用于默认 `routing_key`。建议同时明确 `routing_key`，避免歧义 |
@@ -233,7 +233,7 @@ class OrderService:
 框架启动流程中，Bean 初始化阶段会扫描每个 Bean 的方法：
 
 ```python
-# spring/context/bean_factory.py（简化示意）
+# springbootai/context/bean_factory.py（简化示意）
 def _register_rabbit_listeners(self, instance):
     # 前置检查：rabbitmq.enabled 必须为 true 且连接已建立
     if not config.get_value('rabbitmq.enabled', False):
@@ -254,7 +254,7 @@ def _register_rabbit_listeners(self, instance):
 所有 Bean 初始化完成后，`main.py` 会在一个**守护线程**里启动消费循环：
 
 ```python
-# spring/main.py（简化示意）
+# springbootai/main.py（简化示意）
 if config.get('rabbitmq', {}).get('enabled', False):
     rabbitmq_client.start_consuming_background()   # 守护线程，主进程退出时自动结束
 ```
@@ -273,7 +273,7 @@ pip install pika
 
 ### application.yml 配置
 
-> ⚠️ 配置项在**顶层 `rabbitmq:`** 下（不是 `spring.rabbitmq:`），且必须显式设置 `enabled: true` 才会启用。
+> ⚠️ 配置项在**顶层 `rabbitmq:`** 下（不是 `springbootai.rabbitmq:`），且必须显式设置 `enabled: true` 才会启用。
 
 ```yaml
 rabbitmq:
@@ -311,7 +311,7 @@ $env:RABBITMQ_PASSWORD = "secret"
 
 ### 是什么？
 
-`spring/messaging/rabbitmq.py` 中的 `RabbitMQClient` 是 RabbitMQ 连接的底层管理者，采用**单例模式**。全局实例 `rabbitmq_client` 在模块加载时创建，`@RabbitListener` 和 `RabbitTemplate` 都基于它工作。
+`springbootai/messaging/rabbitmq.py` 中的 `RabbitMQClient` 是 RabbitMQ 连接的底层管理者，采用**单例模式**。全局实例 `rabbitmq_client` 在模块加载时创建，`@RabbitListener` 和 `RabbitTemplate` 都基于它工作。
 
 ### 核心能力速查表
 
@@ -361,13 +361,13 @@ $env:RABBITMQ_PASSWORD = "secret"
 
 | 模块 | 实现位置 | 说明 |
 |------|---------|------|
-| `@RabbitListener` 注解 | `spring/annotations/messaging.py` | 监听注解定义 + 注册函数 + 全局 `rabbit_template` |
-| `RabbitTemplate` | `spring/annotations/messaging.py` | 消息发送模板（全局单例 `rabbit_template`） |
-| `register_rabbit_listener` | `spring/annotations/messaging.py` | 监听器注册（框架内部调用） |
-| `RabbitMQClient` | `spring/messaging/rabbitmq.py` | 底层连接管理单例 + `init_rabbitmq` |
-| 注解导出 | `spring/annotations/__init__.py` | `RabbitListener` / `RabbitTemplate`（pika 缺失时为 `None`） |
-| Bean 注册监听器 | `spring/context/bean_factory.py` | `_register_rabbit_listeners` 扫描并绑定 |
-| 启动初始化 | `spring/main.py` | `init_rabbitmq` + `start_consuming_background` |
+| `@RabbitListener` 注解 | `springbootai/annotations/messaging.py` | 监听注解定义 + 注册函数 + 全局 `rabbit_template` |
+| `RabbitTemplate` | `springbootai/annotations/messaging.py` | 消息发送模板（全局单例 `rabbit_template`） |
+| `register_rabbit_listener` | `springbootai/annotations/messaging.py` | 监听器注册（框架内部调用） |
+| `RabbitMQClient` | `springbootai/messaging/rabbitmq.py` | 底层连接管理单例 + `init_rabbitmq` |
+| 注解导出 | `springbootai/annotations/__init__.py` | `RabbitListener` / `RabbitTemplate`（pika 缺失时为 `None`） |
+| Bean 注册监听器 | `springbootai/context/bean_factory.py` | `_register_rabbit_listeners` 扫描并绑定 |
+| 启动初始化 | `springbootai/main.py` | `init_rabbitmq` + `start_consuming_background` |
 | 示例代码 | `examples/example_all/service/MessagingService.py`、`examples/example_all/controller/MessagingController.py` | 完整收发示例 |
 
 | 测试 | 测试文件 | 覆盖内容 |
@@ -382,7 +382,7 @@ $env:RABBITMQ_PASSWORD = "secret"
 
 ### Q1: pika 没装会影响框架启动吗？
 
-不会。`spring/annotations/__init__.py` 用 `try/except ImportError` 包裹了消息注解的导入，pika 缺失时 `RabbitListener` 和 `RabbitTemplate` 会被设为 `None`，框架其他功能照常启动。只有当你真正使用消息功能时才会报错。
+不会。`springbootai/annotations/__init__.py` 用 `try/except ImportError` 包裹了消息注解的导入，pika 缺失时 `RabbitListener` 和 `RabbitTemplate` 会被设为 `None`，框架其他功能照常启动。只有当你真正使用消息功能时才会报错。
 
 ### Q2: 为什么我的 `@RabbitListener` 方法收不到消息？
 
@@ -403,9 +403,9 @@ $env:RABBITMQ_PASSWORD = "secret"
 - `auto_ack=False`（默认）：方法抛异常时，框架会 `basic_nack` 并把消息**重新入队**，稍后会再次投递。适合需要可靠消费的场景。
 - `auto_ack=True`：消息一出队就确认，方法抛异常消息就丢了。仅适合允许丢失的场景。
 
-### Q5: 为什么配置写在 `rabbitmq:` 而不是 `spring.rabbitmq:`？
+### Q5: 为什么配置写在 `rabbitmq:` 而不是 `springbootai.rabbitmq:`？
 
-框架配置统一按功能域分顶层键（如 `database`、`redis`、`rabbitmq`、`jwt`），`main.py` 通过 `config.get('rabbitmq', {})` 读取。这与 Spring Boot 的 `spring.rabbitmq.*` 命名不同，是 SpringBootAI 自身的约定。
+框架配置统一按功能域分顶层键（如 `database`、`redis`、`rabbitmq`、`jwt`），`main.py` 通过 `config.get('rabbitmq', {})` 读取。这与 Spring Boot 的 `springbootai.rabbitmq.*` 命名不同，是 SpringBootAI 自身的约定。
 
 ### Q6: 能同时监听多个队列吗？
 
@@ -449,13 +449,13 @@ $env:RABBITMQ_PASSWORD = "secret"
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `topics` | `str` / `List[str]` | **必填** | 要订阅的主题，支持单个字符串或列表 |
-| `groupId` | `str` | `""` | 消费者组 ID；不填则用全局 `spring.kafka.consumer.group-id` |
+| `groupId` | `str` | `""` | 消费者组 ID；不填则用全局 `springbootai.kafka.consumer.group-id` |
 
 **代码示例：**
 
 ```python
-from spring.annotations import Service
-from spring.annotations.messaging import KafkaListener
+from springbootai.annotations import Service
+from springbootai.annotations.messaging import KafkaListener
 
 
 @Service
@@ -497,7 +497,7 @@ class OrderEventConsumer:
 **代码示例：**
 
 ```python
-from spring.annotations.messaging import kafka_template
+from springbootai.annotations.messaging import kafka_template
 
 # 场景一：异步发送（立即返回 future）
 kafka_template.send("order-events", value={"order_id": 1, "amount": 99.9})
@@ -512,9 +512,9 @@ kafka_template.send_and_wait("order-events", value={"order_id": 3}, key="order-3
 **在 Controller / Service 中使用：**
 
 ```python
-from spring.annotations import RestController, PostMapping
-from spring.annotations.messaging import kafka_template
-from spring.web.result import Result
+from springbootai.annotations import RestController, PostMapping
+from springbootai.annotations.messaging import kafka_template
+from springbootai.web.result import Result
 
 
 @RestController
@@ -528,7 +528,7 @@ class OrderController:
 
 ### 配置方式
 
-Kafka 配置写在 `application.yml` 的 `spring.kafka` 下：
+Kafka 配置写在 `application.yml` 的 `springbootai.kafka` 下：
 
 ```yaml
 spring:
@@ -546,9 +546,9 @@ spring:
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `spring.kafka.bootstrap-servers` | `localhost:9092` | Kafka Broker 地址列表 |
-| `spring.kafka.consumer.group-id` | `default-group` | 消费者组 ID |
-| `spring.kafka.consumer.auto-offset-reset` | `latest` | Offset 重置策略：`latest`（只消费新消息）/ `earliest`（从头消费） |
+| `springbootai.kafka.bootstrap-servers` | `localhost:9092` | Kafka Broker 地址列表 |
+| `springbootai.kafka.consumer.group-id` | `default-group` | 消费者组 ID |
+| `springbootai.kafka.consumer.auto-offset-reset` | `latest` | Offset 重置策略：`latest`（只消费新消息）/ `earliest`（从头消费） |
 
 **环境变量覆盖：**
 
@@ -572,10 +572,10 @@ pip install kafka-python
 |------|-------------------|--------------|
 | 消费注解 | `@KafkaListener(topics=..., groupId=...)` | `@KafkaListener(topics=..., groupId=...)` |
 | 发送模板 | `KafkaTemplate.send(topic, data)` | `KafkaTemplate.send(topic, value=...)` |
-| 全局模板实例 | `@Autowired KafkaTemplate` | `from spring.annotations.messaging import kafka_template` |
-| 消费者组配置 | `spring.kafka.consumer.group-id` | `spring.kafka.consumer.group-id` |
-| Bootstrap 配置 | `spring.kafka.bootstrap-servers` | `spring.kafka.bootstrap-servers` |
-| Offset 重置 | `spring.kafka.consumer.auto-offset-reset` | `spring.kafka.consumer.auto-offset-reset` |
+| 全局模板实例 | `@Autowired KafkaTemplate` | `from springbootai.annotations.messaging import kafka_template` |
+| 消费者组配置 | `springbootai.kafka.consumer.group-id` | `springbootai.kafka.consumer.group-id` |
+| Bootstrap 配置 | `springbootai.kafka.bootstrap-servers` | `springbootai.kafka.bootstrap-servers` |
+| Offset 重置 | `springbootai.kafka.consumer.auto-offset-reset` | `springbootai.kafka.consumer.auto-offset-reset` |
 | 序列化 | 配置 `Producer/Deserializer` 类 | 框架内置 JSON 序列化 |
 | 消息确认 | `Acknowledgment` 对象手动确认 | `enable_auto_commit=True` 自动确认 |
 | 底层客户端 | `org.apache.kafka.clients` | `kafka-python` |

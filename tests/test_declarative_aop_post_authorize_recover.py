@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from spring.annotations import (
+from springbootai.annotations import (
     After,
     AfterReturning,
     AfterThrowing,
@@ -16,18 +16,18 @@ from spring.annotations import (
     Recover,
     Retryable,
 )
-from spring.aop import JoinPoint, ProceedingJoinPoint
-from spring.context.bean_definition import BeanDefinition
-from spring.context.bean_factory import BeanFactory
-from spring.context.scanner import ComponentScanner
-from spring.retry.retry_annotations import Retryable as StandaloneRetryable
-from spring.retry.retry_decorator import retryable_decorator
-from spring.security.security_aop import (
+from springbootai.aop import JoinPoint, ProceedingJoinPoint
+from springbootai.context.bean_definition import BeanDefinition
+from springbootai.context.bean_factory import BeanFactory
+from springbootai.context.scanner import ComponentScanner
+from springbootai.retry.retry_annotations import Retryable as StandaloneRetryable
+from springbootai.retry.retry_decorator import retryable_decorator
+from springbootai.security.security_aop import (
     AuthenticationError,
     AuthorizationError,
     post_authorize_decorator,
 )
-from spring.security.security_context import SecurityContextHolder
+from springbootai.security.security_context import SecurityContextHolder
 
 
 def _managed_beans(*bean_classes):

@@ -1,6 +1,6 @@
 # SpringBootAI 安全模块 —— 小白也能看懂的 Web 安全指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -66,7 +66,7 @@ JWT 由三部分组成（用 `.` 分隔）：
 jwt:
   secret_key: ${JWT_SECRET_KEY:development-only-change-me}  # 签名密钥，一定从环境变量读取
   algorithm: HS256           # 签名算法
-  expires_in: 3600           # token 有效期（秒），3600 = 1 小时
+  expires_in: 3600           # Access Token 有效期（秒）；未配置时框架默认 3600
   issuer: springpy-api       # 谁签发的
   audience: springpy-client  # 发给谁的
   leeway: 5                  # 允许时钟误差（秒）
@@ -76,7 +76,7 @@ jwt:
 |---|---|---|
 | `secret_key` | 签名密钥 | ⚠️ 必须从环境变量读取，不能写死在代码里！至少 32 个随机字符 |
 | `algorithm` | 签名算法 | 默认 HS256 就够了 |
-| `expires_in` | token 有效期（秒） | 建议 15 分钟～2 小时，太长了泄露风险大 |
+| `expires_in` | Access Token 有效期（秒） | 未配置或非法值默认 3600；建议 15 分钟～2 小时，太长了泄露风险大 |
 | `issuer` | 签发者标识 | 填你的应用名 |
 | `audience` | 接收者标识 | 填你的客户端名 |
 
@@ -86,10 +86,18 @@ PowerShell 中临时设置密钥（仅开发用）：
 $env:JWT_SECRET_KEY='请替换为至少32个随机字符的密钥'
 ```
 
+业务代码不应写死有效期，直接调用 `jwt_utils.generate_token(payload)` 即会采用
+`jwt.expires_in`。例如需要 8 小时有效期的项目配置为：
+
+```yaml
+jwt:
+  expires_in: 28800
+```
+
 生成和验证 token：
 
 ```python
-from spring.security.jwt_utils import jwt_utils
+from springbootai.security.jwt_utils import jwt_utils
 
 # 1. 登录成功后生成 token
 claims = {
@@ -152,7 +160,7 @@ curl http://127.0.0.1:8080/api/profile `
 ### ① @Authenticate —— 这个接口需要登录才能访问
 
 ```python
-from spring.annotations import Authenticate, GetMapping, RequestMapping, RestController
+from springbootai.annotations import Authenticate, GetMapping, RequestMapping, RestController
 
 @RequestMapping("/api")
 @RestController
@@ -173,7 +181,7 @@ class AccountController:
 ### ② @PreAuthorize —— 这个接口需要特定权限才能访问
 
 ```python
-from spring.annotations import Authenticate, GetMapping, PreAuthorize, Secured
+from springbootai.annotations import Authenticate, GetMapping, PreAuthorize, Secured
 
 @Authenticate
 @PreAuthorize("hasRole('ROLE_ADMIN')")  # 只有管理员能访问
@@ -201,7 +209,7 @@ def finance_report(self):
 必须先查到文档的 `owner`，才能和当前用户比较：
 
 ```python
-from spring.annotations import Authenticate, GetMapping, PostAuthorize
+from springbootai.annotations import Authenticate, GetMapping, PostAuthorize
 
 @Authenticate
 @PostAuthorize(
@@ -242,11 +250,12 @@ def get_document(self, document_id: int):
 | 场景 | 返回状态码 | 含义 |
 |---|---|---|
 | 没带 token 访问 `@Authenticate` 接口 | 401 | 需要登录 |
+| token 已过期、签名无效或 token 类型不匹配 | 401 | 前端应清除旧 access token，并刷新或跳转登录 |
 | 带了 token 但角色不对访问 `@PreAuthorize` 接口 | 403 | 没有权限 |
 | 方法返回的数据不满足 `@PostAuthorize` | 403 | 不允许读取这份结果 |
 | 带了有效 token 且权限匹配 | 200 | 正常返回 |
 
-> 前端可以根据 401 跳转登录页，根据 403 提示"没有权限"。
+> 前端可以根据 401 跳转登录页或调用 refresh token 接口，根据 403 提示"没有权限"。框架会优先处理认证/授权异常，即使项目定义了宽泛的 `@ExceptionHandler(Exception)`，过期 token 也不会被错误转换为 500；401 响应带有 `WWW-Authenticate: Bearer error="invalid_token"`，且不会把 JWT 库的内部错误细节返回给客户端。
 
 ---
 
@@ -272,7 +281,7 @@ def get_document(self, document_id: int):
 ### ② 怎么用
 
 ```python
-from spring.orm import PasswordEncoder
+from springbootai.orm import PasswordEncoder
 
 # 创建 BCrypt 编码器
 encoder = PasswordEncoder("bcrypt")
@@ -508,7 +517,7 @@ BCrypt 每次生成哈希时会随机加盐，所以同样的密码两次生成�
 
 ### JWT 默认密钥硬编码 — 高 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/security/jwt_utils.py` configure() / init_jwt()
+**位置**：`springbootai/security/jwt_utils.py` configure() / init_jwt()
 
 **现象**：`configure()` 在 `secret_key=None` 时回退到硬编码默认值 `'spring-python-secret-key-change-in-production'`。开发环境误暴露到公网时，攻击者可用已知密钥伪造任意 JWT。
 
@@ -516,7 +525,7 @@ BCrypt 每次生成哈希时会随机加盐，所以同样的密码两次生成�
 
 ### JWT generate_refresh_token 多余编解码 — 中 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/security/jwt_utils.py` generate_refresh_token()
+**位置**：`springbootai/security/jwt_utils.py` generate_refresh_token()
 
 **现象**：生成 refresh token 的流程是 `generate_token()` → `jwt.decode(verify_signature=False)` → 修改 `token_type` → `jwt.encode()`，多做了一次无意义的编解码。
 

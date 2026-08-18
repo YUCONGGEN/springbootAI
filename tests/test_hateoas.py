@@ -1,7 +1,7 @@
 """Spring HATEOAS 超媒体链接测试"""
 import pytest
 
-from spring.web.hateoas import (
+from springbootai.web.hateoas import (
     CollectionModel,
     EntityModel,
     Link,

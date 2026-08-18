@@ -1,9 +1,9 @@
 """@SelectPage 分页查询注解测试"""
 import sqlite3
 import pytest
-from spring.orm.pymybatis import build_session_factory
-from spring.orm.pymybatis.annotations import SelectPage
-from spring.orm.pymybatis.mapper.mapper import MapperProxy
+from springbootai.orm.pymybatis import build_session_factory
+from springbootai.orm.pymybatis.annotations import SelectPage
+from springbootai.orm.pymybatis.mapper.mapper import MapperProxy
 
 
 @pytest.fixture

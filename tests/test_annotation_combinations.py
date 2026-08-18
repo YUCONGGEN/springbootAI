@@ -15,7 +15,7 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, Controller, RequestMapping, GetMapping, PostMapping,
     Service, Repository, Configuration, Bean, Autowired, Slf4j, LogExecutionTime, PostConstruct, PreDestroy,
     Primary, Profile, Lazy, Value, ConfigurationProperties,
@@ -24,8 +24,8 @@ from spring.annotations.core import (
     RateLimit, CircuitBreaker, Idempotent, AuditLog, Lock, Metrics, Validate, Trace,
     PreAuthorize, Secured, Authenticate, get_spring_annotations,
 )
-from spring.retry.retry_annotations import Backoff
-from spring.annotations.cloud import (
+from springbootai.retry.retry_annotations import Backoff
+from springbootai.annotations.cloud import (
     EnableDiscoveryClient, NacosValue, RefreshScope, FeignClient, SentinelResource, EnableGateway, LoadBalanced,
     GlobalTransactional,
 )
@@ -102,7 +102,7 @@ class TestClassLevelCombinations:
         """@ControllerAdvice + @ResponseStatus + @CrossOrigin 全局处理组合"""
         @CrossOrigin(origins=["https://app.test"])
         @ResponseStatus(500, "server-error")
-        @ControllerAdvice
+        @ControllerAdvice()
         class GlobalAdvice:
             pass
 

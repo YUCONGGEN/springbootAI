@@ -3,16 +3,16 @@ requires = ["setuptools>=77", "wheel>=0.37"]
 build-backend = "setuptools.build_meta"
 
 # ========================================
-# SpringBootAI 项目元数据与依赖声明（PEP 621）
-# 本文件是依赖的单一真实来源，类似 Spring Boot 的 pom.xml
-# 版本锁定策略：所有直接依赖使用 == 精确锁定
-# 实验性 HTTP 补偿协调器不提供 Seata AT 语义；生产分布式事务需要真实协调器
+# SpringBootAI 椤圭洰鍏冩暟鎹笌渚濊禆澹版槑锛圥EP 621锛?
+# 鏈枃浠舵槸渚濊禆鐨勫崟涓€鐪熷疄鏉ユ簮锛岀被浼?Spring Boot 鐨?pom.xml
+# 鐗堟湰閿佸畾绛栫暐锛氭墍鏈夌洿鎺ヤ緷璧栦娇鐢?== 绮剧‘閿佸畾
+# 瀹為獙鎬?HTTP 琛ュ伩鍗忚皟鍣ㄤ笉鎻愪緵 Seata AT 璇箟锛涚敓浜у垎甯冨紡浜嬪姟闇€瑕佺湡瀹炲崗璋冨櫒
 # ========================================
 
 [project]
-# 发行名 springbootAI（PyPI 包名，pip install springbootAI）；导入包名仍为 spring
+# Distribution name: springbootAI (pip install springbootAI); import package: springbootai.
 name = "springbootAI"
-version = "2.3.2"
+version = "2.3.3"
 description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
 readme = "README.md"
 license = "MIT"
@@ -35,8 +35,8 @@ classifiers = [
 requires-python = ">=3.10"
 
 # ========================================
-# 核心依赖 - 类似 Spring Boot Starter Web/Core
-# 安装：pip install springbootAI
+# 鏍稿績渚濊禆 - 绫讳技 Spring Boot Starter Web/Core
+# 瀹夎锛歱ip install springbootAI
 # ========================================
 dependencies = [
     "fastapi==0.141.1",
@@ -56,50 +56,50 @@ dependencies = [
 
 [project.optional-dependencies]
 # ========================================
-# 数据库驱动 - 类似 Spring Boot Starter JDBC/Data JPA
+# 鏁版嵁搴撻┍鍔?- 绫讳技 Spring Boot Starter JDBC/Data JPA
 # ========================================
 mysql = ["PyMySQL==1.2.0"]
 postgresql = ["psycopg2-binary==2.9.12"]
 sqlalchemy = ["sqlalchemy==2.0.40"]
 
 # ========================================
-# Redis - 类似 Spring Boot Starter Data Redis
+# Redis - 绫讳技 Spring Boot Starter Data Redis
 # ========================================
 redis = ["redis==8.1.0"]
 
 # ========================================
-# 消息队列 - 类似 Spring Boot Starter AMQP
+# 娑堟伅闃熷垪 - 绫讳技 Spring Boot Starter AMQP
 # ========================================
 rabbitmq = ["pika==1.4.4"]
 kafka = ["kafka-python==2.0.2"]
 
 # ========================================
-# 服务发现 - 类似 Spring Cloud Alibaba Nacos
+# 鏈嶅姟鍙戠幇 - 绫讳技 Spring Cloud Alibaba Nacos
 # ========================================
 nacos = ["nacos-sdk-python==2.0.11"]
 
 # ========================================
-# 监控和日志 - 类似 Spring Boot Actuator + Micrometer
+# 鐩戞帶鍜屾棩蹇?- 绫讳技 Spring Boot Actuator + Micrometer
 # ========================================
 prometheus = ["prometheus-client==0.26.0"]
 logging = ["loguru==0.7.3"]
 
 # ========================================
-# SQL注入检测
+# SQL娉ㄥ叆妫€娴?
 # ========================================
 ast = ["sqlglot==27.28.1"]
 
 # ========================================
-# Excel 注解驱动读写 - 类似 alibaba EasyExcel
-# 安装：pip install springbootAI[excel]
+# Excel 娉ㄨВ椹卞姩璇诲啓 - 绫讳技 alibaba EasyExcel
+# 瀹夎锛歱ip install springbootAI[excel]
 # ========================================
 excel = ["openpyxl==3.1.5"]
 
 # ========================================
-# SpringBootAI AI 模块 - 对齐 Spring AI（ChatClient/Advisor/ETL/Tools）
-# 安装：pip install springbootAI[ai]
-# AI 模块采用"可选依赖 + 降级"设计：未安装仍可用（降级原生 HTTP + FakeChatModel）
-# 依赖清单同步自 requirements-ai.txt（所有版本号 == 已测试验证）
+# SpringBootAI AI 妯″潡 - 瀵归綈 Spring AI锛圕hatClient/Advisor/ETL/Tools锛?
+# 瀹夎锛歱ip install springbootAI[ai]
+# AI 妯″潡閲囩敤"鍙€変緷璧?+ 闄嶇骇"璁捐锛氭湭瀹夎浠嶅彲鐢紙闄嶇骇鍘熺敓 HTTP + FakeChatModel锛?
+# 渚濊禆娓呭崟鍚屾鑷?requirements-ai.txt锛堟墍鏈夌増鏈彿 == 宸叉祴璇曢獙璇侊級
 # ========================================
 ai = [
     "langchain-openai==1.4.2",
@@ -107,15 +107,15 @@ ai = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==2.3.0",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
 ]
 
 # ========================================
-# SpringBootAI LangChain 模块 - 封装 langchain classic 全套能力 + 30+ partner 提供商
-# 安装：pip install springbootAI[langchain]
-# 设计：partner 包按需启用，未安装的 partner 由 @ConditionalOnClass/友好错误自动跳过
-# 详见 doc/LANGCHAIN_MODULE.md
+# SpringBootAI LangChain 妯″潡 - 灏佽 langchain classic 鍏ㄥ鑳藉姏 + 30+ partner 鎻愪緵鍟?
+# 瀹夎锛歱ip install springbootAI[langchain]
+# 璁捐锛歱artner 鍖呮寜闇€鍚敤锛屾湭瀹夎鐨?partner 鐢?@ConditionalOnClass/鍙嬪ソ閿欒鑷姩璺宠繃
+# 璇﹁ doc/LANGCHAIN_MODULE.md
 # ========================================
 langchain = [
     "langchain-openai==1.4.2",
@@ -123,15 +123,15 @@ langchain = [
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==2.3.0",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
-    # 默认装上的向量库/文档/工具依赖（安全：全部锁定已知安全版本）
+    # 榛樿瑁呬笂鐨勫悜閲忓簱/鏂囨。/宸ュ叿渚濊禆锛堝畨鍏細鍏ㄩ儴閿佸畾宸茬煡瀹夊叏鐗堟湰锛?
     "faiss-cpu>=1.7.4,<2",
     "pypdf>=4.0.0,<6",
     "beautifulsoup4>=4.12.0,<5",
     "sqlalchemy>=2.0.0,<3",
-    # partner 提供商包（按需启用，下面是常用几款；其余见 PARTNER_REGISTRY 文档按需 pip install）
-    # 安全：锁定上限版本防止供应链攻击，pip-audit 会在 CI 中持续扫描
+    # partner 鎻愪緵鍟嗗寘锛堟寜闇€鍚敤锛屼笅闈㈡槸甯哥敤鍑犳锛涘叾浣欒 PARTNER_REGISTRY 鏂囨。鎸夐渶 pip install锛?
+    # 瀹夊叏锛氶攣瀹氫笂闄愮増鏈槻姝緵搴旈摼鏀诲嚮锛宲ip-audit 浼氬湪 CI 涓寔缁壂鎻?
     "langchain-anthropic>=0.2.0,<2",
     "langchain-ollama>=0.2.0,<2",
     "langchain-chroma>=0.1.0,<2",
@@ -144,9 +144,9 @@ langchain = [
 ]
 
 # ========================================
-# SpringBootAI LangGraph 妯″潡 - 鐙珛鐨勭姸鎬佸浘缂栨帓涓庡彲鎭㈠鎵ц
-# 瀹夎锛歱ip install springbootAI[langgraph]
-# 姣忔鍙戝竷閿佸畾鐗堟湰锛屼笌 langchain-core 1.x 鏍稿績鎺ュ彛鍏煎
+# SpringBootAI LangGraph 濡€虫健 - 閻欘剛鐝涢惃鍕Ц閹礁娴樼紓鏍ㄥ笓娑撳骸褰查幁銏狀槻閹笛嗩攽
+# 鐎瑰顥婇敍姝眎p install springbootAI[langgraph]
+# 濮ｅ繑顐奸崣鎴濈闁夸礁鐣鹃悧鍫熸拱閿涘奔绗?langchain-core 1.x 閺嶇绺鹃幒銉ュ經閸忕厧顔?
 # ========================================
 langgraph = [
     "langgraph==1.2.9",
@@ -160,12 +160,12 @@ mcp = [
 ]
 
 # ========================================
-# 组合 Starter - 类似 Spring Boot Starter Web/Cloud/All
-# 安装：pip install springbootAI[web] / springbootAI[cloud] / springbootAI[all]
+# 缁勫悎 Starter - 绫讳技 Spring Boot Starter Web/Cloud/All
+# 瀹夎锛歱ip install springbootAI[web] / springbootAI[cloud] / springbootAI[all]
 # ========================================
 web = [
-    "fastapi==0.115.6",
-    "uvicorn==0.34.0",
+    "fastapi==0.141.1",
+    "uvicorn==0.39.0",
     "pydantic==2.13.4",
     "python-multipart==0.0.20",
 ]
@@ -194,7 +194,7 @@ all = [
 ]
 
 # ========================================
-# 开发依赖
+# 寮€鍙戜緷璧?
 # ========================================
 dev = [
     "pytest==9.1.1",
@@ -204,41 +204,41 @@ dev = [
 ]
 
 # ========================================
-# 全部依赖（一键安装）
+# 鍏ㄩ儴渚濊禆锛堜竴閿畨瑁咃級
 # ========================================
 full = [
-    # 数据库驱动
+    # 鏁版嵁搴撻┍鍔?
     "PyMySQL==1.2.0",
     "psycopg2-binary==2.9.12",
     "sqlalchemy==2.0.40",
-    # 缓存 / 消息 / 服务发现
+    # 缂撳瓨 / 娑堟伅 / 鏈嶅姟鍙戠幇
     "redis==8.1.0",
     "pika==1.4.4",
     "nacos-sdk-python==2.0.11",
-    # 监控 / 日志 / 安全
+    # 鐩戞帶 / 鏃ュ織 / 瀹夊叏
     "prometheus-client==0.26.0",
     "loguru==0.7.3",
     "sqlglot==27.28.1",
     "defusedxml==0.7.1",
-    # HTTP 客户端
+    # HTTP 瀹㈡埛绔?
     "requests==2.34.2",
     "httpx==0.28.1",
     # Excel
     "openpyxl==3.1.5",
-    # AI 模块（对齐 springbootAI[ai]）
+    # AI 妯″潡锛堝榻?springbootAI[ai]锛?
     "langchain-openai==1.4.2",
     "langchain-core==1.5.4",
     "langchain-classic==1.0.8",
     "langchain-text-splitters==1.1.2",
     "langchain-community==0.4.2",
-    "numpy==2.3.0",
+    "numpy==2.2.6",
     "pydantic==2.13.4",
-    # LangChain 模块增强（对齐 springbootAI[langchain]）
+    # LangChain 妯″潡澧炲己锛堝榻?springbootAI[langchain]锛?
     "faiss-cpu>=1.7.4,<2",
     "pypdf>=4.0.0,<6",
     "beautifulsoup4>=4.12.0,<5",
     "langchain-experimental>=0.3.0,<2",
-    # partner 提供商包（按需启用；可选 partner 未在此列出，pip install 对应包即可）
+    # partner 鎻愪緵鍟嗗寘锛堟寜闇€鍚敤锛涘彲閫?partner 鏈湪姝ゅ垪鍑猴紝pip install 瀵瑰簲鍖呭嵆鍙級
     "langchain-anthropic>=0.2.0,<2",
     "langchain-ollama>=0.2.0,<2",
     "langchain-chroma>=0.1.0,<2",
@@ -257,11 +257,11 @@ full = [
 [tool.pytest.ini_options]
 pythonpath = [".", "examples"]
 filterwarnings = [
-    # 静默 langchain_classic 弃用告警和 community sunset 告警
-    # 原因：本项目有意锁定 langchain classic (1.x) API，这些是预期内的框架级告警
-    # 注意：LangChainDeprecationWarning 是 DeprecationWarning 子类，
-    #      pytest 的 default::DeprecationWarning 会覆盖 simplefilter，
-    #      因此必须在此配置中明确忽略。
+    # 闈欓粯 langchain_classic 寮冪敤鍛婅鍜?community sunset 鍛婅
+    # 鍘熷洜锛氭湰椤圭洰鏈夋剰閿佸畾 langchain classic (1.x) API锛岃繖浜涙槸棰勬湡鍐呯殑妗嗘灦绾у憡璀?
+    # 娉ㄦ剰锛歀angChainDeprecationWarning 鏄?DeprecationWarning 瀛愮被锛?
+    #      pytest 鐨?default::DeprecationWarning 浼氳鐩?simplefilter锛?
+    #      鍥犳蹇呴』鍦ㄦ閰嶇疆涓槑纭拷鐣ャ€?
     "ignore:.*LLMChain.*:DeprecationWarning",
     "ignore:.*ConversationChain.*:DeprecationWarning",
     "ignore:.*ConversationBufferMemory.*:DeprecationWarning",
@@ -287,14 +287,14 @@ Changelog = "https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md"
 Issues = "https://github.com/YUCONGGEN/springbootAI/issues"
 
 [project.scripts]
-springbootai = "spring.main:run_cli"
-# 项目脚手架工具（类似 Spring Initializr）。真实终端默认中文问答；
-# CI/脚本请显式使用：springbootai-init my-project --modules web,orm --non-interactive
-springbootai-init = "spring.cli.scaffold:main"
+springbootai = "springbootai.main:run_cli"
+# 椤圭洰鑴氭墜鏋跺伐鍏凤紙绫讳技 Spring Initializr锛夈€傜湡瀹炵粓绔粯璁や腑鏂囬棶绛旓紱
+# CI/鑴氭湰璇锋樉寮忎娇鐢細springbootai-init my-project --modules web,orm --non-interactive
+springbootai-init = "springbootai.cli.scaffold:main"
 
 [tool.setuptools.packages.find]
-include = ["spring*"]
+include = ["springbootai*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-spring = ["*.py", "**/*.py", "**/*.xml", "**/*.yml", "**/*.yaml"]
+springbootai = ["*.py", "**/*.py", "**/*.xml", "**/*.yml", "**/*.yaml"]

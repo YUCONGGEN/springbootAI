@@ -1,6 +1,6 @@
 # SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -94,8 +94,8 @@ discovery:
 在启动类上加注解：
 
 ```python
-from spring.annotations import SpringBootApplication
-from spring.annotations.cloud import EnableDiscoveryClient
+from springbootai.annotations import SpringBootApplication
+from springbootai.annotations.cloud import EnableDiscoveryClient
 
 @SpringBootApplication
 @EnableDiscoveryClient(client_type="nacos")  # 开启"自动签到"功能
@@ -129,45 +129,107 @@ class Application:
 
 ### ② 怎么用
 
+先安装 Nacos 客户端：
+
+```powershell
+python -m pip install "springbootAI[nacos]"
+```
+
+在 Nacos 控制台创建 `welding-dev.yml`，内容就是普通应用 YAML。例如：
+
+```yaml
+spring:
+  application:
+    name: welding-app
+server:
+  port: 8090
+jwt:
+  expires_in: 28800
+database:
+  enabled: true
+  driver: sqlite
+  database: ./runtime/welding.db
+management:
+  admin:
+    # 该配置由框架内置读取，不需要项目自己实现监控 Controller 或拦截器。
+    request-metrics:
+      enabled: true
+      include-paths: ["/api/**"]
+```
+
+本地无需保存业务 `application.yml`。部署时只提供 Nacos 的引导环境变量：
+
+```powershell
+$env:NACOS_CONFIG_ENABLED = "true"
+$env:NACOS_CONFIG_SERVER_ADDR = "127.0.0.1:8848"
+$env:NACOS_CONFIG_DATA_ID = "welding-dev.yml"
+$env:NACOS_CONFIG_GROUP = "DEFAULT_GROUP"
+$env:NACOS_CONFIG_NAMESPACE = ""
+$env:NACOS_CONFIG_FAIL_FAST = "true"
+python -m welding_app.Application
+```
+
+也可以把这些最小引导信息放进本地 YAML（业务配置仍放 Nacos）：
+
+```yaml
+spring:
+  cloud:
+    nacos:
+      config:
+        enabled: true
+        server-addr: 127.0.0.1:8848
+        data-id: welding-dev.yml
+        group: DEFAULT_GROUP
+        namespace: ""
+        fail-fast: true
+        refresh-enabled: true
+```
+
+Nacos YAML 覆盖本地同名项；环境变量和命令行参数优先级更高。例如可通过
+`MANAGEMENT_ADMIN_REQUEST_METRICS_ENABLED=true` 和
+`MANAGEMENT_ADMIN_REQUEST_METRICS_INCLUDE_PATHS=/api/**` 覆盖上面的 Nacos 管理面板配置。
+远程配置不存在或
+无法连接时，`fail-fast: true` 会拒绝启动；为 `false` 时应用继续使用本地配置和框架默认值。
+
+读取动态值使用字段注解：
+
 ```python
-from spring.annotations import Service
-from spring.annotations.cloud import NacosValue
+from springbootai.annotations import Service
+from springbootai.annotations.cloud import NacosValue
 
 @Service
 class ConfigService:
-    # auto_refreshed=True 表示 Nacos 上的值变了，这里自动更新
-    @NacosValue(value="${app.version}", auto_refreshed=True)
-    def get_version(self):
-        return self._app_version
-# 结果：首次读取 Nacos 中的 app.version 值，之后改了自动刷新
+    app_version = NacosValue("${app.version:unknown}", auto_refreshed=True)
 ```
 
 如果整个类都需要动态配置，用 `@RefreshScope`：
 
 ```python
-from spring.annotations import Service
-from spring.annotations.cloud import RefreshScope
+from springbootai.annotations import Service
+from springbootai.annotations.cloud import RefreshScope
 
 @Service
 @RefreshScope  # 贴上"可刷新"标签
 class DynamicConfigService:
     def __init__(self):
-        # Nacos 配置刷新后，这个 Service 会重新创建，拿到最新配置
+        # Nacos 配置刷新后，框架会重新绑定配置字段
         self.feature_flag = True
         self.timeout = 30
 ```
 
-手动触发刷新：
+框架会启动一个可控的后台轮询监听器自动检查 Nacos 配置变更（Windows、Docker
+和不同 SDK 版本下都可正常停止）。手动触发刷新仅用于测试或自定义流程：
 
 ```python
-from spring.aop.cloud_aop import trigger_config_refresh
+from springbootai.aop.cloud_aop import trigger_config_refresh
 
 trigger_config_refresh()  # 触发一次配置刷新，所有 @RefreshScope 的 Bean 重新创建
 ```
 
 ### ③ 运行结果
 
-在 Nacos 控制台把 `app.version` 从 `1.0` 改成 `2.0`，你的应用不用重启，`get_version()` 返回的就是 `2.0` 了。
+在 Nacos 控制台把 `app.version` 从 `1.0` 改成 `2.0`，应用无需重启；
+`@NacosValue(auto_refreshed=True)` 与 `@RefreshScope` Bean 会在配置刷新后获得新值。
 
 ### 什么时候用 / 什么时候不用
 
@@ -194,8 +256,8 @@ trigger_config_refresh()  # 触发一次配置刷新，所有 @RefreshScope 的 
 先开启 Feign 扫描：
 
 ```python
-from spring.annotations import SpringBootApplication
-from spring.annotations.cloud import EnableFeignClients
+from springbootai.annotations import SpringBootApplication
+from springbootai.annotations.cloud import EnableFeignClients
 
 @SpringBootApplication
 @EnableFeignClients(base_packages=["com.example.feign"])  # 扫描这个包下的 Feign 接口
@@ -206,8 +268,8 @@ class Application:
 声明远程调用接口：
 
 ```python
-from spring.annotations.cloud import FeignClient
-from spring.annotations import GetMapping, PostMapping
+from springbootai.annotations.cloud import FeignClient
+from springbootai.annotations import GetMapping, PostMapping
 
 @FeignClient(value="user-service", path="/api")  # 目标服务名是 user-service
 class UserFeign:
@@ -223,8 +285,8 @@ class UserFeign:
 构建客户端并调用：
 
 ```python
-from spring.annotations.cloud import FeignClient
-from spring.cloud.feign import create_declared_feign_client
+from springbootai.annotations.cloud import FeignClient
+from springbootai.cloud.feign import create_declared_feign_client
 
 # 从注解元数据构造客户端
 annotation = next(
@@ -241,7 +303,7 @@ print(user)  # 输出: {"id": 1, "name": "张三", "email": "zhangsan@example.co
 本地调试时可以跳过声明式接口，直接指定 URL：
 
 ```python
-from spring.cloud.feign import create_feign_client
+from springbootai.cloud.feign import create_feign_client
 
 # url 参数直接指定目标地址，不经过 Nacos
 client = create_feign_client(
@@ -320,8 +382,8 @@ client.close()
 ### ② 怎么用
 
 ```python
-from spring.annotations import Service
-from spring.annotations.cloud import SentinelResource
+from springbootai.annotations import Service
+from springbootai.annotations.cloud import SentinelResource
 
 @Service
 class OrderService:
@@ -382,8 +444,8 @@ class OrderService:
 在启动类开启网关：
 
 ```python
-from spring.annotations import SpringBootApplication
-from spring.annotations.cloud import EnableGateway
+from springbootai.annotations import SpringBootApplication
+from springbootai.annotations.cloud import EnableGateway
 
 @SpringBootApplication
 @EnableGateway  # 开启"公司前台"功能
@@ -394,7 +456,7 @@ class GatewayApplication:
 配置路由规则：
 
 ```python
-from spring.cloud.gateway import GatewayRouter
+from springbootai.cloud.gateway import GatewayRouter
 
 # 创建网关路由器
 gateway = GatewayRouter(timeout=5, max_body_size=10 * 1024 * 1024)  # 超时5秒，最大请求体10MB
@@ -459,8 +521,8 @@ Seata 就是负责跨多个服务协调事务的：
 ### ② 怎么用
 
 ```python
-from spring.annotations import Service, Autowired
-from spring.annotations.cloud import GlobalTransactional
+from springbootai.annotations import Service, Autowired
+from springbootai.annotations.cloud import GlobalTransactional
 
 @Service
 class OrderService:
@@ -503,7 +565,7 @@ seata:
 业务分支注册示意：
 
 ```python
-from spring.cloud.seata import seata_manager
+from springbootai.cloud.seata import seata_manager
 
 branch_id = seata_manager.register_branch(
     xid=xid,
@@ -564,8 +626,8 @@ AT（Automatic Transaction）模式是 Seata 最常用的事务模式。它自�
 #### ② 怎么用
 
 ```python
-from spring.cloud.seata import seata_manager, SeataTransactionManager
-from spring.cloud.seata_at_proxy import SeataATProxy
+from springbootai.cloud.seata import seata_manager, SeataTransactionManager
+from springbootai.cloud.seata_at_proxy import SeataATProxy
 
 # 1. 设置 AT 模式
 seata_manager.set_mode("at")
@@ -624,7 +686,7 @@ def transfer(from_id, to_id, amount):
 ### ② 怎么用
 
 ```python
-from spring.annotations import Trace
+from springbootai.annotations import Trace
 
 @Trace("order-service.create")  # 这个方法被追踪
 def create_order_traced(user_id: int):
@@ -701,9 +763,9 @@ http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复
 
 ### 相关代码位置
 
-- [`spring/cloud/seata.py`](../spring/cloud/seata.py) — `SeataTransactionManager` 四模式实现（local/http/distributed/at）
-- [`spring/cloud/seata_at_proxy.py`](../spring/cloud/seata_at_proxy.py) — AT 模式数据源代理（ORM 拦截器 + undo_log）
-- [`spring/cloud/transaction_store.py`](../spring/cloud/transaction_store.py) — `SQLiteTransactionStore`（WAL + 原子状态迁移）
+- [`springbootai/cloud/seata.py`](../springbootai/cloud/seata.py) — `SeataTransactionManager` 四模式实现（local/http/distributed/at）
+- [`springbootai/cloud/seata_at_proxy.py`](../springbootai/cloud/seata_at_proxy.py) — AT 模式数据源代理（ORM 拦截器 + undo_log）
+- [`springbootai/cloud/transaction_store.py`](../springbootai/cloud/transaction_store.py) — `SQLiteTransactionStore`（WAL + 原子状态迁移）
 
 ---
 
@@ -711,7 +773,7 @@ http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复
 
 ### Seata distributed 模式桥接失败无降级 — 高 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/cloud/seata.py` begin_transaction() distributed 分支
+**位置**：`springbootai/cloud/seata.py` begin_transaction() distributed 分支
 
 **现象**：`begin_transaction(mode='distributed')` 调用外部 Seata bridge，若 bridge 不可达，异常处理不充分——事务状态可能停留在 `BEGINNING`，后续 `commit()`/`rollback()` 行为未定义。
 
@@ -719,15 +781,15 @@ http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复
 
 ### Seata recovery worker 无优雅停机 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/cloud/seata.py` recovery worker 线程
+**位置**：`springbootai/cloud/seata.py` recovery worker 线程
 
 **现象**：recovery worker 是守护线程（`daemon=True`），应用退出时被强杀，正在恢复中的事务可能丢失。
 
-**改进方案**：注册 `atexit` 钩子或接入 `spring.core.graceful_shutdown`，停机前等待 recovery worker 完成当前任务；设置停机超时（默认 30 秒）。
+**改进方案**：注册 `atexit` 钩子或接入 `springbootai.core.graceful_shutdown`，停机前等待 recovery worker 完成当前任务；设置停机超时（默认 30 秒）。
 
 ### RabbitMQ 消息发布未处理 JSON 序列化失败 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/messaging/rabbitmq.py` publish_to_queue()
+**位置**：`springbootai/messaging/rabbitmq.py` publish_to_queue()
 
 **现象**：`publish_to_queue` 对消息体 `json.dumps()` 时，若包含不可序列化对象（如 `datetime`），会抛 `TypeError`，当前未捕获，调用方收到未包装的 `TypeError`。
 
@@ -735,8 +797,8 @@ http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复
 
 ### RabbitMQ 连接失败无重试 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/messaging/rabbitmq.py` get_channel()
+**位置**：`springbootai/messaging/rabbitmq.py` get_channel()
 
 **现象**：`get_channel()` 连接失败直接抛异常，无重试逻辑。网络抖动场景下首次连接失败即导致服务不可用。
 
-**改进方案**：集成 `spring.retry` 的 `@Retryable`，配置指数退避（初始 1 秒，倍数 2，最大 30 秒，最多 5 次）。
+**改进方案**：集成 `springbootai.retry` 的 `@Retryable`，配置指数退避（初始 1 秒，倍数 2，最大 30 秒，最多 5 次）。

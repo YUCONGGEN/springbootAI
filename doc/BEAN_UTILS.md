@@ -2,7 +2,7 @@
 
 > 对齐 `org.springframework.beans.BeanUtils`（Spring）与 `org.apache.commons.beanutils.BeanUtils`（Apache Commons）。
 > 提供对象间属性复制、嵌套属性读写、属性描述符、字典填充/导出等能力。
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -43,7 +43,7 @@ BeanUtils.copy_properties(dto, entity, ignore=["password_hash"])
 ## 一、快速开始
 
 ```python
-from spring.utils import BeanUtils
+from springbootai.utils import BeanUtils
 
 class UserSrc:
     def __init__(self):
@@ -215,7 +215,7 @@ d = BeanUtils.describe(user)
 ### 示例 1：DTO ↔ Entity 转换
 
 ```python
-from spring.utils import BeanUtils
+from springbootai.utils import BeanUtils
 from dataclasses import dataclass
 
 @dataclass
@@ -281,7 +281,7 @@ assert d == {"host": "0.0.0.0", "port": 8080}
 
 ```python
 from pydantic import BaseModel
-from spring.utils import BeanUtils
+from springbootai.utils import BeanUtils
 
 class UserIn(BaseModel):
     name: str = ""
@@ -339,12 +339,12 @@ assert tgt.name == "bob" and tgt.age == 25
 - get_simple_property / get_property_descriptors / get_property_descriptor
 - populate / populate 跳过不可写 / None 与空字典
 - describe / describe None
-- 顶层导出（`spring.utils.BeanUtils` / `spring.utils.BeanUtils`）
+- 顶层导出（`springbootai.utils.BeanUtils` / `springbootai.utils.BeanUtils`）
 
 ---
 
 ## 八、代码位置
 
-- 实现：[`spring/utils/bean_utils.py`](../spring/utils/bean_utils.py)
-- 导出：[`spring/utils/__init__.py`](../spring/utils/__init__.py) → `from spring.utils import BeanUtils`
+- 实现：[`springbootai/utils/bean_utils.py`](../springbootai/utils/bean_utils.py)
+- 导出：[`springbootai/utils/__init__.py`](../springbootai/utils/__init__.py) → `from springbootai.utils import BeanUtils`
 - 测试：[`tests/test_bean_utils.py`](../tests/test_bean_utils.py)

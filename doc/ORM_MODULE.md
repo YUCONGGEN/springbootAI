@@ -1,6 +1,6 @@
 # SpringBootAI 数据库操作（ORM）—— 使用指南
 
-> 框架版本：SpringBootAI 2.3.0 / 内嵌 PyMyBatis 2.3.0
+> 框架版本：SpringBootAI 2.3.2 / 内嵌 PyMyBatis 2.3.2
 
 ---
 
@@ -158,7 +158,7 @@ database:
 ```python
 # demo/entity/user.py
 from dataclasses import dataclass
-from spring.orm import Entity, Index
+from springbootai.orm import Entity, Index
 
 @Entity("users", indexes=[
     Index("idx_name", ["name"]),  # 给 name 列建索引，查名字时更快
@@ -183,7 +183,7 @@ class User:
 ```python
 # demo/mapper/user_mapper.py
 from typing import Optional
-from spring.orm import Delete, Insert, Mapper, Select, Update
+from springbootai.orm import Delete, Insert, Mapper, Select, Update
 from demo.entity.user import User
 
 
@@ -251,7 +251,7 @@ class UserService:
 
 ```python
 # demo/controller/user_controller.py
-from spring.web import RestController, PostMapping, GetMapping
+from springbootai.web import RestController, PostMapping, GetMapping
 from demo.service.user_service import UserService
 
 
@@ -295,8 +295,8 @@ class UserController:
 
 ```python
 # app.py
-from spring.annotations import SpringBootApplication
-from spring.orm import MapperScan
+from springbootai.annotations import SpringBootApplication
+from springbootai.orm import MapperScan
 
 
 @SpringBootApplication(scan_base_packages=["demo"])
@@ -337,7 +337,7 @@ database:
 
 ```python
 # demo/service/transfer_service.py
-from spring.annotations import Transactional
+from springbootai.annotations import Transactional
 from demo.mapper.user_mapper import UserMapper
 
 
@@ -486,7 +486,7 @@ def find(self, table: str, id: int):
 > **v2.3.0+ 新增**：Mapper 方法上加 `@SelectPage`，框架自动执行 COUNT + LIMIT/OFFSET。
 
 ```python
-from spring.orm import Mapper, SelectPage
+from springbootai.orm import Mapper, SelectPage
 
 @Mapper
 class UserMapper:
@@ -614,7 +614,7 @@ session.select_one("myapp.mappers.UserMapper.findById", {"id": 1})
 ### ② 怎么用
 
 ```python
-from spring.orm.pymybatis import build_session_factory
+from springbootai.orm.pymybatis import build_session_factory
 
 # 创建连接工厂
 factory = build_session_factory({
@@ -819,10 +819,10 @@ def do_something(self):
 
 | 独立 PyMyBatis | SpringBootAI 内嵌 |
 |------|-------------|
-| `pymybatis.Configuration` | `spring.orm.pymybatis.Configuration` |
-| `pymybatis.SqlSessionFactory` | `spring.orm.pymybatis.SqlSessionFactory` |
-| `pymybatis.SqlSession` | `spring.orm.pymybatis.SqlSession` |
-| `pymybatis.annotations` | `spring.orm.pymybatis.annotations` |
+| `pymybatis.Configuration` | `springbootai.orm.pymybatis.Configuration` |
+| `pymybatis.SqlSessionFactory` | `springbootai.orm.pymybatis.SqlSessionFactory` |
+| `pymybatis.SqlSession` | `springbootai.orm.pymybatis.SqlSession` |
+| `pymybatis.annotations` | `springbootai.orm.pymybatis.annotations` |
 
 XML 动态标签（`<if>`、`<where>`、`<foreach>`、`<choose>`、`<set>`、`<trim>`、`<bind>`）全部支持。`useGeneratedKeys`、`keyProperty`、`association`/`collection` 嵌套映射、`<selectKey>`、`SelectProvider` 也都支持。
 
@@ -873,8 +873,8 @@ A: ① 启动日志没有 Mapper 未注册或连接失败；② 调插入接口�
 ### ② 怎么用
 
 ```python
-from spring.orm.ddl_auto import Entity, Id, Column
-from spring.data import PagingAndSortingRepository, Pageable, Sort, Specification
+from springbootai.orm.ddl_auto import Entity, Id, Column
+from springbootai.data import PagingAndSortingRepository, Pageable, Sort, Specification
 
 # 定义实体（数据库表对应的类）
 @Entity("users")
@@ -928,7 +928,7 @@ page = repo.find_all(
 # 结果：第 0 页、每页 10 条、按年龄排序、而且只要成年人
 
 # --- 复合条件：成年 AND 名字包含"明" ---
-from spring.data import Specifications
+from springbootai.data import Specifications
 spec = Specifications.where(AdultSpec()).and_(NameSpec())
 ```
 
@@ -956,7 +956,7 @@ spec = Specifications.where(AdultSpec()).and_(NameSpec())
 
 ### SQL 注入检测器对正常 DML 语句误报 — 高 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/orm/pymybatis/security/sql_injection_detector.py` INJECTION_PATTERNS
+**位置**：`springbootai/orm/pymybatis/security/sql_injection_detector.py` INJECTION_PATTERNS
 
 **现象**：`INJECTION_PATTERNS` 中包含 `\b(DROP|DELETE|UPDATE|INSERT|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\b`，级别为 HIGH。而 `DEFAULT_DETECTOR` 的 `max_risk_level=LOW`，意味着任何包含 `DELETE`/`UPDATE`/`INSERT` 关键字的正常业务 SQL 或参数值（如用户输入 "Please update your profile"）都会被误判为注入风险并被阻止。
 

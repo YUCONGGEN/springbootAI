@@ -5,9 +5,9 @@ import ast
 import operator
 from typing import Any
 
-from spring.annotations.core import Autowired, Service, Slf4j
-from spring.langchain.agents.services import AgentService
-from spring.langchain.tools.tools import ToolFactory
+from springbootai.annotations.core import Autowired, Service, Slf4j
+from springbootai.langchain.agents.services import AgentService
+from springbootai.langchain.tools.tools import ToolFactory
 
 
 # ==================== 安全算术求值器 ====================

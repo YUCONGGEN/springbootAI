@@ -4,8 +4,8 @@ Start ``python -m example_mcp.server`` first, then run:
     python -m example_mcp.client
 """
 
-from spring.ai import ToolExecutionPolicy
-from spring.mcp import MCPClientProperties, build_client_manager
+from springbootai.ai import ToolExecutionPolicy
+from springbootai.mcp import MCPClientProperties, build_client_manager
 
 
 def main() -> None:

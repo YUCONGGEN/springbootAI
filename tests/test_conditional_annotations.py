@@ -13,7 +13,7 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.annotations.conditional import (
+from springbootai.annotations.conditional import (
     Conditional,
     ConditionalOnProperty,
     ConditionalOnBean,
@@ -22,7 +22,7 @@ from spring.annotations.conditional import (
     CONDITION_ANNOTATIONS,
     all_conditions_match,
 )
-from spring.annotations.core import Component, get_spring_annotations
+from springbootai.annotations.core import Component, get_spring_annotations
 
 
 # ==================== Mock 上下文 ====================
@@ -349,7 +349,7 @@ class TestAllConditionsMatch:
 
 class TestApplicationContextIntegration:
     def _make_context(self, config_data):
-        from spring.context.application_context import ApplicationContext
+        from springbootai.context.application_context import ApplicationContext
 
         class FakeMain:
             __module__ = __name__
@@ -367,7 +367,7 @@ class TestApplicationContextIntegration:
             pass
 
         ctx = self._make_context({"flag": "on"})
-        from spring.context.application_context import ApplicationContext
+        from springbootai.context.application_context import ApplicationContext
         assert ApplicationContext._matches_conditions(ctx, C) is True
 
     def test_matches_conditions_false(self):
@@ -377,7 +377,7 @@ class TestApplicationContextIntegration:
             pass
 
         ctx = self._make_context({"flag": "off"})
-        from spring.context.application_context import ApplicationContext
+        from springbootai.context.application_context import ApplicationContext
         assert ApplicationContext._matches_conditions(ctx, C) is False
 
     def test_decorator_attaches_annotation(self):

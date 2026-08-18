@@ -2,13 +2,13 @@
 
 import pytest
 
-from spring.orm.ddl_auto import DdlAutoManager
-from spring.orm.pymybatis.cache.redis_cache import RedisSecondLevelCache
-from spring.orm.pymybatis.dynamic_sql import DynamicSQLProcessor, SecurityError
-from spring.orm.pymybatis.xml_parser import XmlParser
-from spring.cloud.seata import SeataTransactionManager
-from spring.data import Order, Sort
-from spring.orm.migration import MigrationManager
+from springbootai.orm.ddl_auto import DdlAutoManager
+from springbootai.orm.pymybatis.cache.redis_cache import RedisSecondLevelCache
+from springbootai.orm.pymybatis.dynamic_sql import DynamicSQLProcessor, SecurityError
+from springbootai.orm.pymybatis.xml_parser import XmlParser
+from springbootai.cloud.seata import SeataTransactionManager
+from springbootai.data import Order, Sort
+from springbootai.orm.migration import MigrationManager
 
 
 def test_ddl_source_defaults_accept_literals_without_executing_calls():
@@ -108,7 +108,7 @@ def test_seata_callback_url_is_fail_closed_and_allowlisted(tmp_path):
 
 def test_repository_rejects_unknown_sort_property():
     from tests.test_data_repository import User, _Pool
-    from spring.data import PagingAndSortingRepository
+    from springbootai.data import PagingAndSortingRepository
     import sqlite3
 
     connection = sqlite3.connect(":memory:")

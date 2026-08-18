@@ -2,14 +2,14 @@
 LangChain 模块完整能力演示 - 一键跑通 12 个能力子模块。
 
 本脚本是「小白教学版」demo：不依赖 Spring 容器 / HTTP 服务 / 真实 API Key，
-直接用 FakeChatModel + FakeEmbeddingModel 演示 spring.langchain 全部能力的用法。
+直接用 FakeChatModel + FakeEmbeddingModel 演示 springbootai.langchain 全部能力的用法。
 适合：
 - 新手快速理解每个能力 Bean 是什么、怎么用、产出什么
 - 集成时作为「对照实现」复制粘贴
 - CI 冒烟测试（无网络也能跑通）
 
 运行方式：
-    cd e:\\spring\\springbootAI-master\\springbootAI-master
+    cd e:\\springbootai/\springbootAI-master\\springbootAI-master
     set AI_ALLOW_FAKE=true
     python -m example_langchain.demo.langchain_full_demo
 
@@ -56,24 +56,24 @@ for _p in (_PROJECT_ROOT, _EXAMPLES_DIR):
 # 无 API Key 时降级 FakeChatModel（保证 demo 可独立运行）
 os.environ.setdefault("AI_ALLOW_FAKE", "true")
 
-from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
-from spring.langchain.adapters import (
+from springbootai.ai.providers import FakeChatModel, FakeEmbeddingModel
+from springbootai.langchain.adapters import (
     to_langchain_model, to_langchain_embeddings,
     to_spring_model,
 )
-from spring.langchain.prompts.templates import PromptTemplateFactory
-from spring.langchain.chains.services import ChainService
-from spring.langchain.agents.services import AgentService
-from spring.langchain.memory.memory import MemoryFactory
-from spring.langchain.parsers.parsers import OutputParserFactory
-from spring.langchain.loaders.loaders import DocumentLoaderRegistry
-from spring.langchain.retrievers.retrievers import RetrieverFactory
-from spring.langchain.vectorstores.stores import VectorStoreFactory
-from spring.langchain.indexes.index import IndexService
-from spring.langchain.tools.tools import ToolFactory, ToolRegistry
-from spring.langchain.utilities.utils import UtilityRegistry
-from spring.langchain.callbacks.handlers import CallbackRegistry
-from spring.langchain.partners import list_partners, list_available_partners
+from springbootai.langchain.prompts.templates import PromptTemplateFactory
+from springbootai.langchain.chains.services import ChainService
+from springbootai.langchain.agents.services import AgentService
+from springbootai.langchain.memory.memory import MemoryFactory
+from springbootai.langchain.parsers.parsers import OutputParserFactory
+from springbootai.langchain.loaders.loaders import DocumentLoaderRegistry
+from springbootai.langchain.retrievers.retrievers import RetrieverFactory
+from springbootai.langchain.vectorstores.stores import VectorStoreFactory
+from springbootai.langchain.indexes.index import IndexService
+from springbootai.langchain.tools.tools import ToolFactory, ToolRegistry
+from springbootai.langchain.utilities.utils import UtilityRegistry
+from springbootai.langchain.callbacks.handlers import CallbackRegistry
+from springbootai.langchain.partners import list_partners, list_available_partners
 
 
 # ==================== 公共：构造 Fake 模型（无需 API Key） ====================
@@ -122,7 +122,7 @@ def demo_adapters():
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
     fake_lc = FakeListChatModel(responses=["langchain-says-hi"])
     spring_model = to_spring_model(fake_lc)
-    from spring.ai.core import Message
+    from springbootai.ai.core import Message
     resp = spring_model.call([Message.user("ping")])
     print(f"  [lc→spring] 模型回复: {resp.content()}")
     print(f"  [lc→spring] provider 元数据: {resp.metadata.get('provider')}")
@@ -190,7 +190,7 @@ def demo_chains():
     print(f"  [Conversation] 第2轮（复用 memory）: {r2}")
 
     # 3.3 顺序链（多步串联）
-    from spring.langchain.prompts.templates import PromptTemplateFactory
+    from springbootai.langchain.prompts.templates import PromptTemplateFactory
     c1 = svc.create_llm_chain(
         PromptTemplateFactory.create_prompt_template("步骤1: {input}"),
         output_key="s1")
@@ -231,7 +231,7 @@ def demo_agents():
     def calculate(expression: str) -> str:
         """计算工具 - 安全的算术表达式求值。"""
         try:
-            from spring.langchain.utilities.utils import safe_eval_arithmetic
+            from springbootai.langchain.utilities.utils import safe_eval_arithmetic
             return str(safe_eval_arithmetic(expression))
         except ImportError:
             return "safe_eval_arithmetic 未安装"
@@ -548,7 +548,7 @@ def demo_safe_eval():
 def demo_partners():
     """Partner 注册表 - 30+ 第三方模型提供商懒加载。
 
-    用途：在 application.yml 配置 spring.langchain.partners.<name> 即可启用。
+    用途：在 application.yml 配置 springbootai.langchain.partners.<name> 即可启用。
     """
     banner("15. Partner - 30+ 第三方模型提供商")
     all_partners = list_partners()
@@ -596,7 +596,7 @@ def main():
   - 启动完整 HTTP 服务：python example_langchain/Application.py
   - 访问接口：POST http://localhost:8081/api/lc/chat  body={"message":"你好"}
   - 查看测试：python -m pytest tests/test_langchain_module.py tests/test_langchain_ext.py
-  - 配置真实模型：在 application.yml 设置 spring.ai.openai.api-key
+  - 配置真实模型：在 application.yml 设置 springbootai.ai.openai.api-key
 """)
 
 

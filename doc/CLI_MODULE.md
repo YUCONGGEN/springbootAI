@@ -1,7 +1,7 @@
 # SpringBootAI CLI 与项目脚手架 —— 使用指南
 
 > 框架版本：SpringBootAI 2.3.2
-> 源码位置：`spring/cli/main.py`、`spring/cli/scaffold.py`
+> 源码位置：`springbootai/cli/main.py`、`springbootai/cli/scaffold.py`
 > 对齐 Java：Spring Boot CLI / Spring Initializr
 
 ---
@@ -46,10 +46,10 @@ SpringBootAI 提供两个独立的命令行入口（在 `pyproject.toml` 的 `[p
 
 | 命令 | 注册位置 | 用途 |
 |------|----------|------|
-| `springbootai` | `spring.main:run_cli` | 主命令，支持多个子命令（version/info/list/init/run/docs） |
-| `springbootai-init` | `spring.cli.scaffold:main` | 独立的脚手架命令（等价于 `springbootai init`） |
+| `springbootai` | `springbootai.main:run_cli` | 主命令，支持多个子命令（version/info/list/init/run/docs） |
+| `springbootai-init` | `springbootai.cli.scaffold:main` | 独立的脚手架命令（等价于 `springbootai init`） |
 
-> **对齐 Java**：本模块对齐 Java 的 [Spring Boot CLI](https://docs.spring.io/spring-boot/docs/current/reference/html/cli.html) 和 [Spring Initializr](https://start.spring.io/)。Spring Initializr 是 Web 界面的项目生成器，SpringBootAI 用命令行实现同样功能。
+> **对齐 Java**：本模块对齐 Java 的 [Spring Boot CLI](https://docs.springbootai.io/spring-boot/docs/current/reference/html/cli.html) 和 [Spring Initializr](https://start.springbootai.io/)。Spring Initializr 是 Web 界面的项目生成器，SpringBootAI 用命令行实现同样功能。
 
 ### 与 Java Spring Boot CLI 的差异
 
@@ -111,7 +111,7 @@ springbootai info
 ============================================================
 SpringBootAI 运行环境信息
 ============================================================
-框架版本: 2.3.0
+SpringBootAI 2.3.2
 Python 版本: 3.11.5 (main, ...)
 Python 路径: /usr/bin/python3
 操作系统: Linux-5.15.0-x86_64
@@ -474,7 +474,7 @@ if SRC_DIR not in sys.path:
 # 显式导入全局异常处理器；控制器由组件扫描注册。
 from my_app.common import handlers as _global_handlers  # noqa: F401
 from my_app.controllers import *  # noqa: F401,F403
-from spring.annotations import SpringBootApplication
+from springbootai.annotations import SpringBootApplication
 
 
 @SpringBootApplication(scan_base_packages=["my_app"])
@@ -483,13 +483,13 @@ class Application:
 
     @staticmethod
     def main() -> None:
-        from spring.main import SpringApplication
+        from springbootai.main import SpringApplication
         SpringApplication(Application).run()
 
 
 def create_app():
     """供 uvicorn Application:create_app --factory 使用。"""
-    from spring.main import create_app as _create_app
+    from springbootai.main import create_app as _create_app
     return _create_app(Application)
 
 
@@ -559,18 +559,18 @@ redis==8.1.0            # Redis 客户端
 |----------|-----------|--------|--------------------------|
 | `web` | `controllers/`, `common/` | `server` | 无 |
 | `orm` | `models/`, `repositories/`, `mappers/` | `database` | MySQL/PostgreSQL 时增加对应驱动 |
-| `ai` | 无额外目录 | `spring.ai` | `langchain-openai==1.4.2` |
-| `cloud` | `docs/Cloud配置说明.md` | `spring.cloud` + `discovery` | Nacos/RabbitMQ 依赖按需生成 |
+| `ai` | 无额外目录 | `springbootai.ai` | `langchain-openai==1.4.2` |
+| `cloud` | `docs/Cloud配置说明.md` | `springbootai.cloud` + `discovery` | Nacos/RabbitMQ 依赖按需生成 |
 | `redis` | 无额外目录 | `redis` | `redis==8.1.0` |
 | `web,orm,redis` | `controllers/`, `common/`, `models/`, `repositories/`, `mappers/` | `server` + `database` + `redis` | 数据库驱动 + `redis` |
-| `web,orm,ai` | `controllers/`, `common/`, `models/`, `repositories/`, `mappers/` | `server` + `database` + `spring.ai` | AI 依赖按需生成 |
+| `web,orm,ai` | `controllers/`, `common/`, `models/`, `repositories/`, `mappers/` | `server` + `database` + `springbootai.ai` | AI 依赖按需生成 |
 
 ### 通过 Python 代码调用脚手架
 
 除了命令行，也可以在 Python 代码中调用：
 
 ```python
-from spring.cli.scaffold import create_project
+from springbootai.cli.scaffold import create_project
 
 # 创建项目
 project_dir = create_project(
@@ -583,7 +583,7 @@ print(f"项目已创建: {project_dir}")
 ```
 
 ```python
-from spring.cli.scaffold import main
+from springbootai.cli.scaffold import main
 
 # 命令行风格调用
 main(['my-project', '--modules', 'web,orm', '--port', '9000', '--non-interactive'])
@@ -763,7 +763,7 @@ blog-system/
 ```python
 """blog-system controllers"""
 
-from spring.annotations import RestController, GetMapping, PostMapping
+from springbootai.annotations import RestController, GetMapping, PostMapping
 
 
 @RestController
@@ -795,7 +795,7 @@ class PostController:
 ```python
 """blog-system entity models"""
 from dataclasses import dataclass
-from spring.orm import Entity, Id, Column
+from springbootai.orm import Entity, Id, Column
 
 
 @Entity("posts")
@@ -851,8 +851,8 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from spring.annotations import SpringBootApplication
-from spring.orm import MapperScan
+from springbootai.annotations import SpringBootApplication
+from springbootai.orm import MapperScan
 from blog_system.controllers import *  # noqa: F401, F403
 
 
@@ -863,7 +863,7 @@ class Application:
 
     @staticmethod
     def main():
-        from spring.main import SpringApplication
+        from springbootai.main import SpringApplication
         app = SpringApplication(Application)
         app.run()
 
@@ -909,7 +909,7 @@ springbootai docs
 
 | 特性 | Java Spring Initializr | SpringBootAI CLI |
 |------|------------------------|------------------|
-| **交互方式** | Web 界面（start.spring.io）+ CLI | 命令行（交互式问答 + 非交互 CI 模式） |
+| **交互方式** | Web 界面（start.springbootai.io）+ CLI | 命令行（交互式问答 + 非交互 CI 模式） |
 | **创建项目命令** | `spring init --dependencies=web,jpa my-project` | `springbootai init my-project`（交互）或追加 `--non-interactive`（脚本） |
 | **项目名** | `--name` 或 `--artifact-id` | 位置参数（项目名/路径） |
 | **包名** | `--package-name`（Java 包名） | `--package`（Python 包名） |
@@ -934,7 +934,7 @@ springbootai docs
 
 ```bash
 # Web 界面
-https://start.spring.io/
+https://start.springbootai.io/
 
 # 命令行
 spring init \
@@ -1116,11 +1116,11 @@ A: 功能完全相同，是两个独立的命令入口：
 - `springbootai init <project>` —— 主命令的子命令
 - `springbootai-init <project>` —— 独立的命令
 
-两者底层都调用 `spring.cli.scaffold.main()`，生成相同的项目结构。用哪个都行，`springbootai init` 更符合统一命令风格。
+两者底层都调用 `springbootai.cli.scaffold.main()`，生成相同的项目结构。用哪个都行，`springbootai init` 更符合统一命令风格。
 
 **Q11: 如何查看脚手架生成的模板源码？**
 
-A: 模板定义在 `spring/cli/scaffold.py` 的顶部（`_APPLICATION_TEMPLATE`、`_APPLICATION_YML_TEMPLATE` 等变量）。如果你想自定义模板，可以直接修改这些字符串。
+A: 模板定义在 `springbootai/cli/scaffold.py` 的顶部（`_APPLICATION_TEMPLATE`、`_APPLICATION_YML_TEMPLATE` 等变量）。如果你想自定义模板，可以直接修改这些字符串。
 
 **Q12: 生成的 README.md 里有什么？**
 

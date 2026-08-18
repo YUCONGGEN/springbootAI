@@ -1,6 +1,6 @@
 # 配置绑定 —— 把 YAML 配置自动变成 Python 对象
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -29,8 +29,8 @@ my-app:
 Python 代码：
 
 ```python
-from spring.annotations.core import ConfigurationProperties, Component, Validated
-from spring.config.binding import NestedConfigurationProperties
+from springbootai.annotations.core import ConfigurationProperties, Component, Validated
+from springbootai.config.binding import NestedConfigurationProperties
 
 # 嵌套配置类
 @NestedConfigurationProperties
@@ -79,7 +79,7 @@ class MyAppProps:
 
 ### ApplicationContext._current_context 无锁保护 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/context/application_context.py` _current_context 类变量
+**位置**：`springbootai/context/application_context.py` _current_context 类变量
 
 **现象**：`_current_context` 是类变量，在 `__init__` 中直接赋值，无锁保护。多线程环境下存在数据竞争。
 
@@ -87,7 +87,7 @@ class MyAppProps:
 
 ### refresh() 失败后部分 Bean 已注册，状态不一致 — 高 ✅ 已修复 (v2.3.0)
 
-**位置**：`spring/context/application_context.py` refresh()
+**位置**：`springbootai/context/application_context.py` refresh()
 
 **现象**：`refresh()` 按顺序执行各步骤，若中间某步抛异常，前面已注册的 Bean 不会回滚，`_started` 仍为 `False`，再次调用 `refresh()` 行为不可预测。
 
@@ -95,7 +95,7 @@ class MyAppProps:
 
 ### 生产环境配置校验逻辑重复且分散 — 低 ⏳ 待处理 (v2.4.0)
 
-**位置**：`spring/config/config_loader.py` _validate_prod_config
+**位置**：`springbootai/config/config_loader.py` _validate_prod_config
 
 **现象**：`_validate_prod_config` 中对 JWT、Seata、AI 的校验逻辑各自独立，缺乏统一校验框架，违反开闭原则。
 
@@ -114,7 +114,7 @@ class MyAppProps:
 ### 文件位置
 
 ```
-spring/config/spring-configuration-metadata.json
+springbootai/config/spring-configuration-metadata.json
 ```
 
 > 对齐 Java Spring Boot 的 `META-INF/spring-configuration-metadata.json` 约定，文件名保持一致，便于工具识别。
@@ -138,7 +138,7 @@ JSON 结构，顶层包含 `version`、`metadata` 和 `properties` 三部分：
       "defaultValue": 8000
     },
     {
-      "name": "spring.kafka.bootstrap-servers",
+      "name": "springbootai.kafka.bootstrap-servers",
       "type": "java.lang.String",
       "description": "Kafka Bootstrap Servers",
       "defaultValue": "localhost:9092"
@@ -168,40 +168,40 @@ JSON 结构，顶层包含 `version`、`metadata` 和 `properties` 三部分：
 | `server.cors.allow-origins` | List<String> | — | CORS 允许的源列表 |
 | `server.cors.allow-credentials` | Boolean | `false` | CORS 是否允许携带凭证 |
 | `server.csrf.enabled` | Boolean | `false` | 是否启用 CSRF 防护（Bearer Token 认证无需开启） |
-| `spring.application.name` | String | — | 应用名称 |
-| `spring.profiles.active` | String | — | 激活的 Profile |
-| `spring.devtools.restart.enabled` | Boolean | `false` | 是否启用 DevTools 热重载（仅开发环境） |
-| `spring.devtools.restart.poll-interval` | Float | `1.0` | 文件轮询间隔（秒） |
-| `spring.datasource.url` | String | — | 数据库连接 URL |
-| `spring.datasource.username` | String | — | 数据库用户名 |
-| `spring.datasource.password` | String | — | 数据库密码 |
-| `spring.datasource.driver-class-name` | String | — | 数据库驱动类名 |
-| `spring.datasource.pool-size` | Integer | `10` | 连接池大小 |
-| `spring.ddl-auto.mode` | String | `none` | DDL 自动生成模式（none/create/update/validate/create-drop） |
-| `spring.ddl-auto.entity-packages` | List<String> | — | @Entity 实体类所在包列表 |
-| `spring.security.jwt.secret-key` | String | — | JWT 签名密钥（长度 ≥ 32，生产环境必须配置） |
-| `spring.security.jwt.access-token-expiry` | Integer | `3600` | Access Token 过期时间（秒） |
-| `spring.security.jwt.refresh-token-expiry` | Integer | `604800` | Refresh Token 过期时间（秒） |
-| `spring.security.oauth2.resourceserver.jwt.issuer-uri` | String | — | OAuth2 Authorization Server 的 Issuer URI |
-| `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` | String | — | OAuth2 JWKS 公钥集 URI |
-| `spring.rabbitmq.host` | String | `localhost` | RabbitMQ 主机 |
-| `spring.rabbitmq.port` | Integer | `5672` | RabbitMQ 端口 |
-| `spring.kafka.bootstrap-servers` | String | `localhost:9092` | Kafka Bootstrap Servers |
-| `spring.kafka.consumer.group-id` | String | — | Kafka 消费者组 ID |
-| `spring.kafka.consumer.auto-offset-reset` | String | `latest` | Kafka 消费者 Offset 重置策略（latest/earliest） |
-| `spring.redis.host` | String | `localhost` | Redis 主机 |
-| `spring.redis.port` | Integer | `6379` | Redis 端口 |
-| `spring.cloud.nacos.discovery.server-addr` | String | — | Nacos 服务发现地址 |
-| `spring.cloud.seata.mode` | String | `at` | Seata 分布式事务模式（at/tcc/http/distributed） |
+| `springbootai.application.name` | String | — | 应用名称 |
+| `springbootai.profiles.active` | String | — | 激活的 Profile |
+| `springbootai.devtools.restart.enabled` | Boolean | `false` | 是否启用 DevTools 热重载（仅开发环境） |
+| `springbootai.devtools.restart.poll-interval` | Float | `1.0` | 文件轮询间隔（秒） |
+| `springbootai.datasource.url` | String | — | 数据库连接 URL |
+| `springbootai.datasource.username` | String | — | 数据库用户名 |
+| `springbootai.datasource.password` | String | — | 数据库密码 |
+| `springbootai.datasource.driver-class-name` | String | — | 数据库驱动类名 |
+| `springbootai.datasource.pool-size` | Integer | `10` | 连接池大小 |
+| `springbootai.ddl-auto.mode` | String | `none` | DDL 自动生成模式（none/create/update/validate/create-drop） |
+| `springbootai.ddl-auto.entity-packages` | List<String> | — | @Entity 实体类所在包列表 |
+| `springbootai.security.jwt.secret-key` | String | — | JWT 签名密钥（长度 ≥ 32，生产环境必须配置） |
+| `springbootai.security.jwt.access-token-expiry` | Integer | `3600` | Access Token 过期时间（秒） |
+| `springbootai.security.jwt.refresh-token-expiry` | Integer | `604800` | Refresh Token 过期时间（秒） |
+| `springbootai.security.oauth2.resourceserver.jwt.issuer-uri` | String | — | OAuth2 Authorization Server 的 Issuer URI |
+| `springbootai.security.oauth2.resourceserver.jwt.jwk-set-uri` | String | — | OAuth2 JWKS 公钥集 URI |
+| `springbootai.rabbitmq.host` | String | `localhost` | RabbitMQ 主机 |
+| `springbootai.rabbitmq.port` | Integer | `5672` | RabbitMQ 端口 |
+| `springbootai.kafka.bootstrap-servers` | String | `localhost:9092` | Kafka Bootstrap Servers |
+| `springbootai.kafka.consumer.group-id` | String | — | Kafka 消费者组 ID |
+| `springbootai.kafka.consumer.auto-offset-reset` | String | `latest` | Kafka 消费者 Offset 重置策略（latest/earliest） |
+| `springbootai.redis.host` | String | `localhost` | Redis 主机 |
+| `springbootai.redis.port` | Integer | `6379` | Redis 端口 |
+| `springbootai.cloud.nacos.discovery.server-addr` | String | — | Nacos 服务发现地址 |
+| `springbootai.cloud.seata.mode` | String | `at` | Seata 分布式事务模式（at/tcc/http/distributed） |
 | `management.endpoints.web.security.enabled` | Boolean | `true` | Actuator 敏感端点鉴权开关 |
 | `management.endpoints.web.security.roles` | List<String> | `["ADMIN","ACTUATOR"]` | Actuator 访问角色列表 |
-| `spring.ai.provider` | String | — | AI 模型提供商（openai/deepseek/ollama/zhipu/fake） |
-| `spring.ai.api-key` | String | — | AI API Key |
-| `spring.ai.allow-fake` | Boolean | `false` | 无 API Key 时是否降级 FakeChatModel |
+| `springbootai.ai.provider` | String | — | AI 模型提供商（openai/deepseek/ollama/zhipu/fake） |
+| `springbootai.ai.api-key` | String | — | AI API Key |
+| `springbootai.ai.allow-fake` | Boolean | `false` | 无 API Key 时是否降级 FakeChatModel |
 
 ### 如何在 IDE 中使用
 
-1. **保持文件位置不变**：文件需放在 `spring/config/spring-configuration-metadata.json`，IDE 插件按此路径检索。
+1. **保持文件位置不变**：文件需放在 `springbootai/config/spring-configuration-metadata.json`，IDE 插件按此路径检索。
 2. **安装对应插件**：
    - IntelliJ IDEA：安装 Spring Boot 插件，它会识别 `spring-configuration-metadata.json` 文件并提供 `application.yml` 的自动补全。
    - VS Code：安装 Spring Boot Tools 扩展，可识别同类元数据文件。
@@ -216,7 +216,7 @@ JSON 结构，顶层包含 `version`、`metadata` 和 `properties` 三部分：
 | 维度 | Java Spring Boot | SpringBootAI |
 |------|------------------|--------------|
 | 文件名 | `spring-configuration-metadata.json` | `spring-configuration-metadata.json`（同名） |
-| 文件位置 | `META-INF/`（jar 内） | `spring/config/`（源码目录） |
+| 文件位置 | `META-INF/`（jar 内） | `springbootai/config/`（源码目录） |
 | 文件格式 | JSON（`properties` + `hints`） | JSON（`properties`，暂无 `hints`） |
 | 类型命名 | Java 全限定类名（如 `java.lang.Integer`） | 同 Java 命名（保持一致） |
 | 生成方式 | 注解处理器自动生成（`@ConfigurationProperties`） | 手动维护 JSON 文件 |

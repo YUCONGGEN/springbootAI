@@ -1,4 +1,4 @@
-from spring.annotations.core import Configuration, Bean, Value, ConfigurationProperties
+from springbootai.annotations.core import Configuration, Bean, Value, ConfigurationProperties
 
 
 @Configuration

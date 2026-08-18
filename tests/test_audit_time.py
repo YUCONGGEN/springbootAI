@@ -19,11 +19,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.orm import (
+from springbootai.orm import (
     DdlAutoManager, entity, Id, CreateTime, UpdateTime,
     create_time_column, update_time_column, AuditTimeExecutor,
 )
-from spring.orm.pymybatis.pool import create_connection_pool
+from springbootai.orm.pymybatis.pool import create_connection_pool
 
 
 # ==================== 测试实体 ====================

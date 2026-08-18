@@ -12,13 +12,13 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RateLimit, CircuitBreaker, Idempotent, AuditLog, FeatureToggle,
     Lock, Metrics, Synchronized, Validate, Trace, LogExecutionTime,
     Transactional, Cacheable, Retryable, Async, Scheduled, AsyncResult,
     get_spring_annotations,
 )
-from spring.retry.retry_annotations import Backoff
+from springbootai.retry.retry_annotations import Backoff
 
 
 class TestRateLimit:

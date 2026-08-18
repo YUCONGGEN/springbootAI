@@ -1,7 +1,7 @@
 # SpringBootAI AI 模块使用指南 —— 小白也能看懂
 
 > 让你的 Python 程序能和 ChatGPT、DeepSeek 等大模型聊天、回答问题、调用你的函数、读你的文档来回答。
-> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.3.0 / SpringBootAI AI 2.3.0
+> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.3.2
 
 ---
 
@@ -119,7 +119,7 @@ pip install -r requirements-ai.txt
 > 假模型不需要 API Key，非常适合先理解代码怎么写、流程怎么走。就像学车先在模拟器上练，不上真路。
 
 ```python
-from spring.ai import ChatClientBuilder, FakeChatModel
+from springbootai.ai import ChatClientBuilder, FakeChatModel
 
 # 创建一个假的聊天客户端（你说啥，它学你说话）
 client = ChatClientBuilder(FakeChatModel(prefix="AI:")).build()
@@ -144,7 +144,7 @@ export DEEPSEEK_API_KEY=sk-你的真实key
 3. 用自动装配的方式运行：
 
 ```python
-from spring.ai import configure_ai
+from springbootai.ai import configure_ai
 
 beans = configure_ai()          # 读环境变量/application.yml，自动创建好所有 AI 组件
 client = beans["aiChatClient"]  # 拿到的就是"会聊天的助手"
@@ -183,7 +183,7 @@ pip install -r requirements-ai.txt
 ### 最小示例（无需真实 API key，用假模型即可运行）
 
 ```python
-from spring.ai import ChatClientBuilder, FakeChatModel
+from springbootai.ai import ChatClientBuilder, FakeChatModel
 
 client = ChatClientBuilder(FakeChatModel(prefix="AI:")).build()
 print(client.prompt().user("你好").call().content())
@@ -193,9 +193,9 @@ print(client.prompt().user("你好").call().content())
 ### 接入真实 OpenAI 兼容模型
 
 ```python
-from spring.ai import configure_ai
+from springbootai.ai import configure_ai
 
-# 读取 application.yml 的 spring.ai.* 配置，自动装配所有 Bean
+# 读取 application.yml 的 springbootai.ai.* 配置，自动装配所有 Bean
 beans = configure_ai()
 client = beans["aiChatClient"]
 print(client.prompt().user("你好").call().content())
@@ -218,7 +218,7 @@ print(client.prompt().user("你好").call().content())
 
 > **知道如何通过配置文件切换模型厂商、调温度、配向量库——不用改代码，只改配置。**
 
-所有 AI 组件的参数都在 `spring.ai.*` 下配置，支持环境变量 `${ENV:default}` 覆盖，优先级：**环境变量 > application.yml > 程序默认值**。
+所有 AI 组件的参数都在 `springbootai.ai.*` 下配置，支持环境变量 `${ENV:default}` 覆盖，优先级：**环境变量 > application.yml > 程序默认值**。
 
 ### 配置是怎么被读取的？
 
@@ -274,7 +274,7 @@ spring:
 ### 类型转换验证代码
 
 ```python
-from spring.ai import AIProperties, bind_ai_config
+from springbootai.ai import AIProperties, bind_ai_config
 
 props: AIProperties = bind_ai_config({
     "default-provider": "openai",
@@ -315,7 +315,7 @@ assert props.circuit_breaker.enabled is False
 
 **大白话**：当你在 yml 里写 `vector-store.type=redis` 或 `memory.store=redis`，框架会自动用已有的 Redis 连接——不需要你再传一遍 Redis 客户端。
 
-当 `vector-store.type=redis` 或 `memory.store=redis` 时，`configure_ai` 自动复用框架全局 `spring.utils.redis_client.redis_client` 单例，**无需手动传 redis_client 参数**。`RedisVectorStore` 与 `RedisChatMemory` 统一用框架 `RedisClient` 封装接口（`hash_set`/`hash_get_all`/`list_push`/`list_range`），同一个 client 同时满足两者。若传入原生 `redis.Redis` 或测试 stub，自动降级原生接口。会话记忆 list 键每次 add 刷新 TTL（默认 86400 秒），防止 Redis 无限增长。
+当 `vector-store.type=redis` 或 `memory.store=redis` 时，`configure_ai` 自动复用框架全局 `springbootai.utils.redis_client.redis_client` 单例，**无需手动传 redis_client 参数**。`RedisVectorStore` 与 `RedisChatMemory` 统一用框架 `RedisClient` 封装接口（`hash_set`/`hash_get_all`/`list_push`/`list_range`），同一个 client 同时满足两者。若传入原生 `redis.Redis` 或测试 stub，自动降级原生接口。会话记忆 list 键每次 add 刷新 TTL（默认 86400 秒），防止 Redis 无限增长。
 
 ### 新手常见错误
 
@@ -338,10 +338,10 @@ assert props.circuit_breaker.enabled is False
 
 **大白话**：在类上贴这个标签，告诉框架"这个类要用哪个厂商的哪个模型，温度调多少"。
 
-**参数**：`provider`（str，默认 ""，openai/ollama/deepseek/moonshot/zhipu，空时读 spring.ai.default-provider）、`model`（str，默认 ""）、`temperature`（float，默认 None）
+**参数**：`provider`（str，默认 ""，openai/ollama/deepseek/moonshot/zhipu，空时读 springbootai.ai.default-provider）、`model`（str，默认 ""）、`temperature`（float，默认 None）
 
 ```python
-from spring.ai import AiClient
+from springbootai.ai import AiClient
 
 @AiClient(provider="openai", model="gpt-4o", temperature=0.3)
 class ChatService:
@@ -355,7 +355,7 @@ class ChatService:
 **参数**：`name`（str，默认 ""，空时用函数名）、`description`（str，默认 ""，空时取 docstring）、`return_description`（str，默认 ""）
 
 ```python
-from spring.ai import Tool
+from springbootai.ai import Tool
 
 @Tool(description="查询订单状态")
 def get_order_status(order_id: str, detail: bool = False) -> str:
@@ -368,7 +368,7 @@ def get_order_status(order_id: str, detail: bool = False) -> str:
 ### @AiAdvisor / @AiMemory
 
 ```python
-from spring.ai import AiAdvisor, AiMemory
+from springbootai.ai import AiAdvisor, AiMemory
 
 @AiAdvisor(name="ragAdvisor", order=5)
 class RagAdvisor: ...
@@ -386,7 +386,7 @@ class ChatService: ...
 `client.prompt().user("...").call().content()` 是最高频的调用模式，链式 API 支持设置系统消息、传参数、流式输出等。
 
 ```python
-from spring.ai import ChatClientBuilder, FakeChatModel
+from springbootai.ai import ChatClientBuilder, FakeChatModel
 
 model = FakeChatModel(prefix="AI:")
 client = (ChatClientBuilder(model)
@@ -428,7 +428,7 @@ answer = client.prompt().user("你好").content()
 Advisor 在模型调用前后介入，按 `order` 升序应用请求阶段、降序应用响应阶段。
 
 ```python
-from spring.ai import (
+from springbootai.ai import (
     ChatClientBuilder, FakeChatModel, FakeEmbeddingModel,
     InMemoryChatMemory, MessageChatMemoryAdvisor,
     QuestionAnswerAdvisor, SimpleInMemoryVectorStore,
@@ -474,7 +474,7 @@ client.prompt().user("我叫什么").call()
 ### 三步走：读 → 切 → 存
 
 ```python
-from spring.ai import TextReader, TokenTextSplitter, SimpleInMemoryVectorStore
+from springbootai.ai import TextReader, TokenTextSplitter, SimpleInMemoryVectorStore
 
 # 第 1 步：读取文档
 doc = TextReader().read_text("长文档内容...", source="manual")
@@ -498,7 +498,7 @@ for c in chunks:
 
 ```python
 from langchain_community.vectorstores import FAISS
-from spring.ai import LangChainVectorStore
+from springbootai.ai import LangChainVectorStore
 
 lc_store = FAISS.from_texts(["文档A", "文档B"], embedding=your_langchain_embedding)
 store = LangChainVectorStore(langchain_store=lc_store)   # 包装为框架 VectorStore
@@ -522,7 +522,7 @@ store = LangChainVectorStore(langchain_store=lc_store)   # 包装为框架 Vecto
 `@Tool` 装饰函数 → 注册到 `ToolRegistry` → 模型自动决定何时调用 → 框架执行并回填结果 → 模型续写最终回复。全程你不需要写任何判断逻辑。
 
 ```python
-from spring.ai import ToolRegistry, Tool
+from springbootai.ai import ToolRegistry, Tool
 
 registry = ToolRegistry()
 
@@ -557,11 +557,11 @@ assert registry.execute("add", {"a": 1, "b": 2}) == 3
 
 ### 一句话总结
 
-`configure_ai()` 读取 `spring.ai.*` 配置，构建并注册 ChatModel/EmbeddingModel/ChatMemory/VectorStore/ChatClient Bean 到 BeanRegistry（含熔断器注入）。未配置 api-key 时自动降级为 FakeChatModel/FakeEmbeddingModel。
+`configure_ai()` 读取 `springbootai.ai.*` 配置，构建并注册 ChatModel/EmbeddingModel/ChatMemory/VectorStore/ChatClient Bean 到 BeanRegistry（含熔断器注入）。未配置 api-key 时自动降级为 FakeChatModel/FakeEmbeddingModel。
 
 ```python
-from spring.ai import configure_ai
-from spring.context.registry import BeanRegistry
+from springbootai.ai import configure_ai
+from springbootai.context.registry import BeanRegistry
 
 registry = BeanRegistry()
 beans = configure_ai(registry=registry)   # 读取 application.yml
@@ -595,17 +595,17 @@ answer = client.prompt().user("你好").call().content()
 
 | 文件 | 职责 |
 |------|------|
-| spring/ai/core.py | ChatClient/ChatModel/EmbeddingModel/Advisor/Message 抽象（含 tool_call 执行闭环） |
-| spring/ai/annotations.py | @AiClient/@Tool/@AiAdvisor/@AiMemory 注解 |
-| spring/ai/providers.py | OpenAI兼容/Ollama/DeepSeek/Moonshot/ZhipuAI Provider（LangChain优先，HTTP降级）+ Fake测试模型 + 真流式SSE/async |
-| spring/ai/advisors.py | QuestionAnswerAdvisor(RAG)/MessageChatMemoryAdvisor/SimpleLoggerAdvisor |
-| spring/ai/memory.py | ChatMemory (InMemory/Redis) |
-| spring/ai/vectorstore.py | VectorStore 抽象 + SimpleInMemoryVectorStore + RedisVectorStore（持久化）+ LangChainVectorStore（适配器） |
-| spring/ai/etl.py | TextReader/TokenTextSplitter/CharacterTextSplitter（切片优先委托 langchain-text-splitters，未装则降级内置） |
-| spring/ai/tools.py | ToolRegistry 函数调用注册表（签名自动生成 schema） |
-| spring/ai/resilience.py | AICircuitBreaker 熔断状态机 + resilient_call 重试（复用 spring.retry） |
-| spring/ai/observability.py | AIMetrics 单例（复用 PrometheusMetrics，记录调用/token/延迟/熔断） |
-| spring/ai/autoconfig.py | AIProperties 类型化绑定 + spring.ai.* 配置装配 Bean |
+| springbootai/ai/core.py | ChatClient/ChatModel/EmbeddingModel/Advisor/Message 抽象（含 tool_call 执行闭环） |
+| springbootai/ai/annotations.py | @AiClient/@Tool/@AiAdvisor/@AiMemory 注解 |
+| springbootai/ai/providers.py | OpenAI兼容/Ollama/DeepSeek/Moonshot/ZhipuAI Provider（LangChain优先，HTTP降级）+ Fake测试模型 + 真流式SSE/async |
+| springbootai/ai/advisors.py | QuestionAnswerAdvisor(RAG)/MessageChatMemoryAdvisor/SimpleLoggerAdvisor |
+| springbootai/ai/memory.py | ChatMemory (InMemory/Redis) |
+| springbootai/ai/vectorstore.py | VectorStore 抽象 + SimpleInMemoryVectorStore + RedisVectorStore（持久化）+ LangChainVectorStore（适配器） |
+| springbootai/ai/etl.py | TextReader/TokenTextSplitter/CharacterTextSplitter（切片优先委托 langchain-text-splitters，未装则降级内置） |
+| springbootai/ai/tools.py | ToolRegistry 函数调用注册表（签名自动生成 schema） |
+| springbootai/ai/resilience.py | AICircuitBreaker 熔断状态机 + resilient_call 重试（复用 springbootai.retry） |
+| springbootai/ai/observability.py | AIMetrics 单例（复用 PrometheusMetrics，记录调用/token/延迟/熔断） |
+| springbootai/ai/autoconfig.py | AIProperties 类型化绑定 + springbootai.ai.* 配置装配 Bean |
 
 ---
 
@@ -618,7 +618,7 @@ answer = client.prompt().user("你好").call().content()
 Provider 把工具 schema 注入请求体，模型返回 tool_calls 时由 `ChatModel.call()` 基类统一执行→回填 tool 消息→续写，最多 5 轮防死循环。业务侧只需注册工具并传入 `default_tools`，无需手写循环。
 
 ```python
-from spring.ai import ChatClientBuilder, FakeChatModel, ToolRegistry, Tool
+from springbootai.ai import ChatClientBuilder, FakeChatModel, ToolRegistry, Tool
 
 registry = ToolRegistry()
 
@@ -643,7 +643,7 @@ print(client.prompt().user("调用工具查天气").call().content())
 - **重试**：第一次占线，自动等 500ms 再打，最多打 3 次
 - **熔断**：连续 5 次都打不通，就暂时不打了一一过 30 秒再试试看
 
-`resilient_call()` 复用框架 `spring.retry.retry_decorator.retry` 对 `TransientError`（429/5xx/超时/连接错误）自动重试；`AICircuitBreaker` 复用 `spring.aop.comprehensive_aop` 的 CLOSED/OPEN/HALF_OPEN 状态机，失败达阈值熔断、`recovery-timeout` 后半开放行探测，保护下游 LLM API。Redis 可用时跨实例共享熔断状态，不可用时降级本地内存。Provider 的 HTTP 调用默认经 `resilient_call` 包装，配置即可调（见配置中 `max-retries`、`circuit-breaker` 段）。
+`resilient_call()` 复用框架 `springbootai.retry.retry_decorator.retry` 对 `TransientError`（429/5xx/超时/连接错误）自动重试；`AICircuitBreaker` 复用 `springbootai.aop.comprehensive_aop` 的 CLOSED/OPEN/HALF_OPEN 状态机，失败达阈值熔断、`recovery-timeout` 后半开放行探测，保护下游 LLM API。Redis 可用时跨实例共享熔断状态，不可用时降级本地内存。Provider 的 HTTP 调用默认经 `resilient_call` 包装，配置即可调（见配置中 `max-retries`、`circuit-breaker` 段）。
 
 **线上安全开关**：`AI_ALLOW_FAKE` 环境变量控制 api_key 缺失时的行为。
 - `true`（默认）：api_key 缺失时静默降级 `FakeChatModel`，适合开发/测试
@@ -698,7 +698,7 @@ asyncio.run(chat())
 `RedisVectorStore` 用 Redis hash 持久化文档（键 `springpy:ai:vectorstore:{collection}`），支持多副本跨实例检索；注入 EmbeddingModel 实现检索时自动嵌入。`max_scan` 参数限制单次检索扫描上限（默认 10000），防止大规模文档 OOM。配置 `vector-store.type: redis` 即用（自动复用框架全局 redis_client 单例），无 client 时安全降级为内存。
 
 ```python
-from spring.ai import RedisVectorStore, FakeEmbeddingModel, SearchRequest
+from springbootai.ai import RedisVectorStore, FakeEmbeddingModel, SearchRequest
 
 store = RedisVectorStore(redis_client=redis_client,
                          collection="docs",
@@ -711,7 +711,7 @@ results = store.similarity_search(SearchRequest(query="SpringBootAI", top_k=2))
 # 结果: results = [最相关的两条文档]
 ```
 
-`configure_ai()` 会按 `spring.ai.vector-store.type` 自动装配 `aiVectorStore`（redis 或 inmemory）并注入 `aiEmbeddingModel`，让 RAG 真正自动可用。
+`configure_ai()` 会按 `springbootai.ai.vector-store.type` 自动装配 `aiVectorStore`（redis 或 inmemory）并注入 `aiEmbeddingModel`，让 RAG 真正自动可用。
 
 ---
 
@@ -745,7 +745,7 @@ spring:
 ### 自动装配 + 基础聊天
 
 ```python
-from spring.ai import configure_ai
+from springbootai.ai import configure_ai
 
 beans = configure_ai()                      # 读取 application.yml 自动装配（AI_PROVIDER=deepseek）
 client = beans["aiChatClient"]              # 已注入 DeepSeek + Memory Advisor
@@ -756,7 +756,7 @@ print(client.prompt().user("用一句话介绍 SpringBootAI").call().content())
 等价手动构建：
 
 ```python
-from spring.ai import OpenAICompatChatModel, ChatClientBuilder
+from springbootai.ai import OpenAICompatChatModel, ChatClientBuilder
 
 model = OpenAICompatChatModel(
     provider="deepseek",
@@ -775,7 +775,7 @@ print(client.prompt().user("什么是依赖注入?").call().content())
 > `astream()` 是异步生成器，**不要**对其 `await`。
 
 ```python
-from spring.ai import OpenAICompatChatModel, Message
+from springbootai.ai import OpenAICompatChatModel, Message
 
 model = OpenAICompatChatModel(provider="deepseek",
                               api_key="YOUR_DEEPSEEK_API_KEY",
@@ -800,7 +800,7 @@ asyncio.run(chat())
 ### 多轮会话记忆
 
 ```python
-from spring.ai import InMemoryChatMemory, MessageChatMemoryAdvisor, OpenAICompatChatModel, ChatClientBuilder
+from springbootai.ai import InMemoryChatMemory, MessageChatMemoryAdvisor, OpenAICompatChatModel, ChatClientBuilder
 
 model = OpenAICompatChatModel(provider="deepseek",
                               api_key="YOUR_DEEPSEEK_API_KEY",
@@ -821,7 +821,7 @@ print(client.prompt().user("我叫什么？").param("conversation_id", "u-1001")
 > DeepSeek 目前**不提供 Embedding API**，RAG 检索嵌入使用确定性 `FakeEmbeddingModel`（仅作演示），线上可换 OpenAI/本地 embedding 向量库。
 
 ```python
-from spring.ai import (
+from springbootai.ai import (
     OpenAICompatChatModel, FakeEmbeddingModel, SimpleInMemoryVectorStore,
     QuestionAnswerAdvisor, ChatClientBuilder, TextReader, TokenTextSplitter,
 )
@@ -854,7 +854,7 @@ print(client.prompt().user("SpringBootAI 是否支持 XML 与注解混合?").cal
 ### Function Calling 工具调用
 
 ```python
-from spring.ai import OpenAICompatChatModel, ToolRegistry, Tool, ChatClientBuilder
+from springbootai.ai import OpenAICompatChatModel, ToolRegistry, Tool, ChatClientBuilder
 
 model = OpenAICompatChatModel(provider="deepseek",
                               api_key="YOUR_DEEPSEEK_API_KEY",
@@ -883,7 +883,7 @@ print(client.prompt().user("帮我查询上海的天气，并计算 3+5").call()
 ### 文档 ETL（切片入库，LangChain 优先）
 
 ```python
-from spring.ai import TextReader, TokenTextSplitter, CharacterTextSplitter
+from springbootai.ai import TextReader, TokenTextSplitter, CharacterTextSplitter
 
 # langchain-text-splitters 已安装时，内部自动委托 RecursiveCharacterTextSplitter
 reader = TextReader()
@@ -898,7 +898,7 @@ print(f"token 切片: {len(tok_chunks)} 段, char 切片: {len(char_chunks)} 段
 ### 韧性：重试 + 熔断（真实 Provider）
 
 ```python
-from spring.ai import OpenAICompatChatModel, AICircuitBreaker, Message
+from springbootai.ai import OpenAICompatChatModel, AICircuitBreaker, Message
 
 cb = AICircuitBreaker(failure_threshold=3, recovery_timeout=30)
 model = OpenAICompatChatModel(provider="deepseek",
@@ -914,7 +914,7 @@ print(model.call([Message.user("你好")]).content())
 ### Spring 注解版（@AiClient + @Tool）
 
 ```python
-from spring.ai import AiClient, Tool
+from springbootai.ai import AiClient, Tool
 
 @AiClient(provider="deepseek", model="deepseek-chat", temperature=0.3)
 class DeepSeekAssistant:
@@ -931,7 +931,7 @@ print(DeepSeekAssistant().order_status("A-123"))
 ### Prometheus 观测
 
 ```python
-from spring.ai import ai_metrics, OpenAICompatChatModel, Message
+from springbootai.ai import ai_metrics, OpenAICompatChatModel, Message
 
 # 直接打点（record_call 为位置参数 duration，单位秒）
 ai_metrics.record_call("deepseek", "deepseek-chat", "success",
@@ -1007,7 +1007,7 @@ A：按 `order` 值从小到大执行。比如 Memory Advisor 设 `order=1`，RA
 
 ### API Key 明文存储在 Provider 实例属性 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/ai/providers.py` OpenAIChatModel.__init__
+**位置**：`springbootai/ai/providers.py` OpenAIChatModel.__init__
 
 **现象**：`self.api_key = api_key` 明文存储。若实例被序列化、打印 repr、或意外进入异常堆栈，密钥会泄漏。
 
@@ -1015,7 +1015,7 @@ A：按 `order` 值从小到大执行。比如 Memory Advisor 设 `order=1`，RA
 
 ### 流式响应异常时 response 对象未关闭 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/ai/providers.py` stream 方法
+**位置**：`springbootai/ai/providers.py` stream 方法
 
 **现象**：流式调用使用 `requests.post(..., stream=True)`，迭代过程中抛出异常时底层 socket 可能未正确关闭，导致连接泄漏。
 
@@ -1023,7 +1023,7 @@ A：按 `order` 值从小到大执行。比如 Memory Advisor 设 `order=1`，RA
 
 ### 工具调用循环缺少总 token 上限保护 — 中 ⏳ 待处理 (v2.3.0)
 
-**位置**：`spring/ai/providers.py` MAX_TOOL_ITERATIONS
+**位置**：`springbootai/ai/providers.py` MAX_TOOL_ITERATIONS
 
 **现象**：`MAX_TOOL_ITERATIONS = 5` 限制了往返轮数，但未限制累计 token 数。每轮工具调用返回超大结果时，5 轮可能消耗数万 token。
 

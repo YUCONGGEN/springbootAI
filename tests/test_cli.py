@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from spring.cli.main import (
+from springbootai.cli.main import (
     create_parser,
     main as cli_main,
     _cmd_version,
@@ -45,11 +45,11 @@ class TestVersionCommand:
             assert 'Python' in output
 
     def test_version_contains_framework_version(self):
-        import spring
+        import springbootai
         with patch('sys.stdout', new=StringIO()) as fake_out:
             cli_main(['version'])
             output = fake_out.getvalue()
-            assert spring.__version__ in output
+            assert springbootai.__version__ in output
 
 
 class TestInfoCommand:
@@ -161,7 +161,7 @@ class TestRunCliIntegration:
 
     def test_run_cli_dispatches_to_subcommand(self):
         """验证 run_cli 能正确分发子命令"""
-        from spring.main import run_cli
+        from springbootai.main import run_cli
 
         with patch('sys.argv', ['springbootai', 'version']):
             with patch('sys.stdout', new=StringIO()):
@@ -169,12 +169,12 @@ class TestRunCliIntegration:
 
     def test_run_cli_traditional_mode(self):
         """验证传统启动模式不会被误判为子命令"""
-        from spring.main import run_cli
+        from springbootai.main import run_cli
 
         # 传统模式：springbootai myapp.Application
         # 这个测试只验证参数解析，不实际运行应用
         with patch('sys.argv', ['springbootai', 'myapp.Application', '--port', '8080']):
-            with patch('spring.main.run') as mock_run:
+            with patch('springbootai.main.run') as mock_run:
                 with patch('importlib.import_module') as mock_import:
                     mock_import.side_effect = ImportError("test module not found")
                     with pytest.raises(ImportError):

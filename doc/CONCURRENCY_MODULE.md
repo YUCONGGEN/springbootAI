@@ -1,6 +1,6 @@
 # SpringBootAI 并发与弹性模块指南
 
-> 框架版本：SpringBootAI 2.3.0
+> SpringBootAI 2.3.2
 
 ---
 
@@ -57,7 +57,7 @@
 ### 怎么用？
 
 ```python
-from spring.annotations import Async, Service
+from springbootai.annotations import Async, Service
 
 
 @Service
@@ -101,7 +101,7 @@ print("调用已返回")  # 这行会先于"邮件已发送至"打印
 ### 怎么用？
 
 ```python
-from spring.annotations import Async, AsyncResult, Service
+from springbootai.annotations import Async, AsyncResult, Service
 
 
 @Service
@@ -142,7 +142,7 @@ future = order_service.create_order_async("U001")
 | 属性 | 说明 |
 |------|------|
 | `_annotation_type` | `scheduling` |
-| 实现位置 | `spring/scheduling/scheduler.py` 的 `Scheduler` 类 |
+| 实现位置 | `springbootai/scheduling/scheduler.py` 的 `Scheduler` 类 |
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -158,7 +158,7 @@ future = order_service.create_order_async("U001")
 ### 怎么用？
 
 ```python
-from spring.annotations import Scheduled, Service
+from springbootai.annotations import Scheduled, Service
 
 
 @Service
@@ -213,7 +213,7 @@ class ReportService:
 ### 怎么用？
 
 ```python
-from spring.annotations import RateLimit, RestController, PostMapping
+from springbootai.annotations import RateLimit, RestController, PostMapping
 
 
 @RestController
@@ -264,7 +264,7 @@ class UserController:
 ### 怎么用？
 
 ```python
-from spring.annotations import CircuitBreaker, Service
+from springbootai.annotations import CircuitBreaker, Service
 
 
 @Service
@@ -315,7 +315,7 @@ class PaymentService:
 ### 怎么用？
 
 ```python
-from spring.annotations import Idempotent, RestController, PostMapping
+from springbootai.annotations import Idempotent, RestController, PostMapping
 
 
 @RestController
@@ -368,7 +368,7 @@ class PayController:
 ### 怎么用？
 
 ```python
-from spring.annotations import Lock, Service
+from springbootai.annotations import Lock, Service
 
 
 @Service
@@ -418,7 +418,7 @@ class AccountService:
 ### 怎么用？
 
 ```python
-from spring.annotations import Synchronized, Service
+from springbootai.annotations import Synchronized, Service
 
 
 @Service
@@ -462,14 +462,14 @@ class CacheService:
 
 | 注解 | 实现位置 | 测试文件 |
 |------|---------|---------|
-| `@Async` | `spring/annotations/core.py` | `tests/test_async_annotation.py` |
-| `@AsyncResult` | `spring/annotations/core.py` | `tests/test_async_annotation.py` |
-| `@Scheduled` | `spring/scheduling/scheduler.py` | `tests/test_scheduling_module.py` |
-| `@RateLimit` | `spring/annotations/core.py` | `tests/test_comprehensive_aop.py` |
-| `@CircuitBreaker` | `spring/annotations/core.py` | `tests/test_comprehensive_aop.py` |
-| `@Idempotent` | `spring/annotations/core.py` | `tests/test_comprehensive_aop.py` |
-| `@Lock` | `spring/annotations/core.py` | `tests/test_comprehensive_aop.py` |
-| `@Synchronized` | `spring/annotations/core.py` | `tests/test_comprehensive_aop.py` |
+| `@Async` | `springbootai/annotations/core.py` | `tests/test_async_annotation.py` |
+| `@AsyncResult` | `springbootai/annotations/core.py` | `tests/test_async_annotation.py` |
+| `@Scheduled` | `springbootai/scheduling/scheduler.py` | `tests/test_scheduling_module.py` |
+| `@RateLimit` | `springbootai/annotations/core.py` | `tests/test_comprehensive_aop.py` |
+| `@CircuitBreaker` | `springbootai/annotations/core.py` | `tests/test_comprehensive_aop.py` |
+| `@Idempotent` | `springbootai/annotations/core.py` | `tests/test_comprehensive_aop.py` |
+| `@Lock` | `springbootai/annotations/core.py` | `tests/test_comprehensive_aop.py` |
+| `@Synchronized` | `springbootai/annotations/core.py` | `tests/test_comprehensive_aop.py` |
 
 完整测试报告见 [TEST_REPORT.md](TEST_REPORT.md)。
 

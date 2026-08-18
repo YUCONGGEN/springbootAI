@@ -77,13 +77,7 @@ services:
     container_name: springbootai-admin
     ports:
       - "1111:8181"
-    environment:
-      # 通过环境变量直接注册 SpringBootAI 实例（无需 Java 客户端）
-      - SPRING_BOOT_ADMIN_INSTANCE_NAME=springbootai
-      - SPRING_BOOT_ADMIN_INSTANCE_HEALTH_URL=http://host.docker.internal:8000/actuator/health
-      - SPRING_BOOT_ADMIN_INSTANCE_MANAGEMENT_URL=http://host.docker.internal:8000/actuator
-      - SPRING_BOOT_ADMIN_INSTANCE_SERVICE_URL=http://host.docker.internal:8000
-      # 修复 Windows Docker Desktop cgroup v2 兼容性问题
+    environment:      # 修复 Windows Docker Desktop cgroup v2 兼容性问题
       - JAVA_TOOL_OPTIONS=-XX:-UseContainerSupport
     extra_hosts:
       - "host.docker.internal:host-gateway"

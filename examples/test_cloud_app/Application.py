@@ -9,7 +9,7 @@ for _p in (_PROJECT_ROOT, _EXAMPLES_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from spring import SpringBootApplication
+from springbootai import SpringBootApplication
 
 
 @SpringBootApplication(scan_base_packages=["testapp"])
@@ -19,5 +19,5 @@ class Application:
 
 
 if __name__ == "__main__":
-    from spring import run
+    from springbootai import run
     run(Application, port=8080)

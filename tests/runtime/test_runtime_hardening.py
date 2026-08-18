@@ -9,15 +9,15 @@ import pytest
 from fastapi import FastAPI
 from starlette.requests import Request
 
-from spring.annotations.cloud import GlobalTransactional, NacosValue
-from spring.annotations.core import GetMapping
-from spring.aop.cloud_aop import global_transactional_decorator
-from spring.cloud.gateway import GatewayFilter, GatewayRouter
-from spring.cloud.seata import SeataTransactionManager, init_seata
-from spring.config.config_loader import ConfigLoader, ConfigurationError
-from spring.context.application_context import ApplicationContext
-from spring.main import SpringApplication
-from spring.web.web_context import WebApplicationContext
+from springbootai.annotations.cloud import GlobalTransactional, NacosValue
+from springbootai.annotations.core import GetMapping
+from springbootai.aop.cloud_aop import global_transactional_decorator
+from springbootai.cloud.gateway import GatewayFilter, GatewayRouter
+from springbootai.cloud.seata import SeataTransactionManager, init_seata
+from springbootai.config.config_loader import ConfigLoader, ConfigurationError
+from springbootai.context.application_context import ApplicationContext
+from springbootai.main import SpringApplication
+from springbootai.web.web_context import WebApplicationContext
 
 
 def _request(path: str = "/") -> Request:
@@ -485,7 +485,7 @@ def test_http_branch_without_compensation_callback_fails_closed():
 
 
 def test_health_and_readiness_include_every_enabled_component(monkeypatch):
-    import spring.web.health as health
+    import springbootai.web.health as health
 
     components = {
         "redis": {"status": "UP", "enabled": True},
@@ -510,7 +510,7 @@ def test_health_check_timeout_does_not_leak_threads(monkeypatch):
     修复线程泄漏（P1）：旧版本每次健康检查创建新的 daemon 线程，
     组件永久卡住时线程不断积累。新版本使用模块级有界线程池。
     """
-    import spring.web.health as health
+    import springbootai.web.health as health
 
     # 模拟永久卡住的组件检查（永远不会返回）
     hang_event = threading.Event()
@@ -556,7 +556,7 @@ def test_health_check_timeout_does_not_leak_threads(monkeypatch):
 
 def test_health_check_pool_is_reused_across_calls(monkeypatch):
     """多次健康检查复用同一个线程池，不创建新的 ThreadPoolExecutor。"""
-    import spring.web.health as health
+    import springbootai.web.health as health
 
     monkeypatch.setattr(health, "_COMPONENT_CHECKS", {
         "ok": lambda: {"status": "UP", "enabled": True},
@@ -573,7 +573,7 @@ def test_health_check_pool_is_reused_across_calls(monkeypatch):
 
 def test_run_with_timeout_returns_down_on_exception(monkeypatch):
     """_run_with_timeout 捕获组件异常，返回 DOWN 而非传播异常。"""
-    import spring.web.health as health
+    import springbootai.web.health as health
 
     def _failing_check():
         raise ConnectionError("component unavailable")
@@ -585,8 +585,8 @@ def test_run_with_timeout_returns_down_on_exception(monkeypatch):
 
 
 def test_http_compensation_health_reports_store_without_claiming_at(monkeypatch, tmp_path):
-    import spring.web.health as health
-    from spring.cloud.seata import seata_manager
+    import springbootai.web.health as health
+    from springbootai.cloud.seata import seata_manager
 
     seata_manager.configure(
         mode="http",
@@ -608,22 +608,17 @@ def test_http_compensation_health_reports_store_without_claiming_at(monkeypatch,
     seata_manager._transaction_store_path = ""
 
 
-def test_prometheus_endpoint_preserves_content_type(monkeypatch):
-    import spring.web.health as health
-    from spring.monitoring.prometheus import CONTENT_TYPE_LATEST
+def test_prometheus_endpoint_preserves_content_type():
+    from springbootai.monitoring.prometheus import CONTENT_TYPE_LATEST
+    from springbootai.web.actuator import prometheus_endpoint
 
-    context = type("Context", (), {
-        "get_config": lambda self: {"prometheus": {"enabled": True}},
-    })()
-    monkeypatch.setattr(health, "_application_context", context)
-
-    response = health.prometheus_metrics()
+    response = prometheus_endpoint()
     assert response.status_code == 200
     assert response.headers["content-type"] == CONTENT_TYPE_LATEST
 
 
 def test_background_clients_start_only_on_worker_startup(monkeypatch):
-    from spring.messaging import rabbitmq
+    from springbootai.messaging import rabbitmq
 
     application = SpringApplication(type("Main", (), {}))
     application.application_context = type("Context", (), {

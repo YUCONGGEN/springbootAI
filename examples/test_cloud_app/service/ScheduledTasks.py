@@ -1,4 +1,4 @@
-from spring.annotations.core import Component, Scheduled, Slf4j
+from springbootai.annotations.core import Component, Scheduled, Slf4j
 
 
 @Slf4j

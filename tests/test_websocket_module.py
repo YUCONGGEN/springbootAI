@@ -16,7 +16,7 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.websocket import (
+from springbootai.websocket import (
     WebSocketSession, WebSocketSessionRegistry,
     WebSocketHandler, TextWebSocketHandler, BinaryWebSocketHandler,
     ServerEndpoint, AnnotatedEndpointHandler, discover_server_endpoints,

@@ -1,6 +1,6 @@
 """LangChain annotation example using Spring's configured ChainService."""
 
-from spring.langchain import LangChainCall, LangChainClient
+from springbootai.langchain import LangChainCall, LangChainClient
 
 
 @LangChainClient

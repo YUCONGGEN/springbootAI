@@ -9,14 +9,17 @@
 ``LoggingConfigError``（含明确错误信息），而不是静默降级到默认目录。
 """
 import glob
+import logging
 import os
 import time
 
 import pytest
 
-from spring.logging.loguru_logger import (
+from springbootai.logging.loguru_logger import (
     init_logging, spring_logger, LoggingConfigError, SpringLogger, LoguruHandler,
 )
+from springbootai.utils.logger import SpringLogger as StdlibSpringLogger
+from springbootai.config.config_loader import ConfigLoader
 
 
 class TestLoggingConfig:
@@ -70,6 +73,29 @@ class TestLoggingConfig:
         assert spring_logger.level == "WARNING"
         # 恢复 INFO 避免影响后续测试
         spring_logger.reconfigure(level="INFO")
+
+    def test_warn_alias_is_normalized_to_warning(self, tmp_path):
+        """兼容 Spring Boot 常见的 WARN 写法，底层统一使用 WARNING。"""
+        init_logging({"level": "WARN", "log_dir": str(tmp_path / "warn_alias")})
+        assert spring_logger.level == "WARNING"
+
+    def test_invalid_level_raises_readable_config_error(self, tmp_path):
+        """非法等级应在框架配置层失败，不能泄露 Loguru 的内部异常。"""
+        with pytest.raises(LoggingConfigError) as exc_info:
+            init_logging({"level": "VERBOSE", "log_dir": str(tmp_path / "invalid_level")})
+        assert "logging.level" in str(exc_info.value)
+        assert "VERBOSE" in str(exc_info.value)
+
+    def test_silent_config_loader_suppresses_bootstrap_info(self, tmp_path, caplog):
+        """预加载配置时不应在日志等级生效前输出 INFO。"""
+        config_file = tmp_path / "application.yml"
+        config_file.write_text("logging:\n  level: WARNING\n", encoding="utf-8")
+
+        with caplog.at_level(logging.DEBUG, logger="Spring.Config"):
+            loader = ConfigLoader(base_path=str(tmp_path), log_events=False)
+
+        assert loader.get_config()["logging"]["level"] == "WARNING"
+        assert not [record for record in caplog.records if record.name == "Spring.Config"]
 
 
 class TestLogDirStrictValidation:
@@ -180,7 +206,7 @@ class TestLogDirStrictValidation:
         try:
             # 构造 SpringLogger（模拟 import 时的模块级构造）
             SpringLogger._instance = None
-            import spring.logging.loguru_logger as ll
+            import springbootai.logging.loguru_logger as ll
             ll.spring_logger = SpringLogger()
             # logs/ 目录不应被创建
             assert not (tmp_path / 'logs').exists(), \
@@ -232,6 +258,70 @@ class TestUvicornLogInterception:
             logger = logging.getLogger(name)
             assert logger.propagate is False, \
                 f"{name} logger propagate 应为 False，实际: {logger.propagate}"
+
+    def test_loguru_handler_reports_the_business_callsite(self):
+        """标准 logging 经适配器转发后仍保留业务函数的文件和行号。"""
+        if LoguruHandler is None:
+            pytest.skip("loguru is not installed")
+
+        from loguru import logger as loguru_logger
+
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append,
+            format="{file.path}:{function}:{line}:{message}",
+            colorize=False,
+            backtrace=True,
+            diagnose=True,
+        )
+        handler = LoguruHandler()
+        probe = logging.getLogger("springbootai.callsite_probe")
+        original_handlers, original_propagate = probe.handlers[:], probe.propagate
+        probe.handlers = [handler]
+        probe.setLevel(logging.WARNING)
+        probe.propagate = False
+
+        def business_warning():
+            probe.warning("callsite-probe")
+
+        try:
+            business_warning()
+        finally:
+            probe.handlers = original_handlers
+            probe.propagate = original_propagate
+            loguru_logger.remove(sink_id)
+
+        rendered = captured[-1]
+        assert "test_logging_config.py:business_warning:" in rendered
+        assert "callsite-probe" in rendered
+
+    def test_spring_logger_warning_skips_its_wrapper_frame(self):
+        """框架日志门面直接调用时也应定位到业务函数。"""
+        if LoguruHandler is None:
+            pytest.skip("loguru is not installed")
+
+        from loguru import logger as loguru_logger
+
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append,
+            format="{file.path}:{function}:{line}:{message}",
+            colorize=False,
+            backtrace=True,
+            diagnose=True,
+        )
+
+        def business_warning():
+            spring_logger.warning("spring-logger-callsite")
+
+        try:
+            business_warning()
+        finally:
+            loguru_logger.remove(sink_id)
+
+        rendered = captured[-1]
+        assert "test_logging_config.py:business_warning:" in rendered
+        assert "spring-logger-callsite" in rendered
 
     def test_uvicorn_access_log_written_to_file(self, tmp_path):
         """Uvicorn 访问日志应通过 LoguruHandler 写入配置的日志文件。
@@ -304,3 +394,104 @@ class TestUvicornLogInterception:
         assert 'Started server process' in all_content
         assert 'Application startup complete' in all_content
         assert 'Uvicorn running on' in all_content
+
+
+class TestLogLevelFiltering:
+    """验证配置阈值会过滤所有日志入口。"""
+
+    @staticmethod
+    def _access_record(status_code: int) -> logging.LogRecord:
+        return logging.LogRecord(
+            name='uvicorn.access', level=logging.INFO, pathname=__file__,
+            lineno=1,
+            msg=f'127.0.0.1:52073 - "GET /api/health HTTP/1.1" {status_code}',
+            args=None, exc_info=None,
+        )
+
+    def test_access_status_is_promoted_to_warning_or_error(self):
+        """4xx 访问记录为 WARNING，5xx 访问记录为 ERROR。"""
+        if LoguruHandler is None:
+            pytest.skip("loguru is not installed")
+
+        assert LoguruHandler._resolve_loguru_level(self._access_record(200)) == 'INFO'
+        assert LoguruHandler._resolve_loguru_level(self._access_record(401)) == 'WARNING'
+        assert LoguruHandler._resolve_loguru_level(self._access_record(403)) == 'WARNING'
+        assert LoguruHandler._resolve_loguru_level(self._access_record(500)) == 'ERROR'
+        assert LoguruHandler._resolve_loguru_level(self._access_record(503)) == 'ERROR'
+
+    def test_warning_threshold_discards_debug_and_info(self, tmp_path):
+        """WARNING 配置仅写入 WARNING、ERROR 和 CRITICAL。"""
+        custom = str(tmp_path / 'warning_threshold')
+        init_logging({'level': 'WARNING', 'log_dir': custom})
+
+        logger = logging.getLogger('application.threshold_probe')
+        logger.setLevel(logging.DEBUG)
+        logger.debug('threshold-debug-message')
+        logger.info('threshold-info-message')
+        logger.warning('threshold-warning-message')
+        logger.error('threshold-error-message')
+        logger.critical('threshold-critical-message')
+        # 此标准库门面过去有独立 INFO StreamHandler，会绕过配置级别。
+        standard_facade = StdlibSpringLogger()
+        standard_facade.info('threshold-stdlib-info-message')
+        standard_facade.warning('threshold-stdlib-warning-message')
+
+        time.sleep(0.3)
+        application_logs = glob.glob(os.path.join(custom, 'application_*.log'))
+        assert application_logs
+        content = ''
+        for path in application_logs:
+            with open(path, encoding='utf-8') as log_file:
+                content += log_file.read()
+        assert 'threshold-debug-message' not in content
+        assert 'threshold-info-message' not in content
+        assert 'threshold-warning-message' in content
+        assert 'threshold-error-message' in content
+        assert 'threshold-critical-message' in content
+        assert 'threshold-stdlib-info-message' not in content
+        assert 'threshold-stdlib-warning-message' in content
+
+    def test_warning_threshold_keeps_4xx_and_5xx_access_logs(self, tmp_path):
+        """WARNING 下隐藏 200，保留 401/403/5xx 访问日志。"""
+        custom = str(tmp_path / 'access_threshold')
+        init_logging({'level': 'WARNING', 'log_dir': custom})
+        handler = logging.getLogger('uvicorn.access').handlers[0]
+
+        for status_code in (200, 401, 403, 500):
+            handler.handle(self._access_record(status_code))
+
+        time.sleep(0.3)
+        application_logs = glob.glob(os.path.join(custom, 'application_*.log'))
+        assert application_logs
+        content = ''
+        for path in application_logs:
+            with open(path, encoding='utf-8') as log_file:
+                content += log_file.read()
+        assert 'HTTP/1.1" 200' not in content
+        assert 'HTTP/1.1" 401' in content
+        assert 'HTTP/1.1" 403' in content
+        assert 'HTTP/1.1" 500' in content
+
+    def test_access_adapter_enforces_threshold_with_an_extra_info_sink(self, tmp_path):
+        """额外 INFO sink 也不能让 WARNING 配置泄露 200 访问日志。"""
+        if LoguruHandler is None:
+            pytest.skip("loguru is not installed")
+
+        from loguru import logger as loguru_logger
+
+        init_logging({'level': 'WARNING', 'log_dir': str(tmp_path / 'adapter_guard')})
+        captured = []
+        sink_id = loguru_logger.add(
+            captured.append, format='{level}:{message}', level='DEBUG'
+        )
+        handler = logging.getLogger('uvicorn.access').handlers[0]
+        try:
+            handler.handle(self._access_record(200))
+            handler.handle(self._access_record(401))
+        finally:
+            loguru_logger.remove(sink_id)
+
+        rendered = ''.join(captured)
+        assert 'HTTP/1.1" 200' not in rendered
+        assert 'WARNING:' in rendered
+        assert 'HTTP/1.1" 401' in rendered

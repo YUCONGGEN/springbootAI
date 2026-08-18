@@ -42,34 +42,34 @@ try:
 except ImportError:
     pass
 
-from spring.ai.providers import FakeChatModel, FakeEmbeddingModel
-from spring.ai.core import ChatModel, EmbeddingModel, Message
-from spring.context.registry import BeanRegistry
-from spring.langchain.adapters import (
+from springbootai.ai.providers import FakeChatModel, FakeEmbeddingModel
+from springbootai.ai.core import ChatModel, EmbeddingModel, Message
+from springbootai.context.registry import BeanRegistry
+from springbootai.langchain.adapters import (
     LangChainModelToSpring,
     SpringChatModelToLangChain, SpringEmbeddingToLangChain,
     to_langchain_embeddings, to_langchain_model,
     to_spring_embeddings, to_spring_model,
 )
-from spring.langchain.autoconfig import (
+from springbootai.langchain.autoconfig import (
     bind_langchain_config, configure_langchain,
 )
-from spring.langchain.partners import (
+from springbootai.langchain.partners import (
     PARTNER_REGISTRY, PartnerProviderFactory,
     is_partner_available, list_available_partners, list_partners,
 )
-from spring.langchain.prompts.templates import PromptTemplateFactory
-from spring.langchain.chains.services import ChainService
-from spring.langchain.agents.services import AgentService
-from spring.langchain.memory.memory import MemoryFactory
-from spring.langchain.parsers.parsers import OutputParserFactory
-from spring.langchain.loaders.loaders import DocumentLoaderRegistry
-from spring.langchain.retrievers.retrievers import RetrieverFactory
-from spring.langchain.vectorstores.stores import VectorStoreFactory
-from spring.langchain.indexes.index import IndexService
-from spring.langchain.tools.tools import ToolFactory, ToolRegistry
-from spring.langchain.utilities.utils import UtilityRegistry
-from spring.langchain.callbacks.handlers import CallbackRegistry
+from springbootai.langchain.prompts.templates import PromptTemplateFactory
+from springbootai.langchain.chains.services import ChainService
+from springbootai.langchain.agents.services import AgentService
+from springbootai.langchain.memory.memory import MemoryFactory
+from springbootai.langchain.parsers.parsers import OutputParserFactory
+from springbootai.langchain.loaders.loaders import DocumentLoaderRegistry
+from springbootai.langchain.retrievers.retrievers import RetrieverFactory
+from springbootai.langchain.vectorstores.stores import VectorStoreFactory
+from springbootai.langchain.indexes.index import IndexService
+from springbootai.langchain.tools.tools import ToolFactory, ToolRegistry
+from springbootai.langchain.utilities.utils import UtilityRegistry
+from springbootai.langchain.callbacks.handlers import CallbackRegistry
 
 
 # ==================== 公共 fixture ====================
@@ -124,7 +124,7 @@ def _isolate_lc_env(monkeypatch):
 class _StubConfig:
     """测试用配置桩 - 把 langchain 子树 dict 包装成 config_loader 风格。
 
-    configure_langchain 调用 config.get_prefix_config("spring.langchain") 取子树，
+    configure_langchain 调用 config.get_prefix_config("springbootai.langchain") 取子树，
     这里直接返回构造时传入的 langchain 配置 dict，便于测试自定义配置场景。
     """
 
@@ -539,7 +539,7 @@ class TestAutoConfigExt:
 
     def test_01_configure_registers_lc_model(self):
         """装配 lcLangChainModel Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -547,7 +547,7 @@ class TestAutoConfigExt:
 
     def test_02_configure_registers_lc_embeddings(self):
         """装配 lcEmbeddings Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -555,7 +555,7 @@ class TestAutoConfigExt:
 
     def test_03_configure_registers_chain_service(self):
         """装配 lcChainService Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -563,7 +563,7 @@ class TestAutoConfigExt:
 
     def test_04_configure_registers_agent_service(self):
         """装配 lcAgentService Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -571,7 +571,7 @@ class TestAutoConfigExt:
 
     def test_05_configure_registers_memory_factory(self):
         """装配 lcMemoryFactory Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -579,7 +579,7 @@ class TestAutoConfigExt:
 
     def test_06_configure_registers_prompt_registry(self):
         """装配 lcPromptRegistry Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -587,7 +587,7 @@ class TestAutoConfigExt:
 
     def test_07_configure_registers_parser_registry(self):
         """装配 lcParserRegistry Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -595,7 +595,7 @@ class TestAutoConfigExt:
 
     def test_08_configure_registers_loader_registry(self):
         """装配 lcLoaderRegistry Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -603,7 +603,7 @@ class TestAutoConfigExt:
 
     def test_09_configure_registers_retriever_factory(self):
         """装配 lcRetrieverFactory Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -611,7 +611,7 @@ class TestAutoConfigExt:
 
     def test_10_configure_registers_vector_store_factory(self):
         """装配 lcVectorStoreFactory Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -619,7 +619,7 @@ class TestAutoConfigExt:
 
     def test_11_configure_registers_index_service(self):
         """装配 lcIndexService Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -627,7 +627,7 @@ class TestAutoConfigExt:
 
     def test_12_configure_registers_tool_factory(self):
         """装配 lcToolFactory Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -635,7 +635,7 @@ class TestAutoConfigExt:
 
     def test_13_configure_registers_utility_registry(self):
         """装配 lcUtilityRegistry Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -643,7 +643,7 @@ class TestAutoConfigExt:
 
     def test_14_configure_registers_callback_registry(self):
         """装配 lcCallbackRegistry Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -651,7 +651,7 @@ class TestAutoConfigExt:
 
     def test_15_configure_disabled_returns_empty(self):
         """enabled=false 时不装配核心 Bean。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry,
@@ -661,7 +661,7 @@ class TestAutoConfigExt:
 
     def test_16_configure_auto_reuses_spring_model(self):
         """default-llm=auto 复用 aiChatModel。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -669,7 +669,7 @@ class TestAutoConfigExt:
 
     def test_17_configure_chain_service_callable(self):
         """装配后 ChainService 可调用。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -679,7 +679,7 @@ class TestAutoConfigExt:
 
     def test_18_configure_agent_service_has_model(self):
         """装配后 AgentService 有模型。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -688,7 +688,7 @@ class TestAutoConfigExt:
 
     def test_19_configure_index_service_has_embeddings(self):
         """装配后 IndexService 有嵌入模型。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -697,7 +697,7 @@ class TestAutoConfigExt:
 
     def test_20_configure_with_custom_config(self):
         """自定义配置装配。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry, config=_StubConfig({
@@ -707,7 +707,7 @@ class TestAutoConfigExt:
 
     def test_21_configure_partners_skips_missing_dep(self):
         """partner 依赖缺失时跳过不阻塞。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry, config=_StubConfig({
@@ -718,7 +718,7 @@ class TestAutoConfigExt:
 
     def test_22_configure_returns_dict(self):
         """configure_langchain 返回 dict。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -726,7 +726,7 @@ class TestAutoConfigExt:
 
     def test_23_configure_bean_count(self):
         """装配的 Bean 数量 >= 14。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -735,7 +735,7 @@ class TestAutoConfigExt:
 
     def test_24_configure_idempotent(self):
         """多次 configure 不报错。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans1 = configure_langchain(registry=registry)
@@ -1186,14 +1186,14 @@ class TestChainsExt:
 
     def test_06_create_conversation_chain_basic(self, chain_service):
         """基本对话链创建。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         chain = chain_service.create_conversation_chain(memory=mem)
         assert chain is not None
 
     def test_07_create_conversation_chain_invoke(self, chain_service):
         """对话链 invoke。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         chain = chain_service.create_conversation_chain(memory=mem)
         result = chain.invoke({"input": "你好"})
@@ -1207,7 +1207,7 @@ class TestChainsExt:
 
     def test_09_run_conversation_with_memory(self, chain_service):
         """run_conversation 传入 memory。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         r1 = chain_service.run_conversation("我叫张三", memory=mem)
         r2 = chain_service.run_conversation("你好", memory=mem)
@@ -1289,14 +1289,14 @@ class TestChainsExt:
 
     def test_22_create_conversation_with_window_memory(self, chain_service):
         """对话链 + 窗口记忆。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer-window", max_messages=3)
         chain = chain_service.create_conversation_chain(memory=mem)
         assert chain is not None
 
     def test_23_run_conversation_multi_turn(self, chain_service):
         """多轮对话。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         for i in range(3):
             result = chain_service.run_conversation(f"第{i}轮", memory=mem)
@@ -1363,7 +1363,7 @@ class TestChainsExt:
 
     def test_33_conversation_chain_response_key(self, chain_service):
         """对话链返回 response key。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         chain = chain_service.create_conversation_chain(memory=mem)
         result = chain.invoke({"input": "你好"})
@@ -2766,7 +2766,7 @@ class TestToolsExt:
 
     def test_10_from_spring_registry_empty(self):
         """空 springbootAI ToolRegistry。"""
-        from spring.ai.tools import ToolRegistry as SpringToolRegistry
+        from springbootai.ai.tools import ToolRegistry as SpringToolRegistry
         spring_reg = SpringToolRegistry()
         tools = ToolFactory.from_spring_tool_registry(spring_reg)
         assert tools == []
@@ -3284,7 +3284,7 @@ class TestEndToEndExt:
 
     def test_02_chain_with_memory_pipeline(self, chain_service):
         """Chain + Memory 流水线。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         chain = chain_service.create_conversation_chain(memory=mem)
         r1 = chain.invoke({"input": "你好"})["response"]
@@ -3309,7 +3309,7 @@ class TestEndToEndExt:
 
     def test_05_full_bootstrap_pipeline(self):
         """完整装配流水线。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -3340,7 +3340,7 @@ class TestEndToEndExt:
 
     def test_09_memory_chain_conversation_pipeline(self, chain_service):
         """Memory + Chain 对话流水线。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         for i in range(3):
             result = chain_service.run_conversation(f"第{i}轮", memory=mem)
@@ -3357,7 +3357,7 @@ class TestEndToEndExt:
 
     def test_11_configure_ai_then_langchain(self):
         """先 configure_ai 再 configure_langchain。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         ai_beans = configure_ai(registry=registry)
         lc_beans = configure_langchain(registry=registry)
@@ -3366,7 +3366,7 @@ class TestEndToEndExt:
 
     def test_12_chain_service_with_injected_model(self):
         """ChainService 用注入的模型。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -3375,7 +3375,7 @@ class TestEndToEndExt:
 
     def test_13_agent_service_with_injected_model(self):
         """AgentService 用注入的模型。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -3384,7 +3384,7 @@ class TestEndToEndExt:
 
     def test_14_index_service_with_injected_embeddings(self):
         """IndexService 用注入的嵌入。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -3399,7 +3399,7 @@ class TestEndToEndExt:
 
     def test_16_conversation_chain_multi_turn(self, chain_service):
         """对话链多轮。"""
-        from spring.langchain.memory.memory import MemoryFactory
+        from springbootai.langchain.memory.memory import MemoryFactory
         mem = MemoryFactory.create("buffer")
         chain = chain_service.create_conversation_chain(memory=mem)
         for i in range(5):
@@ -3442,7 +3442,7 @@ class TestEndToEndExt:
 
     def test_21_bootstrap_all_beans_available(self):
         """装配后所有 Bean 可用。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -3505,7 +3505,7 @@ class TestEndToEndExt:
 
     def test_31_full_pipeline_no_errors(self):
         """完整流水线无错误。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -3567,7 +3567,7 @@ class TestEndToEndExt:
 
     def test_38_full_bootstrap_chain_callable(self):
         """装配后 Chain 可调用。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -3577,7 +3577,7 @@ class TestEndToEndExt:
 
     def test_39_full_bootstrap_agent_callable(self):
         """装配后 Agent 可创建。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)
@@ -3591,7 +3591,7 @@ class TestEndToEndExt:
 
     def test_40_full_bootstrap_rag_callable(self):
         """装配后 RAG 可用。"""
-        from spring.ai.autoconfig import configure_ai
+        from springbootai.ai.autoconfig import configure_ai
         registry = BeanRegistry()
         configure_ai(registry=registry)
         beans = configure_langchain(registry=registry)

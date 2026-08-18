@@ -4,15 +4,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import List, Optional
+from typing import Any, List, Optional
+from collections.abc import Mapping
 import unittest
 
-from spring.orm.pymybatis import build_session_factory
-from spring.orm.pymybatis.annotations import Insert, Select, SelectProvider
-from spring.orm.pymybatis.dynamic_sql import DynamicSQLProcessor
-from spring.orm.pymybatis.mapper import MapperProxy
-from spring.orm.pymybatis.xml_parser import XmlParser
-from spring.orm.pymybatis.interceptor import Interceptor
+from springbootai.orm.pymybatis import build_session_factory
+from springbootai.orm.pymybatis.annotations import Insert, Select, SelectProvider
+from springbootai.orm.pymybatis.dynamic_sql import DynamicSQLProcessor
+from springbootai.orm.pymybatis.mapper import MapperProxy
+from springbootai.orm.pymybatis.xml_parser import XmlParser
+from springbootai.orm.pymybatis.interceptor import Interceptor
 
 
 @dataclass
@@ -49,6 +50,12 @@ class ProviderSql:
 class ProviderMapper:
     @SelectProvider(ProviderSql, method="by_name")
     def find_name(self, name: str) -> str:
+        pass
+
+
+class RawRowMapper:
+    @Select("SELECT id, name FROM tasks WHERE id = #{task_id}")
+    def find_by_id(self, task_id: int) -> Mapping[str, Any] | None:
         pass
 
 
@@ -111,6 +118,16 @@ class PyMyBatisContractTests(unittest.TestCase):
             sql,
         )
         self.assertEqual(["%spring%", "A", "one", "B", "two"], values)
+
+    def test_mapping_return_annotation_preserves_database_rows(self):
+        self.session.insert(
+            "INSERT INTO tasks(name, created_at) VALUES (#{name}, #{created_at})",
+            {"name": "raw", "created_at": "2026-08-17 09:00:00"},
+        )
+        row = MapperProxy(RawRowMapper, self.session).find_by_id(1)
+
+        self.assertIsInstance(row, Mapping)
+        self.assertEqual("raw", row["name"])
 
     def test_xml_statement_options_and_include_properties(self):
         xml = """

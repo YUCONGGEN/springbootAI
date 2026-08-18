@@ -16,15 +16,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.orm.ddl_auto import (
+from springbootai.orm.ddl_auto import (
     DdlAutoManager, DdlAutoMode, entity, table, Index, Column, Id,
     column, id_column, init_ddl_auto, _camel_to_snake, _get_sql_type,
 )
-from spring.orm.pymybatis.pool import create_connection_pool
+from springbootai.orm.pymybatis.pool import create_connection_pool
 
 
 def test_mybatis_configurer_uses_session_factory_connection_pool():
-    from spring.orm.mybatis_integration import MyBatisConfigurer
+    from springbootai.orm.mybatis_integration import MyBatisConfigurer
 
     pool = object()
     configurer = MyBatisConfigurer(config_loader=None)
@@ -34,7 +34,7 @@ def test_mybatis_configurer_uses_session_factory_connection_pool():
     )
     db_config = {"ddl-auto": {"mode": "update"}}
 
-    with patch("spring.orm.ddl_auto.init_ddl_auto") as init_ddl_auto:
+    with patch("springbootai.orm.ddl_auto.init_ddl_auto") as init_ddl_auto:
         configurer._init_ddl_auto(db_config)
 
     init_ddl_auto.assert_called_once_with(pool, db_config)
@@ -313,7 +313,7 @@ class TestEntityParsingAndSql:
         assert Custom.__table__.comment == 'c'
 
     def test_entity_is_exported_with_spring_style_name(self):
-        from spring.orm import Entity, entity as legacy_entity
+        from springbootai.orm import Entity, entity as legacy_entity
 
         assert Entity is entity
         assert legacy_entity is Entity
@@ -325,7 +325,7 @@ class TestEntityParsingAndSql:
         assert UppercaseEntity.__table__.name == "uppercase_entity"
 
     def test_entity_class_descriptors_survive_dynamic_init(self, sqlite_pool):
-        from spring.orm import Entity
+        from springbootai.orm import Entity
 
         @Entity("descriptor_entity")
         class DescriptorEntity:
@@ -350,7 +350,7 @@ class TestEntityParsingAndSql:
         assert metadata["score"]["sql_type"] == "REAL"
 
     def test_entity_generates_keyword_constructor(self):
-        from spring.orm import Entity
+        from springbootai.orm import Entity
 
         @Entity("simple_entity")
         class SimpleEntity:
@@ -445,7 +445,7 @@ class TestRegistrationAndIntegration:
             'database': db_path,
         })
         try:
-            from spring.orm import ddl_auto
+            from springbootai.orm import ddl_auto
             ddl_auto._global_ddl_manager = None
 
             manager = DdlAutoManager(pool, dialect='sqlite', mode='create')

@@ -6,16 +6,16 @@
 - @SentinelResource, @EnableGateway
 - @GlobalTransactional
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping,
     Autowired, Slf4j,
 )
-from spring.annotations.cloud import (
+from springbootai.annotations.cloud import (
     EnableDiscoveryClient, NacosValue, RefreshScope,
     LoadBalanced, SentinelResource,
     GlobalTransactional,
 )
-from spring.web.result import Result
+from springbootai.web.result import Result
 from example_all.service.CloudService import CloudService
 
 

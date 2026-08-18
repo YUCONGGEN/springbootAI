@@ -14,7 +14,7 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.i18n import (
+from springbootai.i18n import (
     Locale, LOCALE_EN, LOCALE_CHINA, LOCALE_US, LOCALE_UK, NoSuchMessageException,
     DefaultMessageSourceResolvable,
     StaticMessageSource, ResourceBundleMessageSource, DelegatingMessageSource,
@@ -709,7 +709,7 @@ class TestAutoConfiguration:
         # 构造一个最小 ConfigLoader 风格对象
         class FakeLoader:
             def get_prefix_config(self, prefix):
-                if prefix == "spring.messages":
+                if prefix == "springbootai.messages":
                     return {
                         "basename": "messages,errors",
                         "encoding": "UTF-8",

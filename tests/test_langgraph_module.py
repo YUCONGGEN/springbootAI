@@ -12,8 +12,8 @@ pytest.importorskip("langgraph")
 from langgraph.graph import END
 from langgraph.types import interrupt
 
-from spring.context.registry import BeanRegistry
-from spring.langgraph import (
+from springbootai.context.registry import BeanRegistry
+from springbootai.langgraph import (
     LangGraphConfigurationError,
     LangGraphProperties,
     LangGraphWorkflow,

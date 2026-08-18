@@ -1,10 +1,10 @@
 """
 LangChain Chain 服务 - 演示 SequentialChain / LLMMathChain / 会话记忆。
 """
-from spring.annotations.core import Autowired, Service, Slf4j
-from spring.langchain.chains.services import ChainService
-from spring.langchain.memory.memory import MemoryFactory
-from spring.langchain.parsers.parsers import OutputParserFactory
+from springbootai.annotations.core import Autowired, Service, Slf4j
+from springbootai.langchain.chains.services import ChainService
+from springbootai.langchain.memory.memory import MemoryFactory
+from springbootai.langchain.parsers.parsers import OutputParserFactory
 
 
 @Slf4j

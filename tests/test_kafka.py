@@ -16,8 +16,8 @@ from unittest import mock
 
 import pytest
 
-from spring.messaging.kafka import KafkaClient, kafka_client, init_kafka
-from spring.annotations.messaging import (
+from springbootai.messaging.kafka import KafkaClient, kafka_client, init_kafka
+from springbootai.annotations.messaging import (
     KafkaListener,
     KafkaTemplate,
     kafka_template,
@@ -523,7 +523,7 @@ class TestKafkaTemplate:
 
     def test_global_template_is_single_instance(self):
         """多次引用全局 kafka_template 是同一对象"""
-        from spring.annotations.messaging import kafka_template as kt2
+        from springbootai.annotations.messaging import kafka_template as kt2
         assert kafka_template is kt2
 
     def test_send_delegates_to_kafka_client(self):
@@ -645,7 +645,7 @@ class TestInitKafka:
         assert kafka_client.group_id == "default-group"
 
     def test_init_kafka_empty_kafka_config(self):
-        """spring.kafka 为空字典时为空操作（falsy 提前返回）"""
+        """springbootai.kafka 为空字典时为空操作（falsy 提前返回）"""
         init_kafka({"spring": {"kafka": {}}})
         # 空字典为 falsy，init_kafka 提前 return，不调用 configure
         assert kafka_client.bootstrap_servers == "localhost:9092"

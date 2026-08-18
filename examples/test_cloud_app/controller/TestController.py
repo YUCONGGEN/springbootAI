@@ -1,8 +1,8 @@
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping, PutMapping, DeleteMapping,
     Autowired,
 )
-from spring.web.result import Result
+from springbootai.web.result import Result
 
 
 @RestController
@@ -41,7 +41,7 @@ class TestController:
     @DeleteMapping("/user/{user_id}")
     def delete_user(self, user_id: int):
         """测试 @DeleteMapping"""
-        from spring.context.application_context import ApplicationContext
+        from springbootai.context.application_context import ApplicationContext
         ctx = ApplicationContext(None)
         user_repo = ctx.get_bean_by_type(type(self.test_service.user_repository))
         success = user_repo.delete(user_id)

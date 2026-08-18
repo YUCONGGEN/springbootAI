@@ -56,7 +56,7 @@ class TestMigrationManager:
 
     def test_migrate_creates_version_table(self):
         """测试迁移时自动创建schema_version表"""
-        from spring.orm.migration import MigrationManager
+        from springbootai.orm.migration import MigrationManager
 
         manager = MigrationManager(self.pool, str(self.migrations_dir), dialect='sqlite')
         cursor = self.pool._conn.cursor()
@@ -66,7 +66,7 @@ class TestMigrationManager:
 
     def test_migrate_applies_pending_migrations(self):
         """测试执行待执行的迁移文件"""
-        from spring.orm.migration import MigrationManager
+        from springbootai.orm.migration import MigrationManager
 
         migration_file = self.migrations_dir / 'V1__create_test_table.sql'
         migration_file.write_text("""
@@ -88,7 +88,7 @@ class TestMigrationManager:
 
     def test_migrate_multiple_versions_in_order(self):
         """测试按版本号顺序执行多个迁移"""
-        from spring.orm.migration import MigrationManager
+        from springbootai.orm.migration import MigrationManager
 
         (self.migrations_dir / 'V2__add_column.sql').write_text(
             "ALTER TABLE test_table ADD COLUMN email TEXT;", encoding='utf-8'
@@ -106,7 +106,7 @@ class TestMigrationManager:
 
     def test_migrate_skips_already_applied(self):
         """测试已执行的迁移不会重复执行"""
-        from spring.orm.migration import MigrationManager
+        from springbootai.orm.migration import MigrationManager
 
         (self.migrations_dir / 'V1__create_table.sql').write_text(
             "CREATE TABLE test_table (id INTEGER PRIMARY KEY);", encoding='utf-8'
@@ -121,7 +121,7 @@ class TestMigrationManager:
 
     def test_status_reports_pending_and_applied(self):
         """测试status()方法正确报告迁移状态"""
-        from spring.orm.migration import MigrationManager, MigrationState
+        from springbootai.orm.migration import MigrationManager, MigrationState
 
         (self.migrations_dir / 'V1__first.sql').write_text(
             "CREATE TABLE t1 (id INTEGER);", encoding='utf-8'
@@ -149,7 +149,7 @@ class TestMigrationManager:
 
     def test_checksum_mismatch_raises_error(self):
         """测试已应用迁移文件被篡改时抛出checksum不匹配异常"""
-        from spring.orm.migration import MigrationManager, MigrationError
+        from springbootai.orm.migration import MigrationManager, MigrationError
 
         v1_file = self.migrations_dir / 'V1__test.sql'
         v1_file.write_text("CREATE TABLE t1 (id INTEGER);", encoding='utf-8')
@@ -164,7 +164,7 @@ class TestMigrationManager:
 
     def test_repair_removes_failed_records(self):
         """测试repair()方法删除失败的迁移记录"""
-        from spring.orm.migration import MigrationManager
+        from springbootai.orm.migration import MigrationManager
 
         manager = MigrationManager(self.pool, str(self.migrations_dir), dialect='sqlite')
 
@@ -187,7 +187,7 @@ class TestSecretManager:
 
     def setup_method(self):
         """每个测试前重置SecretManager单例"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
         SecretManager.reset()
         self._orig_env = os.environ.copy()
 
@@ -195,12 +195,12 @@ class TestSecretManager:
         """恢复环境变量并重置单例"""
         os.environ.clear()
         os.environ.update(self._orig_env)
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
         SecretManager.reset()
 
     def test_loads_from_spring_secrets_prefix(self):
         """测试从SPRING_SECRETS_前缀环境变量加载密钥"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         os.environ['SPRING_SECRETS_DB_PASSWORD'] = 'my_secret_pass_123'
         mgr = SecretManager()
@@ -209,7 +209,7 @@ class TestSecretManager:
 
     def test_get_secret_case_insensitive(self):
         """测试密钥名称大小写不敏感"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         os.environ['SPRING_SECRETS_REDIS_PASSWORD'] = 'redis_secret'
         mgr = SecretManager()
@@ -219,7 +219,7 @@ class TestSecretManager:
 
     def test_get_secret_from_direct_env_var(self):
         """测试从直接命名的环境变量获取密钥"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         os.environ['JWT_SECRET_KEY'] = 'direct_jwt_secret'
         mgr = SecretManager()
@@ -228,7 +228,7 @@ class TestSecretManager:
 
     def test_get_secret_returns_default_when_missing(self):
         """测试密钥不存在时返回默认值"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         mgr = SecretManager()
         result = mgr.get_secret('nonexistent_key', default='default_value')
@@ -237,7 +237,7 @@ class TestSecretManager:
 
     def test_require_secret_raises_when_missing(self):
         """测试require_secret在密钥不存在时抛出异常"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         mgr = SecretManager()
 
@@ -246,7 +246,7 @@ class TestSecretManager:
 
     def test_require_secret_returns_value_when_present(self):
         """测试require_secret在密钥存在时返回值"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         os.environ['SPRING_SECRETS_API_KEY'] = 'test_api_key_value'
         mgr = SecretManager()
@@ -256,7 +256,7 @@ class TestSecretManager:
     def test_base64_decode(self):
         """测试base64编码密钥解码"""
         import base64
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         original = 'my_plain_secret'
         encoded = base64.b64encode(original.encode('utf-8')).decode('utf-8')
@@ -268,7 +268,7 @@ class TestSecretManager:
 
     def test_base64_decode_invalid_returns_raw(self):
         """测试无效base64时返回原始值"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         os.environ['SPRING_SECRETS_BAD_B64'] = 'not_valid_base64!!!'
         mgr = SecretManager()
@@ -278,7 +278,7 @@ class TestSecretManager:
 
     def test_mask_secret_function(self):
         """测试密钥脱敏函数"""
-        from spring.security.secret_manager import mask_secret
+        from springbootai.security.secret_manager import mask_secret
 
         secret = 'abcdefghijklmnop'
         masked = mask_secret(secret, show_chars=4)
@@ -287,7 +287,7 @@ class TestSecretManager:
 
     def test_mask_secret_short_value(self):
         """测试短密钥脱敏返回***"""
-        from spring.security.secret_manager import mask_secret
+        from springbootai.security.secret_manager import mask_secret
 
         assert mask_secret('ab') == '***'
         assert mask_secret('') == '***'
@@ -295,7 +295,7 @@ class TestSecretManager:
 
     def test_set_secret_for_rotation(self):
         """测试运行时设置密钥（密钥轮换）"""
-        from spring.security.secret_manager import SecretManager
+        from springbootai.security.secret_manager import SecretManager
 
         mgr = SecretManager()
         mgr.set_secret('rotated_key', 'new_value_456')
@@ -304,7 +304,7 @@ class TestSecretManager:
 
     def test_is_sensitive_key(self):
         """测试敏感键名判断"""
-        from spring.security.secret_manager import is_sensitive_key
+        from springbootai.security.secret_manager import is_sensitive_key
 
         assert is_sensitive_key('db_password') is True
         assert is_sensitive_key('api_key') is True
@@ -318,7 +318,7 @@ class TestReplayProtection:
 
     def setup_method(self):
         """初始化重放保护器"""
-        from spring.security.replay_protection import ReplayProtection
+        from springbootai.security.replay_protection import ReplayProtection
         self.secret = 'test-secret-key-for-replay-protection'
         self.protector = ReplayProtection(secret_key=self.secret, timestamp_window=10)
 
@@ -439,7 +439,7 @@ class TestGracefulShutdown:
 
     def test_register_and_execute_hooks(self):
         """测试注册关闭钩子并执行"""
-        from spring.core.graceful_shutdown import GracefulShutdown
+        from springbootai.core.graceful_shutdown import GracefulShutdown
 
         shutdown = GracefulShutdown(drain_timeout=1, shutdown_timeout=1)
         hook_called = []
@@ -456,7 +456,7 @@ class TestGracefulShutdown:
 
     def test_hooks_execute_in_order(self):
         """测试钩子按order顺序执行"""
-        from spring.core.graceful_shutdown import GracefulShutdown
+        from springbootai.core.graceful_shutdown import GracefulShutdown
 
         shutdown = GracefulShutdown(drain_timeout=1, shutdown_timeout=1)
         execution_order = []
@@ -472,7 +472,7 @@ class TestGracefulShutdown:
 
     def test_drain_waits_for_inflight_requests(self):
         """测试排空阶段等待在途请求完成"""
-        from spring.core.graceful_shutdown import GracefulShutdown
+        from springbootai.core.graceful_shutdown import GracefulShutdown
 
         shutdown = GracefulShutdown(drain_timeout=3, shutdown_timeout=1)
         finished = threading.Event()
@@ -499,7 +499,7 @@ class TestGracefulShutdown:
 
     def test_drain_timeout_proceeds(self):
         """测试排空超时后继续关闭流程"""
-        from spring.core.graceful_shutdown import GracefulShutdown
+        from springbootai.core.graceful_shutdown import GracefulShutdown
 
         shutdown = GracefulShutdown(drain_timeout=0.3, shutdown_timeout=1)
         hook_called = threading.Event()
@@ -515,7 +515,7 @@ class TestGracefulShutdown:
 
     def test_is_draining_flag(self):
         """测试is_draining状态标志"""
-        from spring.core.graceful_shutdown import GracefulShutdown, ShutdownPhase
+        from springbootai.core.graceful_shutdown import GracefulShutdown, ShutdownPhase
 
         shutdown = GracefulShutdown(drain_timeout=1, shutdown_timeout=1)
 
@@ -530,7 +530,7 @@ class TestGracefulShutdown:
 
     def test_hook_exception_does_not_stop_others(self):
         """测试单个钩子异常不影响其他钩子执行"""
-        from spring.core.graceful_shutdown import GracefulShutdown
+        from springbootai.core.graceful_shutdown import GracefulShutdown
 
         shutdown = GracefulShutdown(drain_timeout=0.1, shutdown_timeout=1)
         second_called = []
@@ -548,7 +548,7 @@ class TestGracefulShutdown:
 
     def test_request_counting(self):
         """测试在途请求计数"""
-        from spring.core.graceful_shutdown import GracefulShutdown
+        from springbootai.core.graceful_shutdown import GracefulShutdown
 
         shutdown = GracefulShutdown()
 
@@ -570,7 +570,7 @@ class TestNonceCache:
 
     def test_check_and_add_new_nonce(self):
         """测试新nonce检查并添加成功"""
-        from spring.security.replay_protection import NonceCache
+        from springbootai.security.replay_protection import NonceCache
 
         cache = NonceCache(max_size=100, ttl=300)
         result = cache.check_and_add('new_nonce_value_123')
@@ -579,7 +579,7 @@ class TestNonceCache:
 
     def test_duplicate_nonce_detected(self):
         """测试重复nonce被检测到"""
-        from spring.security.replay_protection import NonceCache
+        from springbootai.security.replay_protection import NonceCache
 
         cache = NonceCache(max_size=100, ttl=300)
 
@@ -591,7 +591,7 @@ class TestNonceCache:
 
     def test_capacity_limit_lru_eviction(self):
         """测试容量限制触发LRU淘汰"""
-        from spring.security.replay_protection import NonceCache
+        from springbootai.security.replay_protection import NonceCache
 
         cache = NonceCache(max_size=5, ttl=300)
 
@@ -608,7 +608,7 @@ class TestNonceCache:
 
     def test_expired_nonce_cleanup(self):
         """测试过期nonce清理"""
-        from spring.security.replay_protection import NonceCache
+        from springbootai.security.replay_protection import NonceCache
 
         cache = NonceCache(max_size=100, ttl=1)
 
@@ -621,7 +621,7 @@ class TestNonceCache:
 
     def test_thread_safety(self):
         """测试多线程并发访问缓存的线程安全性"""
-        from spring.security.replay_protection import NonceCache
+        from springbootai.security.replay_protection import NonceCache
         import random
 
         cache = NonceCache(max_size=1000, ttl=300)
@@ -649,7 +649,7 @@ class TestNonceCache:
 
     def test_multiple_unique_nonces(self):
         """测试多个不同nonce都能通过"""
-        from spring.security.replay_protection import NonceCache
+        from springbootai.security.replay_protection import NonceCache
 
         cache = NonceCache(max_size=1000, ttl=300)
 

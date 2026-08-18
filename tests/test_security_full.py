@@ -12,13 +12,13 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.annotations.core import PreAuthorize, Secured, Authenticate, get_spring_annotations
-from spring.security.jwt_utils import JwtUtils
-from spring.security.security_context import SecurityContext
-from spring.orm.pymybatis.security.password_encoder import (
+from springbootai.annotations.core import PreAuthorize, Secured, Authenticate, get_spring_annotations
+from springbootai.security.jwt_utils import JwtUtils
+from springbootai.security.security_context import SecurityContext
+from springbootai.orm.pymybatis.security.password_encoder import (
     PasswordEncoder, encode_password, verify_password,
 )
-from spring.orm.pymybatis.security.sql_injection_detector import (
+from springbootai.orm.pymybatis.security.sql_injection_detector import (
     SQLInjectionDetector, SQLInjectionLevel,
 )
 
@@ -72,6 +72,22 @@ class TestJwtTokenGeneration:
         token = self.jwt.generate_token({"user_id": "u1"}, expires_in=3600)
         assert isinstance(token, str)
         assert token.count(".") == 2
+
+    def test_generate_token_uses_configured_default_expiry_when_omitted(self):
+        self.jwt.configure(
+            secret_key="test-secret-key-for-unit-tests-0123456789abcdef",
+            access_token_expires_in=8 * 3600,
+        )
+        payload = self.jwt.get_payload(self.jwt.generate_token({"user_id": "u1"}))
+        assert payload["exp"] - payload["iat"] == 8 * 3600
+
+    def test_invalid_configured_default_expiry_falls_back_to_framework_default(self):
+        self.jwt.configure(
+            secret_key="test-secret-key-for-unit-tests-0123456789abcdef",
+            access_token_expires_in=0,
+        )
+        payload = self.jwt.get_payload(self.jwt.generate_token({"user_id": "u1"}))
+        assert payload["exp"] - payload["iat"] == 3600
 
     def test_generate_token_includes_claims(self):
         token = self.jwt.generate_token({"user_id": "u1"}, expires_in=3600)

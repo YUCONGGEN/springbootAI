@@ -3,7 +3,7 @@ Cloud注解测试服务
 用于测试安全、性能和组合功能
 """
 import threading
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     Service,
     Slf4j,
     PostConstruct,
@@ -13,7 +13,7 @@ from spring.annotations.core import (
     Synchronized,
     Idempotent,
 )
-from spring.annotations.cloud import (
+from springbootai.annotations.cloud import (
     SentinelResource,
     GlobalTransactional,
     RefreshScope,

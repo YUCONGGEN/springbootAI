@@ -21,7 +21,7 @@ PROJECT_ROOT = str(Path(__file__).parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from spring.csv import (
+from springbootai.csv import (
     CsvProperty, CsvIgnore, CsvFile, csv_file,
     CsvColumnModel, parse_csv_columns,
     Converter, CsvConverter,
@@ -822,7 +822,7 @@ class TestCompositionalAnnotations:
 
     def test_descriptors_not_replaced_by_orm(self):
         """ORM _auto_infer_columns 不覆盖 CsvProperty/ExcelProperty 描述符。"""
-        from spring.orm import Entity, Id, Column
+        from springbootai.orm import Entity, Id, Column
 
         @Entity("users")
         @CsvFile("users.csv")
@@ -841,8 +841,8 @@ class TestCompositionalAnnotations:
 
     def test_auto_init_with_foreign_descriptors(self):
         """组合式自动 __init__ 正确处理跨模块描述符的默认值。"""
-        from spring.orm import Entity, Id, Column
-        from spring.excel import ExcelSheet, ExcelProperty
+        from springbootai.orm import Entity, Id, Column
+        from springbootai.excel import ExcelSheet, ExcelProperty
 
         @Entity("users")
         @ExcelSheet("用户列表")
@@ -863,8 +863,8 @@ class TestCompositionalAnnotations:
 
     def test_all_fields_in_csv(self):
         """组合式类所有字段都出现在 CSV 列中。"""
-        from spring.orm import Entity, Id, Column
-        from spring.excel import ExcelSheet, ExcelProperty
+        from springbootai.orm import Entity, Id, Column
+        from springbootai.excel import ExcelSheet, ExcelProperty
 
         @Entity("users")
         @ExcelSheet("用户列表")
@@ -888,8 +888,8 @@ class TestCompositionalAnnotations:
 
     def test_csv_round_trip_compositional(self, tmp_path):
         """组合式类的 CSV 写入 + 读取 round-trip。"""
-        from spring.orm import Entity, Id, Column
-        from spring.excel import ExcelSheet, ExcelProperty
+        from springbootai.orm import Entity, Id, Column
+        from springbootai.excel import ExcelSheet, ExcelProperty
 
         @Entity("users")
         @ExcelSheet("用户列表")

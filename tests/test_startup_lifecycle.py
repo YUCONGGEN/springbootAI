@@ -27,7 +27,7 @@ _STARTUP_ENV_NAMES = (
 @pytest.fixture(autouse=True)
 def _restore_global_config_loader():
     """Keep context-local test configuration from leaking into later tests."""
-    from spring.config.config_loader import ConfigLoader, config_loader
+    from springbootai.config.config_loader import ConfigLoader, config_loader
 
     original_state = dict(config_loader.__dict__)
     original_base_path = ConfigLoader._default_base_path
@@ -55,7 +55,7 @@ def test_application_context_destroy_releases_default_sqlite(tmp_path, monkeypat
     _clear_startup_environment(monkeypatch)
     monkeypatch.chdir(tmp_path)
 
-    from spring.main import SpringApplication
+    from springbootai.main import SpringApplication
 
     application = SpringApplication(_no_config_main_class())
     application._prepare_context()
@@ -71,8 +71,8 @@ def test_web_startup_failure_releases_context_resources(tmp_path, monkeypatch):
     _clear_startup_environment(monkeypatch)
     monkeypatch.chdir(tmp_path)
 
-    from spring.main import create_app
-    from spring.web.web_context import WebApplicationContext
+    from springbootai.main import create_app
+    from springbootai.web.web_context import WebApplicationContext
 
     def fail_init(self):
         raise RuntimeError("synthetic web startup failure")
@@ -88,8 +88,8 @@ def test_web_startup_failure_releases_context_resources(tmp_path, monkeypatch):
 
 def test_destroy_all_continues_and_blocks_lazy_beans():
     """Teardown must not recreate a lazy resource or stop at one bad destructor."""
-    from spring.context.bean_definition import BeanDefinition
-    from spring.context.bean_factory import BeanFactory
+    from springbootai.context.bean_definition import BeanDefinition
+    from springbootai.context.bean_factory import BeanFactory
 
     state = []
 
@@ -128,8 +128,8 @@ def test_asgi_shutdown_releases_default_sqlite(tmp_path, monkeypatch):
     _clear_startup_environment(monkeypatch)
     monkeypatch.chdir(tmp_path)
 
-    from spring.main import create_app
-    from spring.core.graceful_shutdown import shutdown_handler
+    from springbootai.main import create_app
+    from springbootai.core.graceful_shutdown import shutdown_handler
     from starlette.testclient import TestClient
 
     asgi_app = create_app(_no_config_main_class())
@@ -153,7 +153,7 @@ def test_asgi_shutdown_releases_default_sqlite(tmp_path, monkeypatch):
     with TestClient(asgi_app):
         pass
 
-    from spring.context.application_context import ApplicationContext
+    from springbootai.context.application_context import ApplicationContext
 
     assert scheduler.stopped is True
     assert application_context._scheduler is None
@@ -166,8 +166,8 @@ def test_failed_context_refresh_releases_default_sqlite(tmp_path, monkeypatch):
     _clear_startup_environment(monkeypatch)
     monkeypatch.chdir(tmp_path)
 
-    from spring.context.application_context import ApplicationContext
-    from spring.main import SpringApplication
+    from springbootai.context.application_context import ApplicationContext
+    from springbootai.main import SpringApplication
 
     def fail_refresh(self):
         raise RuntimeError("synthetic refresh failure")
@@ -189,7 +189,7 @@ def test_failed_context_refresh_releases_default_sqlite(tmp_path, monkeypatch):
 
 def _lifecycle_context_with_missing_dependency(tmp_path, fail_fast):
     """Build a context containing optional lifecycle beans with one missing DI target."""
-    from spring.annotations.core import (
+    from springbootai.annotations.core import (
         Autowired,
         Configuration,
         EventListener,
@@ -198,9 +198,9 @@ def _lifecycle_context_with_missing_dependency(tmp_path, fail_fast):
         Service,
         SpringBootApplication,
     )
-    from spring.config.config_loader import ConfigLoader
-    from spring.context.application_context import ApplicationContext
-    from spring.context.bean_definition import BeanDefinition
+    from springbootai.config.config_loader import ConfigLoader
+    from springbootai.context.application_context import ApplicationContext
+    from springbootai.context.bean_definition import BeanDefinition
 
     config_path = tmp_path / "application.yml"
     config_path.write_text(
@@ -274,7 +274,7 @@ def test_tolerant_startup_skips_unavailable_lifecycle_beans(tmp_path, monkeypatc
     assert all(context.is_bean_unavailable(bean_name) for bean_name in names.values())
     assert context.get_event_publisher().listener_count() == 0
 
-    from spring.web.web_context import WebApplicationContext
+    from springbootai.web.web_context import WebApplicationContext
 
     web_context = WebApplicationContext(context)
     web_context.init()
@@ -323,10 +323,10 @@ def test_tolerant_startup_does_not_hide_application_init_errors(tmp_path, monkey
     """Only dependency/outage failures are degradable in tolerant mode."""
     _clear_startup_environment(monkeypatch)
 
-    from spring.annotations.core import EventListener, Service, SpringBootApplication
-    from spring.config.config_loader import ConfigLoader
-    from spring.context.application_context import ApplicationContext
-    from spring.context.bean_definition import BeanDefinition
+    from springbootai.annotations.core import EventListener, Service, SpringBootApplication
+    from springbootai.config.config_loader import ConfigLoader
+    from springbootai.context.application_context import ApplicationContext
+    from springbootai.context.bean_definition import BeanDefinition
 
     config_path = tmp_path / "application.yml"
     config_path.write_text("startup:\n  fail_fast: false\n", encoding="utf-8")
@@ -364,10 +364,10 @@ def test_failed_bean_creation_runs_instance_cleanup(tmp_path, monkeypatch):
     """A resource returned before init failure must still receive destroy()."""
     _clear_startup_environment(monkeypatch)
 
-    from spring.annotations.core import EventListener, Service, SpringBootApplication
-    from spring.config.config_loader import ConfigLoader
-    from spring.context.application_context import ApplicationContext
-    from spring.context.bean_definition import BeanDefinition
+    from springbootai.annotations.core import EventListener, Service, SpringBootApplication
+    from springbootai.config.config_loader import ConfigLoader
+    from springbootai.context.application_context import ApplicationContext
+    from springbootai.context.bean_definition import BeanDefinition
 
     config_path = tmp_path / "application.yml"
     config_path.write_text("startup:\n  fail_fast: false\n", encoding="utf-8")
@@ -415,10 +415,10 @@ def test_failed_refresh_destroys_previously_created_new_beans(tmp_path, monkeypa
     """Refresh rollback must destroy registered instances before removing definitions."""
     _clear_startup_environment(monkeypatch)
 
-    from spring.annotations.core import Service, SpringBootApplication
-    from spring.config.config_loader import ConfigLoader
-    from spring.context.application_context import ApplicationContext
-    from spring.context.bean_definition import BeanDefinition
+    from springbootai.annotations.core import Service, SpringBootApplication
+    from springbootai.config.config_loader import ConfigLoader
+    from springbootai.context.application_context import ApplicationContext
+    from springbootai.context.bean_definition import BeanDefinition
 
     config_path = tmp_path / "application.yml"
     config_path.write_text("startup:\n  fail_fast: false\n", encoding="utf-8")
@@ -468,8 +468,8 @@ def test_failed_refresh_destroys_previously_created_new_beans(tmp_path, monkeypa
 
 def test_nested_dependency_value_error_is_not_relabelled_as_missing_dependency():
     """A dependency's configuration error must remain non-degradable."""
-    from spring.context.bean_definition import BeanDefinition
-    from spring.context.bean_factory import BeanDependencyError, BeanFactory
+    from springbootai.context.bean_definition import BeanDefinition
+    from springbootai.context.bean_factory import BeanDependencyError, BeanFactory
 
     class BrokenDependency:
         def __init__(self):
@@ -497,10 +497,10 @@ def test_nested_dependency_value_error_is_not_relabelled_as_missing_dependency()
 
 def _lifecycle_context_for_bean_failure(tmp_path, fail_fast, bean_class, bean_name):
     """Create a context that reaches ``bean_class`` through a lifecycle scan."""
-    from spring.annotations.core import SpringBootApplication
-    from spring.config.config_loader import ConfigLoader
-    from spring.context.application_context import ApplicationContext
-    from spring.context.bean_definition import BeanDefinition
+    from springbootai.annotations.core import SpringBootApplication
+    from springbootai.config.config_loader import ConfigLoader
+    from springbootai.context.application_context import ApplicationContext
+    from springbootai.context.bean_definition import BeanDefinition
 
     config_path = tmp_path / "application.yml"
     config_path.write_text(
@@ -537,7 +537,7 @@ def test_tolerant_startup_skips_chained_third_party_connectivity_errors(
     tmp_path, module_name, error_name, chain_kind
 ):
     """Known client connection errors remain degradable when wrapped by a Bean."""
-    from spring.annotations.core import EventListener, Service
+    from springbootai.annotations.core import EventListener, Service
 
     external_error = type(
         error_name,
@@ -572,7 +572,7 @@ def test_tolerant_startup_skips_chained_third_party_connectivity_errors(
 
 def test_fail_fast_keeps_chained_third_party_connectivity_errors(tmp_path):
     """Explicit strict startup must still expose a wrapped client failure."""
-    from spring.annotations.core import EventListener, Service
+    from springbootai.annotations.core import EventListener, Service
 
     redis_connection_error = type(
         "ConnectionError",
@@ -606,7 +606,7 @@ def test_fail_fast_keeps_chained_third_party_connectivity_errors(tmp_path):
 @pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
 def test_tolerant_startup_keeps_regular_lifecycle_errors(tmp_path, error_type):
     """The external-client whitelist must not hide ordinary application errors."""
-    from spring.annotations.core import EventListener, Service
+    from springbootai.annotations.core import EventListener, Service
 
     @Service
     class BrokenListener:

@@ -58,7 +58,7 @@ class TestSQLInjectionDetector:
 
     def setup_method(self):
         """初始化检测器，使用宽松配置便于测试各检测点"""
-        from spring.orm.pymybatis.security.sql_injection_detector import (
+        from springbootai.orm.pymybatis.security.sql_injection_detector import (
             SQLInjectionDetector, SQLInjectionLevel
         )
         self.detector = SQLInjectionDetector(
@@ -69,7 +69,7 @@ class TestSQLInjectionDetector:
 
     def test_union_injection_detected(self):
         """测试UNION注入检测"""
-        from spring.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
+        from springbootai.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
 
         payloads = [
             "' UNION SELECT username, password FROM users--",
@@ -82,7 +82,7 @@ class TestSQLInjectionDetector:
 
     def test_boolean_blind_injection_detected(self):
         """测试布尔盲注检测"""
-        from spring.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
+        from springbootai.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
 
         payloads = [
             "' AND 1=1--",
@@ -97,7 +97,7 @@ class TestSQLInjectionDetector:
 
     def test_time_based_blind_injection_detected(self):
         """测试时间盲注检测"""
-        from spring.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
+        from springbootai.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
 
         payloads = [
             "'; WAITFOR DELAY '0:0:5'--",
@@ -110,7 +110,7 @@ class TestSQLInjectionDetector:
 
     def test_comment_injection_detected(self):
         """测试注释注入检测"""
-        from spring.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
+        from springbootai.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
 
         payloads = [
             "admin'--",
@@ -123,7 +123,7 @@ class TestSQLInjectionDetector:
 
     def test_stacked_queries_detected(self):
         """测试堆叠查询检测"""
-        from spring.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
+        from springbootai.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
 
         payloads = [
             "1'; DROP TABLE users;--",
@@ -146,7 +146,7 @@ class TestSQLInjectionDetector:
 
     def test_normal_parameters_pass(self):
         """测试正常参数不被误判"""
-        from spring.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
+        from springbootai.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel
 
         normal_values = [
             "john.doe@example.com",
@@ -242,7 +242,7 @@ class TestSQLInjectionDetector:
 
     def test_disabled_detector_passes_everything(self):
         """测试禁用检测器时所有内容都通过"""
-        from spring.orm.pymybatis.security.sql_injection_detector import (
+        from springbootai.orm.pymybatis.security.sql_injection_detector import (
             SQLInjectionDetector, SQLInjectionLevel
         )
         detector = SQLInjectionDetector(enabled=False)
@@ -253,7 +253,7 @@ class TestSQLInjectionDetector:
 
 class TestSensitiveDataMasker:
     def test_mask_list_preserves_entity_type_and_original(self):
-        from spring.orm.pymybatis.security.sensitive_data_masker import SensitiveDataMasker
+        from springbootai.orm.pymybatis.security.sensitive_data_masker import SensitiveDataMasker
 
         class Account:
             def __init__(self):
@@ -278,7 +278,7 @@ class TestJWTUtils:
 
     def setup_method(self):
         """初始化JWT工具"""
-        from spring.security.jwt_utils import JwtUtils
+        from springbootai.security.jwt_utils import JwtUtils
         self.secret = 'test-jwt-secret-key-for-unit-tests-12345'
         self.jwt = JwtUtils(secret_key=self.secret, algorithm='HS256')
 
@@ -388,7 +388,7 @@ class TestJWTUtils:
 
     def test_invalid_algorithm_rejected(self):
         """测试不允许的算法抛出异常"""
-        from spring.security.jwt_utils import JwtUtils
+        from springbootai.security.jwt_utils import JwtUtils
 
         with pytest.raises(ValueError, match="不允许的 JWT 算法"):
             JwtUtils(secret_key=self.secret, algorithm='none')
@@ -400,7 +400,7 @@ class TestPasswordEncoder:
     def setup_method(self):
         """初始化密码编码器（bcrypt）"""
         try:
-            from spring.orm.pymybatis.security.password_encoder import PasswordEncoder
+            from springbootai.orm.pymybatis.security.password_encoder import PasswordEncoder
             self.encoder = PasswordEncoder(algorithm='bcrypt')
             self._bcrypt_available = True
         except ImportError:
@@ -452,7 +452,7 @@ class TestPasswordEncoder:
 
     def test_sha256_encoder(self):
         """测试SHA-256编码器"""
-        from spring.orm.pymybatis.security.password_encoder import PasswordEncoder
+        from springbootai.orm.pymybatis.security.password_encoder import PasswordEncoder
 
         sha_encoder = PasswordEncoder(algorithm='sha256')
         raw = 'sha_password_test'
@@ -464,7 +464,7 @@ class TestPasswordEncoder:
 
     def test_md5_encoder(self):
         """测试MD5编码器（仅兼容用）"""
-        from spring.orm.pymybatis.security.password_encoder import PasswordEncoder
+        from springbootai.orm.pymybatis.security.password_encoder import PasswordEncoder
 
         md5_encoder = PasswordEncoder(algorithm='md5')
         raw = 'md5_password'
@@ -586,7 +586,7 @@ class TestReplayHeaders:
 
     def setup_method(self):
         """初始化重放保护器"""
-        from spring.security.replay_protection import ReplayProtection
+        from springbootai.security.replay_protection import ReplayProtection
         self.secret = 'replay-header-test-secret-key-2024'
         self.protector = ReplayProtection(secret_key=self.secret, timestamp_window=30)
 

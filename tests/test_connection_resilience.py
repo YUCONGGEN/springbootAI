@@ -18,7 +18,7 @@ if PROJECT_ROOT not in sys.path:
 
 import tests._test_helpers  # noqa: F401  安装模块mock
 
-from spring.orm.pymybatis.pool.connection_pool import (
+from springbootai.orm.pymybatis.pool.connection_pool import (
     ConnectionPool,
     PooledConnection,
 )
@@ -184,7 +184,7 @@ class TestConnectionPoolResilience:
             non_leaked._checkout_time = time.monotonic() - 0.01
             leaked_conn._checkout_time = time.monotonic() - 1.0
 
-            with patch('spring.orm.pymybatis.pool.connection_pool.logger') as mock_logger:
+            with patch('springbootai.orm.pymybatis.pool.connection_pool.logger') as mock_logger:
                 pool._detect_leaks()
 
                 warning_calls = [

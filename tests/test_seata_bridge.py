@@ -4,9 +4,9 @@ from urllib.error import HTTPError
 
 import pytest
 
-from spring.cloud import seata as seata_module
-from spring.cloud.seata import SeataTransactionManager
-from spring.cloud.seata_bridge import (
+from springbootai.cloud import seata as seata_module
+from springbootai.cloud.seata import SeataTransactionManager
+from springbootai.cloud.seata_bridge import (
     SeataBridgeClient,
     SeataBridgeError,
 )
@@ -34,7 +34,7 @@ def test_bridge_client_sends_token_and_parses_json(monkeypatch):
         captured["timeout"] = timeout
         return _Response({"xid": "127.0.0.1:8091:1", "status": "Begin"})
 
-    monkeypatch.setattr("spring.cloud.seata_bridge.urlrequest.urlopen", fake_urlopen)
+    monkeypatch.setattr("springbootai.cloud.seata_bridge.urlrequest.urlopen", fake_urlopen)
     client = SeataBridgeClient("http://127.0.0.1:18091/", "0123456789abcdef", 2.5)
 
     result = client.begin(
@@ -61,7 +61,7 @@ def test_bridge_client_reports_http_error_body(monkeypatch):
             io.BytesIO(b'{"message":"coordinator down"}'),
         )
 
-    monkeypatch.setattr("spring.cloud.seata_bridge.urlrequest.urlopen", fake_urlopen)
+    monkeypatch.setattr("springbootai.cloud.seata_bridge.urlrequest.urlopen", fake_urlopen)
     client = SeataBridgeClient("http://127.0.0.1:18091", "0123456789abcdef")
 
     with pytest.raises(SeataBridgeError, match="coordinator down"):

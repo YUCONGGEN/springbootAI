@@ -3,7 +3,7 @@
 # ========================================
 # AI 模块采用"可选依赖 + 降级"设计：
 #   - 未安装本文件任何依赖时，AI 模块仍可用（降级原生 HTTP + FakeChatModel）
-#   - 安装后自动启用 LangChain 生态适配（见 spring/ai/providers.py 的 _has_* 检测）
+#   - 安装后自动启用 LangChain 生态适配（见 springbootai/ai/providers.py 的 _has_* 检测）
 #
 # 安装方式（按需）：
 #   pip install -r requirements-ai.txt          # 全量

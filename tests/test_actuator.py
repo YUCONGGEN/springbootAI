@@ -1,6 +1,6 @@
 """P0-2 Actuator 运维端点测试。
 
-覆盖 ``spring.web.actuator`` 的纯函数逻辑与 HTTP 薄端点：
+覆盖 ``springbootai.web.actuator`` 的纯函数逻辑与 HTTP 薄端点：
 - ``/actuator`` 端点目录
 - ``/env`` 环境配置（脱敏）
 - ``/loggers`` 日志级别查询与动态修改
@@ -19,7 +19,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from spring.web.actuator import (
+from springbootai.web.actuator import (
     actuator_router,
     configure_actuator,
     get_endpoint_directory,
@@ -203,18 +203,18 @@ class TestLoggersEndpoint:
         assert "INFO" in result["levels"]
 
     def test_get_loggers_lists_registered_logger(self):
-        logging.getLogger("spring.test.actuator")
+        logging.getLogger("springbootai.test.actuator")
         result = get_loggers()
-        assert "spring.test.actuator" in result["loggers"]
+        assert "springbootai.test.actuator" in result["loggers"]
 
     def test_get_logger_level(self):
-        logger = logging.getLogger("spring.test.levelprobe")
+        logger = logging.getLogger("springbootai.test.levelprobe")
         logger.setLevel(logging.DEBUG)
-        info = get_logger_level("spring.test.levelprobe")
+        info = get_logger_level("springbootai.test.levelprobe")
         assert info["configuredLevel"] == "DEBUG"
 
     def test_set_logger_level_changes_effective_level(self):
-        name = "spring.test.dynamic"
+        name = "springbootai.test.dynamic"
         set_logger_level(name, "ERROR")
         assert logging.getLogger(name).getEffectiveLevel() == logging.ERROR
         set_logger_level(name, "INFO")
@@ -229,13 +229,13 @@ class TestLoggersEndpoint:
             logging.getLogger().setLevel(original)
 
     def test_set_logger_level_off_disables(self):
-        name = "spring.test.offprobe"
+        name = "springbootai.test.offprobe"
         set_logger_level(name, "OFF")
         assert logging.getLogger(name).getEffectiveLevel() > logging.CRITICAL
 
     def test_set_logger_level_invalid_raises(self):
         with pytest.raises(ValueError):
-            set_logger_level("spring.test.bad", "NOPE")
+            set_logger_level("springbootai.test.bad", "NOPE")
 
     def test_loggers_http_get_and_post(self, app_with_actuator):
         client, _ = app_with_actuator
@@ -244,7 +244,7 @@ class TestLoggersEndpoint:
         assert resp.status_code == 200
         assert "ROOT" in resp.json()["loggers"]
         # POST 动态修改
-        name = "spring.test.httpprobe"
+        name = "springbootai.test.httpprobe"
         resp = client.post(f"/actuator/loggers/{name}", json={"configuredLevel": "DEBUG"})
         assert resp.status_code == 200
         assert resp.json()["configuredLevel"] == "DEBUG"
@@ -255,7 +255,7 @@ class TestLoggersEndpoint:
 
     def test_loggers_http_invalid_level_returns_400(self, app_with_actuator):
         client, _ = app_with_actuator
-        resp = client.post("/actuator/loggers/spring.test.bad", json={"configuredLevel": "NOPE"})
+        resp = client.post("/actuator/loggers/springbootai.test.bad", json={"configuredLevel": "NOPE"})
         assert resp.status_code == 400
         assert "error" in resp.json()
 

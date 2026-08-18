@@ -1,11 +1,11 @@
 """
 安全注解控制器 — 测试 @PreAuthorize, @Secured, @Authenticate
 """
-from spring.annotations.core import (
+from springbootai.annotations.core import (
     RestController, RequestMapping, GetMapping, PostMapping, DeleteMapping,
     Autowired, PreAuthorize, Secured, Authenticate, Slf4j,
 )
-from spring.web.result import Result
+from springbootai.web.result import Result
 from example_all.service.SecurityService import SecurityService
 
 
@@ -94,4 +94,4 @@ class SecurityController:
     @GetMapping("/public")
     def public_data(self):
         """无需认证的公开端点"""
-        return Result.success(data={"message": "This is public data"})
+        return Result.success(data={"message": "这是公开数据"})

@@ -11,7 +11,7 @@ if _PROJECT_ROOT not in sys.path:
 
 from typing import TypedDict
 
-from spring.langgraph import GraphEdge, GraphInvoke, GraphNode, LangGraph
+from springbootai.langgraph import GraphEdge, GraphInvoke, GraphNode, LangGraph
 
 
 class CounterState(TypedDict):

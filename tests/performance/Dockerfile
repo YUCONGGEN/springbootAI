@@ -25,7 +25,7 @@ RUN python -m pip install -r requirements-langgraph.txt
 COPY requirements-mcp.txt ./
 RUN python -m pip install -r requirements-mcp.txt
 
-COPY spring ./spring
+COPY springbootai ./springbootai
 COPY tests/performance ./tests/performance
 
 EXPOSE 8080
