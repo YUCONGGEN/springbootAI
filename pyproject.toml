@@ -127,7 +127,7 @@ langchain = [
     "pydantic==2.13.4",
     # 榛樿瑁呬笂鐨勫悜閲忓簱/鏂囨。/宸ュ叿渚濊禆锛堝畨鍏細鍏ㄩ儴閿佸畾宸茬煡瀹夊叏鐗堟湰锛?
     "faiss-cpu>=1.7.4,<2",
-    "pypdf>=4.0.0,<6",
+    "pypdf>=4.0.0,<7",
     "beautifulsoup4>=4.12.0,<5",
     "sqlalchemy>=2.0.0,<3",
     # partner 鎻愪緵鍟嗗寘锛堟寜闇€鍚敤锛屼笅闈㈡槸甯哥敤鍑犳锛涘叾浣欒 PARTNER_REGISTRY 鏂囨。鎸夐渶 pip install锛?
@@ -235,7 +235,7 @@ full = [
     "pydantic==2.13.4",
     # LangChain 妯″潡澧炲己锛堝榻?springbootAI[langchain]锛?
     "faiss-cpu>=1.7.4,<2",
-    "pypdf>=4.0.0,<6",
+    "pypdf>=4.0.0,<7",
     "beautifulsoup4>=4.12.0,<5",
     "langchain-experimental>=0.3.0,<2",
     # partner 鎻愪緵鍟嗗寘锛堟寜闇€鍚敤锛涘彲閫?partner 鏈湪姝ゅ垪鍑猴紝pip install 瀵瑰簲鍖呭嵆鍙級
