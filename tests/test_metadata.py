@@ -15,7 +15,7 @@ import pytest
 # 元数据文件路径（相对当前测试文件定位，便于跨环境运行）
 METADATA_FILE = (
     Path(__file__).resolve().parent.parent
-    / "spring" / "config" / "spring-configuration-metadata.json"
+    / "springbootai" / "config" / "spring-configuration-metadata.json"
 )
 
 # 有效的 Java 类型前缀白名单（对齐 Spring Boot configuration-metadata 约定）
@@ -27,8 +27,9 @@ VALID_JAVA_TYPE_PREFIXES = (
 # 关键配置项（必须存在）
 KNOWN_CONFIG_KEYS = [
     "server.port",
-    "springbootai.application.name",
-    "springbootai.security.jwt.secret-key",
+    "spring.application.name",
+    "spring.security.jwt.secret-key",
+    "management.endpoints.web.security.enabled",
 ]
 
 
