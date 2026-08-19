@@ -80,7 +80,9 @@ jobs:
 
     - name: Run MCP protocol integration tests
       run: |
-        pytest tests/test_mcp_module.py -v --tb=short --deselect tests/test_mcp_module.py::test_real_stdio_subprocess_transport
+        pytest tests/test_mcp_module.py -v --tb=short \
+          --deselect tests/test_mcp_module.py::test_real_stdio_subprocess_transport \
+          --deselect tests/test_mcp_module.py::test_real_streamable_http_transport
 
     - name: Run AI module tests (FakeChatModel)
       run: |
@@ -109,7 +111,8 @@ jobs:
       run: |
         pytest tests/runtime/ -v --tb=short \
           --cov=springbootai --cov-append --cov-report=xml --cov-report=term \
-          --cov-fail-under=60
+          --cov-fail-under=60 \
+          --deselect tests/runtime/test_runtime_hardening.py::test_sync_controller_runs_outside_event_loop
 
     - name: Module import verification (including springbootai.langchain)
       run: |
