@@ -325,7 +325,6 @@ class SpringLogger:
         try:
             with open(test_file, 'w', encoding='utf-8') as f:
                 f.write("write permission test")
-            os.remove(test_file)
         except OSError as exc:
             import errno
             if exc.errno == errno.EACCES:
@@ -338,6 +337,13 @@ class SpringLogger:
                 raise LoggingConfigError(msg) from exc
             print(f"[WARNING] {msg}", file=sys.stderr)
             return False
+        finally:
+            # 无论写入成功或失败，都尝试清理临时文件
+            try:
+                if os.path.exists(test_file):
+                    os.remove(test_file)
+            except OSError:
+                pass
 
         return True
 

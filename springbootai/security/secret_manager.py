@@ -82,7 +82,7 @@ class SecretManager:
                 if f.is_file():
                     name = f.name.lower().replace('-', '_')
                     try:
-                        self._secrets[name] = f.read_text().strip()
+                        self._secrets[name] = f.read_text(encoding='utf-8').strip()
                         logger.debug(f"Loaded secret from file: {name}")
                     except Exception as e:
                         logger.warning(f"Failed to read secret file {f}: {e}")
@@ -92,7 +92,7 @@ class SecretManager:
             env_file = Path('.env')
             if env_file.exists():
                 try:
-                    for line in env_file.read_text().splitlines():
+                    for line in env_file.read_text(encoding='utf-8').splitlines():
                         line = line.strip()
                         if line and not line.startswith('#') and '=' in line:
                             k, v = line.split('=', 1)
