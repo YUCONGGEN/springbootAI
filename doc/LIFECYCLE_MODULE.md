@@ -1,6 +1,6 @@
 # SpringBootAI Bean 生命周期与增强注解指南
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.4
 
 ---
 
@@ -343,6 +343,125 @@ features:
 
 ---
 
+## 5. IoC 生命周期接口与后置处理器
+
+> 对齐 Spring 的接口驱动生命周期扩展点（`springbootai/context/lifecycle.py`）。
+
+### 是什么？
+
+除注解驱动的 `@PostConstruct` / `@PreDestroy` 外，框架还提供了**接口驱动**的生命周期扩展点，适合框架内部组件和需要类型安全的场景。
+
+| 接口 | 对齐 Spring | 一句话作用 |
+|------|-----------|-----------|
+| `InitializingBean` | `InitializingBean` | 属性注入完成后调用 `after_properties_set()` |
+| `DisposableBean` | `DisposableBean` | 容器销毁时调用 `destroy()` |
+| `SmartLifecycle` | `SmartLifecycle` | 支持相位排序的启停组件（消息监听器、调度器、MCP Server） |
+| `BeanPostProcessor` | `BeanPostProcessor` | 在 Bean 初始化前后做通用处理（代理、标记接口检查） |
+| `BeanFactoryPostProcessor` | `BeanFactoryPostProcessor` | 在 Bean 实例化前修改 Bean 定义 |
+| `BeanFactoryAware` | `BeanFactoryAware` | 注入 BeanFactory 引用 |
+| `ApplicationContextAware` | `ApplicationContextAware` | 注入 ApplicationContext 引用 |
+| `EnvironmentAware` | `EnvironmentAware` | 注入配置环境（ConfigLoader） |
+
+### Bean 生命周期完整顺序
+
+对齐 Spring 标准顺序：
+
+```
+实例化 Bean
+  → BeanFactoryAware / ApplicationContextAware / EnvironmentAware 回调
+  → BeanPostProcessor.postProcessBeforeInitialization
+  → @PostConstruct
+  → InitializingBean.afterPropertiesSet()
+  → init-method（自定义初始化方法）
+  → BeanPostProcessor.postProcessAfterInitialization
+  → Bean 就绪
+```
+
+销毁顺序（反序）：
+
+```
+@PreDestroy → DisposableBean.destroy() → SmartLifecycle.stop() → destroy-method
+```
+
+### 怎么用？
+
+**InitializingBean / DisposableBean**
+
+```python
+from springbootai.context.lifecycle import InitializingBean, DisposableBean
+
+
+class DatabaseService(InitializingBean, DisposableBean):
+    def after_properties_set(self):
+        """属性注入完成后初始化连接池"""
+        self.pool = create_pool()
+
+    def destroy(self):
+        """容器关闭时释放连接池"""
+        self.pool.close()
+```
+
+**SmartLifecycle（相位排序启停）**
+
+```python
+from springbootai.context.lifecycle import SmartLifecycle
+
+
+class MessageListenerContainer(SmartLifecycle):
+    def start(self):
+        """应用启动后开始消费消息"""
+
+    def stop(self):
+        """关闭前优雅停止消费"""
+
+    def get_phase(self):
+        # 相位小的先启动；停止时反序
+        return 100
+```
+
+**BeanPostProcessor（通用 Bean 处理）**
+
+```python
+from springbootai.context.lifecycle import BeanPostProcessor
+
+
+class LoggingPostProcessor(BeanPostProcessor):
+    def post_process_before_initialization(self, bean, bean_name):
+        # 初始化前处理（可修改/替换 Bean）
+        return bean
+
+    def post_process_after_initialization(self, bean, bean_name):
+        # 初始化后处理（可返回代理）
+        return bean
+```
+
+### 循环依赖处理（三级缓存）
+
+框架已实现对齐 Spring 的**三级缓存**机制：
+
+| 缓存 | 作用 |
+|------|------|
+| 一级缓存 `_bean_instances` | 完全初始化好的单例 |
+| 二级缓存 `_early_singleton_objects` | 已实例化但未初始化完成的提前暴露对象 |
+| 三级缓存 `_singleton_factories` | 提前暴露引用工厂（支持 AOP 代理） |
+
+- ✅ **字段/Setter 循环依赖**：通过提前暴露引用自动解决
+- ❌ **构造器循环依赖**：无法解决（对齐 Spring 行为），会抛出异常
+
+```python
+class ServiceA:
+    def __init__(self):
+        self.b = None  # 由框架注入 ServiceB
+
+
+class ServiceB:
+    def __init__(self):
+        self.a = None  # 由框架注入 ServiceA
+# 两个 Bean 互相依赖时，框架通过提前暴露引用解决，不会死循环
+```
+
+---
+
 ## 代码位置与测试
 
 | 注解组 | 实现位置 | 测试文件 |
@@ -351,6 +470,7 @@ features:
 | 日志与监控 | `springbootai/annotations/core.py` | `tests/test_logging_annotations.py` |
 | Bean 配置 | `springbootai/annotations/core.py` | `tests/test_bean_config_annotations.py` |
 | 业务增强 | `springbootai/annotations/core.py` | `tests/test_comprehensive_aop.py` |
+| IoC 生命周期接口 | `springbootai/context/lifecycle.py` | `tests/test_ioc_lifecycle_enhancements.py` |
 
 完整测试报告见 [TEST_REPORT.md](TEST_REPORT.md)。
 
@@ -379,4 +499,4 @@ features:
 
 ## 改进记录
 
-暂无。
+- 2.3.4：新增 IoC 生命周期接口（`InitializingBean`/`DisposableBean`/`SmartLifecycle`/`BeanPostProcessor`/`BeanFactoryPostProcessor`/`Aware` 系列）与三级缓存循环依赖处理。

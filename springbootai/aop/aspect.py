@@ -73,6 +73,19 @@ class _AdviceDefinition:
     annotation: Any
     expression: str
     pointcuts: Dict[str, str]
+    order: int = 0
+
+
+def _aspect_order(aspect_class: type) -> int:
+    """解析切面类上的 ``@Order`` 优先级（默认 0，数值越小优先级越高）。"""
+    for annotation in get_spring_annotations(aspect_class):
+        if type(annotation).__name__ == "Order":
+            value = getattr(annotation, "value", 0)
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+    return 0
 
 
 def is_aspect_class(bean_class: type) -> bool:
@@ -118,6 +131,7 @@ def collect_advice_definitions(bean_factory: Any) -> List[_AdviceDefinition]:
                             annotation=annotation,
                             expression=annotation.value,
                             pointcuts=pointcuts,
+                            order=_aspect_order(aspect_class),
                         )
                     )
     return definitions
@@ -181,6 +195,48 @@ def _execution_pattern(expression: str) -> str:
     return parts[-1]
 
 
+def _annotation_name_matches(annotation: Any, expected: str) -> bool:
+    """判断注解的类名（短名或全限定名）是否匹配期望名。"""
+    return (
+        type(annotation).__name__ == expected
+        or f"{type(annotation).__module__}.{type(annotation).__name__}" == expected
+    )
+
+
+def _method_parameter_types(method: Callable) -> List[Any]:
+    """提取方法的参数类型注解（无注解的参数视为 ``object``）。"""
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return []
+    types_list: List[Any] = []
+    for parameter in signature.parameters.values():
+        if parameter.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
+        annotation = parameter.annotation
+        if annotation is inspect.Parameter.empty:
+            types_list.append(object)
+        else:
+            types_list.append(annotation)
+    return types_list
+
+
+def _type_matches(actual: Any, expected_name: str) -> bool:
+    """判断类型是否匹配期望类型名（短名或全限定名）。"""
+    if actual is None:
+        actual = object
+    try:
+        if actual.__name__ == expected_name:
+            return True
+        module = getattr(actual, "__module__", "")
+        return f"{module}.{actual.__name__}" == expected_name
+    except Exception:
+        return False
+
+
 def _matches_atom(
     expression: str,
     *,
@@ -227,10 +283,55 @@ def _matches_atom(
         if not expected:
             raise ValueError("@annotation pointcut must include an annotation name")
         return any(
-            type(annotation).__name__ == expected
-            or f"{type(annotation).__module__}.{type(annotation).__name__}" == expected
+            _annotation_name_matches(annotation, expected)
             for annotation in get_spring_annotations(method)
         )
+    if expression.startswith("@within(") and expression.endswith(")"):
+        expected = expression[len("@within("):-1].strip()
+        if not expected:
+            raise ValueError("@within pointcut must include an annotation name")
+        return any(
+            _annotation_name_matches(annotation, expected)
+            for annotation in get_spring_annotations(target_class)
+        )
+    if expression.startswith("@target(") and expression.endswith(")"):
+        expected = expression[len("@target("):-1].strip()
+        if not expected:
+            raise ValueError("@target pointcut must include an annotation name")
+        return any(
+            _annotation_name_matches(annotation, expected)
+            for annotation in get_spring_annotations(target_class)
+        )
+    if expression.startswith("args(") and expression.endswith(")"):
+        inner = expression[len("args("):-1].strip()
+        if not inner:
+            raise ValueError("args pointcut must include parameter types")
+        expected_types = [part.strip() for part in inner.split(",") if part.strip()]
+        actual_types = _method_parameter_types(method)
+        # 无类型约束时（空签名）不匹配任何 args 表达式
+        if not actual_types:
+            return False
+        # 参数数量必须一致（或用 .. 表示任意前缀，简化为前缀匹配）
+        if len(expected_types) != len(actual_types):
+            return False
+        return all(
+            _type_matches(actual, expected)
+            for actual, expected in zip(actual_types, expected_types)
+        )
+    if expression.startswith("@args(") and expression.endswith(")"):
+        expected = expression[len("@args("):-1].strip()
+        if not expected:
+            raise ValueError("@args pointcut must include an annotation name")
+        # 匹配方法参数上是否带有指定注解
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            return False
+        for parameter in signature.parameters.values():
+            for annotation in get_spring_annotations(parameter.annotation) if isinstance(parameter.annotation, type) else []:
+                if _annotation_name_matches(annotation, expected):
+                    return True
+        return False
     raise ValueError(f"Unsupported pointcut expression: {expression}")
 
 
@@ -394,6 +495,14 @@ def apply_aspects(
     after_throwing = [
         item for item in advice if type(item.annotation) is AfterThrowing
     ]
+
+    # @Order 优先级：before/around 按 order 升序（值小先执行）；
+    # after/after_returning/after_throwing 按 order 降序（值大先执行），形成"洋葱"结构。
+    before.sort(key=lambda item: item.order)
+    around.sort(key=lambda item: item.order)
+    after.sort(key=lambda item: item.order, reverse=True)
+    after_returning.sort(key=lambda item: item.order, reverse=True)
+    after_throwing.sort(key=lambda item: item.order, reverse=True)
 
     def business_args(call_args):
         if call_args and call_args[0] is target:

@@ -238,10 +238,118 @@ class ConditionalOnClass(SpringAnnotation):
         return False
 
 
+class ConditionalOnMissingClass(SpringAnnotation):
+    """``@ConditionalOnMissingClass``：类路径中不存在指定类时装配（对齐 Spring Boot）。"""
+
+    _annotation_type = _CONDITIONAL_TYPE
+
+    def __init__(self, name: str, value: Optional[Type] = None):
+        super().__init__(name=name, value=value)
+
+    def matches(self, ctx: Any) -> bool:
+        on_class = ConditionalOnClass(name=self.name, value=self.value)
+        return not on_class.matches(ctx)
+
+
+class ConditionalOnWebApplication(SpringAnnotation):
+    """``@ConditionalOnWebApplication``：Web应用环境下装配（对齐 Spring Boot）。"""
+
+    _annotation_type = _CONDITIONAL_TYPE
+
+    def __init__(self, type: str = "any"):
+        """type: 'servlet' | 'reactive' | 'any'。Python框架统一为reactive(FastAPI)。"""
+        super().__init__(type=type)
+
+    def matches(self, ctx: Any) -> bool:
+        # 判断是否为Web环境：检查是否有WebApplicationContext
+        from springbootai.web.web_context import WebApplicationContext
+        return isinstance(ctx, WebApplicationContext) or hasattr(ctx, 'fastapi_app')
+
+
+class ConditionalOnNotWebApplication(SpringAnnotation):
+    """``@ConditionalOnNotWebApplication``：非Web应用环境下装配。"""
+
+    _annotation_type = _CONDITIONAL_TYPE
+
+    def matches(self, ctx: Any) -> bool:
+        on_web = ConditionalOnWebApplication()
+        return not on_web.matches(ctx)
+
+
+class ConditionalOnExpression(SpringAnnotation):
+    """``@ConditionalOnExpression``：基于SpEL风格表达式的条件装配。
+
+    支持简单表达式：配置属性引用和基本布尔运算。
+    语法：
+        "${property:default}"  - 配置属性值
+        "true" / "false"       - 布尔字面量
+        "property == value"    - 等值比较
+        "!property"            - 逻辑非
+    """
+
+    _annotation_type = _CONDITIONAL_TYPE
+
+    def __init__(self, expression: str):
+        super().__init__(expression=expression)
+
+    def matches(self, ctx: Any) -> bool:
+        loader = getattr(ctx, "config_loader", None)
+        expr = self.expression.strip()
+
+        # 简单布尔字面量
+        if expr.lower() in ("true", "false"):
+            return expr.lower() == "true"
+
+        # 逻辑非
+        if expr.startswith("!"):
+            inner = ConditionalOnExpression(expr[1:])
+            return not inner.matches(ctx)
+
+        # 属性引用 ${...}
+        import re
+        prop_match = re.match(r'^\$\{([^:}]+)(?::(.+))?\}$', expr)
+        if prop_match:
+            key = prop_match.group(1)
+            default = prop_match.group(2)
+            try:
+                value = loader.get(key) if loader is not None else None
+            except Exception:
+                value = None
+            if value is None:
+                value = default
+            return value is not None and str(value).lower() not in ("false", "0", "no", "off", "")
+
+        # 等值比较 prop == value
+        eq_match = re.match(r'^(.+?)\s*==\s*(.+)$', expr)
+        if eq_match:
+            left = eq_match.group(1).strip()
+            right = eq_match.group(2).strip().strip("'\"")
+            if left.startswith("${") and left.endswith("}"):
+                key = left[2:-1].split(":")[0]
+                try:
+                    actual = loader.get(key) if loader is not None else None
+                except Exception:
+                    actual = None
+                return str(actual) == right
+            return left.strip("'\"") == right
+
+        # 简单属性名：存在且不为false即装配
+        if expr and " " not in expr:
+            try:
+                value = loader.get(expr) if loader is not None else None
+            except Exception:
+                value = None
+            return value is not None and str(value).lower() not in ("false", "0", "no", "off", "")
+
+        return False
+
+
 # 供 _matches_conditions 识别的全部条件注解类型
 CONDITION_ANNOTATIONS = (
     Conditional, ConditionalOnProperty, ConditionalOnBean,
     ConditionalOnMissingBean, ConditionalOnClass,
+    ConditionalOnMissingClass, ConditionalOnWebApplication,
+    ConditionalOnNotWebApplication, ConditionalOnExpression,
 )
 
 
@@ -267,6 +375,10 @@ __all__ = [
     "ConditionalOnBean",
     "ConditionalOnMissingBean",
     "ConditionalOnClass",
+    "ConditionalOnMissingClass",
+    "ConditionalOnWebApplication",
+    "ConditionalOnNotWebApplication",
+    "ConditionalOnExpression",
     "CONDITION_ANNOTATIONS",
     "all_conditions_match",
 ]

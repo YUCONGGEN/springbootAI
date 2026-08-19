@@ -68,6 +68,7 @@ class AnnotationContractTests(unittest.TestCase):
             "Component": lambda: Component("itemComponent"),
             "Aspect": lambda: Aspect("auditAspect"),
             "Pointcut": lambda: Pointcut("execution(* *.Service.*(..))"),
+            "Order": lambda: Order(1),
             "Before": lambda: Before("execution(* *.Service.*(..))"),
             "After": lambda: After("execution(* *.Service.*(..))"),
             "Around": lambda: Around("execution(* *.Service.*(..))"),

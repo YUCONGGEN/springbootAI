@@ -7,7 +7,7 @@ __all__ = [
     "SpringAnnotation", "get_spring_annotations", "ApplicationEvent", "EventListener",
     "SpringBootApplication", "ComponentScan", "RestController", "Controller",
     "RequestMapping", "GetMapping", "PostMapping", "PutMapping", "PatchMapping",
-    "DeleteMapping", "Service", "Component", "Aspect", "Pointcut", "Before",
+    "DeleteMapping", "Service", "Component", "Aspect", "Pointcut", "Order", "Before",
     "After", "Around", "AfterReturning", "AfterThrowing", "Repository", "Autowired",
     "Qualifier", "Configuration", "Scope", "Bean", "Value", "ConfigurationProperties",
     "RequestParam", "PathVariable", "RequestBody", "RequestPart", "FileUpload",
@@ -263,6 +263,29 @@ class Pointcut(SpringAnnotation):
         if not isinstance(value, str) or not value.strip():
             raise ValueError("Pointcut value must be a non-empty string")
         super().__init__(value=value.strip())
+
+
+class Order(SpringAnnotation):
+    """声明组件/通知的执行优先级（对齐 Spring ``@Order``）。
+
+    数值越小优先级越高：
+    - 切面通知：优先级高的 @Before 先执行、@After 后执行（对齐 Spring 语义）
+    - BeanPostProcessor / 拦截器：数值小的先执行
+
+    使用示例：
+        @Aspect
+        @Order(1)  # 比 @Order(2) 的通知先执行
+        class LoggingAspect:
+            ...
+    """
+
+    _annotation_type = "order"
+
+    def __init__(self, value: int = 0):
+        super().__init__(value=int(value))
+
+    def get_order(self) -> int:
+        return int(self.value)
 
 
 class _AdviceAnnotation:

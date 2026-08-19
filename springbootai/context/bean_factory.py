@@ -1,5 +1,10 @@
 from typing import Type, Optional, Any, Dict, Callable, List, get_args, get_origin, Union
 from springbootai.context.bean_definition import BeanDefinition
+from springbootai.context.lifecycle import (
+    BeanPostProcessor, BeanFactoryPostProcessor, InitializingBean, DisposableBean,
+    ApplicationContextAware, BeanFactoryAware, EnvironmentAware, SmartLifecycle,
+    LifecycleProcessor,
+)
 from springbootai.annotations.core import Autowired, Qualifier, Slf4j, PostConstruct, PreDestroy, Primary, Transactional, Cacheable, Retryable, Async, Value
 from springbootai.annotations.cache import CachePut, CacheEvict, CacheConfig, Caching
 from springbootai.aop.proxy_factory import ProxyFactory
@@ -104,6 +109,22 @@ class BeanFactory:
         self._cache_default_ttl = 300  # 默认TTL（秒）
         self._lock = threading.RLock()
         self._config_loader = config_loader
+
+        # ========== IoC增强：三级缓存解决循环依赖 ==========
+        self._singleton_factories: Dict[str, Callable] = {}  # 三级缓存：单例工厂
+        self._early_singleton_objects: Dict[str, Any] = {}   # 二级缓存：提前暴露的对象
+        self._singletons_currently_in_creation: set = set()  # 正在创建的单例
+
+        # ========== IoC增强：BeanPostProcessor注册 ==========
+        self._bean_post_processors: List[BeanPostProcessor] = []
+        self._bean_factory_post_processors: List[BeanFactoryPostProcessor] = []
+        self._has_invoked_factory_post_processors = False
+
+        # ========== IoC增强：生命周期管理器 ==========
+        self._lifecycle_processor = LifecycleProcessor()
+
+        # ========== IoC增强：ApplicationContext引用（供Aware注入） ==========
+        self._application_context = None
     
     def _get_initializing(self) -> set:
         """获取当前线程的 initializing 集合"""
@@ -119,6 +140,33 @@ class BeanFactory:
     
     def set_config_loader(self, config_loader):
         self._config_loader = config_loader
+
+    def set_application_context(self, application_context) -> None:
+        """设置ApplicationContext引用，供Aware接口注入。"""
+        self._application_context = application_context
+
+    def add_bean_post_processor(self, processor: BeanPostProcessor) -> None:
+        """注册BeanPostProcessor。"""
+        if processor not in self._bean_post_processors:
+            self._bean_post_processors.append(processor)
+            # 按优先级排序：Ordered接口/Order属性
+            self._bean_post_processors.sort(key=lambda p: getattr(p, 'get_order', lambda: 0)())
+
+    def add_bean_factory_post_processor(self, processor: BeanFactoryPostProcessor) -> None:
+        """注册BeanFactoryPostProcessor。"""
+        if processor not in self._bean_factory_post_processors:
+            self._bean_factory_post_processors.append(processor)
+
+    def invoke_bean_factory_post_processors(self) -> None:
+        """执行所有BeanFactoryPostProcessor（在Bean实例化前调用）。"""
+        if self._has_invoked_factory_post_processors:
+            return
+        self._has_invoked_factory_post_processors = True
+        for processor in self._bean_factory_post_processors:
+            try:
+                processor.post_process_bean_factory(self)
+            except Exception:
+                logger.exception("BeanFactoryPostProcessor %s failed", type(processor).__name__)
 
     def register_bean_definition(self, bean_name: str, definition: BeanDefinition) -> None:
         # A definition may have been marked destroyed during a previous
@@ -172,11 +220,38 @@ class BeanFactory:
             raise RuntimeError(f"Bean '{bean_name}' has been destroyed")
 
         if definition.is_singleton:
-            if bean_name not in self._bean_instances:
-                with self._lock:
-                    if bean_name not in self._bean_instances:
-                        self._bean_instances[bean_name] = self._create_bean(definition)
-            return self._bean_instances[bean_name]
+            # 一级缓存：已完全初始化的单例
+            if bean_name in self._bean_instances:
+                return self._bean_instances[bean_name]
+            # 二级缓存：提前暴露的早期对象（已实例化但未初始化完成）
+            if bean_name in self._early_singleton_objects:
+                return self._early_singleton_objects[bean_name]
+            with self._lock:
+                # Double-check after lock
+                if bean_name in self._bean_instances:
+                    return self._bean_instances[bean_name]
+                if bean_name in self._early_singleton_objects:
+                    return self._early_singleton_objects[bean_name]
+
+                # 标记正在创建
+                before_creation = bean_name not in self._singletons_currently_in_creation
+                self._singletons_currently_in_creation.add(bean_name)
+                try:
+                    # 三级缓存：单例工厂（用于AOP代理提前暴露）
+                    singleton_object = self._create_bean(definition)
+                finally:
+                    if before_creation:
+                        self._singletons_currently_in_creation.discard(bean_name)
+                        # 创建完成，清理二三级缓存
+                        self._singleton_factories.pop(bean_name, None)
+                        self._early_singleton_objects.pop(bean_name, None)
+
+                # 只有"最外层"创建者才把完整实例写入一级缓存；重入调用
+                # （循环依赖）拿到的是提前暴露的引用，不能污染一级缓存，
+                # 否则会跳过该 Bean 后续的字段注入与初始化。
+                if before_creation:
+                    self._bean_instances[bean_name] = singleton_object
+                return singleton_object
         else:
             return self._create_bean(definition)
 
@@ -225,6 +300,13 @@ class BeanFactory:
     def _create_bean(self, definition: BeanDefinition) -> Any:
         initializing = self._get_initializing()
         if definition.bean_name in initializing:
+            # 允许通过三级缓存解决Setter/Field循环依赖；构造器循环依赖仍报错
+            if definition.bean_name in self._early_singleton_objects:
+                return self._early_singleton_objects[definition.bean_name]
+            if definition.bean_name in self._singleton_factories:
+                early = self._singleton_factories[definition.bean_name]()
+                self._early_singleton_objects[definition.bean_name] = early
+                return early
             raise RuntimeError(f"Circular dependency detected for bean: {definition.bean_name}")
 
         initializing.add(definition.bean_name)
@@ -243,11 +325,30 @@ class BeanFactory:
             else:
                 instance = self._instantiate_bean(definition)
 
+            # ========== IoC增强：实例化后立即放入三级缓存（提前暴露），解决循环依赖 ==========
+            if definition.is_singleton:
+                def _get_early_singleton_reference():
+                    return self._apply_aop_proxy_early(instance, definition)
+                self._singleton_factories[definition.bean_name] = _get_early_singleton_reference
+
+            # ========== IoC增强：Aware接口回调 ==========
+            self._invoke_aware_methods(instance)
+
+            # ========== IoC增强：BeanPostProcessor postProcessBeforeInitialization ==========
+            instance = self._apply_post_processors_before_init(instance, definition.bean_name)
+
             self._apply_aop_proxy(instance, definition)
             self._populate_bean(definition, instance)
             self._populate_config_values(definition, instance)
             self._process_slf4j(instance, definition)
             self._initialize_bean(definition, instance)
+
+            # ========== IoC增强：BeanPostProcessor postProcessAfterInitialization ==========
+            instance = self._apply_post_processors_after_init(instance, definition.bean_name)
+
+            # ========== IoC增强：注册SmartLifecycle ==========
+            if isinstance(instance, SmartLifecycle):
+                self._lifecycle_processor.register(instance)
 
             return instance
         except Exception:
@@ -256,6 +357,48 @@ class BeanFactory:
             raise
         finally:
             initializing.discard(definition.bean_name)
+
+    def _apply_aop_proxy_early(self, instance: Any, definition: BeanDefinition) -> Any:
+        """三级缓存提前引用：创建AOP代理但不执行字段注入/初始化。"""
+        # 对于提前暴露的引用，只做必要的代理包装（主要解决AOP+循环依赖）
+        # 简化处理：先返回原始实例，完整AOP在populate后执行
+        return instance
+
+    def _invoke_aware_methods(self, instance: Any) -> None:
+        """调用Aware接口回调，注入容器资源。"""
+        try:
+            if isinstance(instance, BeanFactoryAware):
+                instance.set_bean_factory(self)
+            if isinstance(instance, ApplicationContextAware) and self._application_context is not None:
+                instance.set_application_context(self._application_context)
+            if isinstance(instance, EnvironmentAware) and self._config_loader is not None:
+                instance.set_environment(self._config_loader)
+        except Exception:
+            logger.exception("Aware callback failed for %s", type(instance).__name__)
+
+    def _apply_post_processors_before_init(self, instance: Any, bean_name: str) -> Any:
+        """执行所有BeanPostProcessor.postProcessBeforeInitialization。"""
+        result = instance
+        for processor in self._bean_post_processors:
+            try:
+                processed = processor.post_process_before_initialization(result, bean_name)
+                if processed is not None:
+                    result = processed
+            except Exception:
+                logger.exception("BeanPostProcessor BeforeInit failed for %s", bean_name)
+        return result
+
+    def _apply_post_processors_after_init(self, instance: Any, bean_name: str) -> Any:
+        """执行所有BeanPostProcessor.postProcessAfterInitialization。"""
+        result = instance
+        for processor in self._bean_post_processors:
+            try:
+                processed = processor.post_process_after_initialization(result, bean_name)
+                if processed is not None:
+                    result = processed
+            except Exception:
+                logger.exception("BeanPostProcessor AfterInit failed for %s", bean_name)
+        return result
 
     def _populate_config_values(self, definition: BeanDefinition, instance: Any) -> None:
         if self._config_loader is None:
@@ -446,6 +589,22 @@ class BeanFactory:
                 setattr(instance, 'logger', logger)
 
     def _initialize_bean(self, definition: BeanDefinition, instance: Any) -> None:
+        # 执行顺序：@PostConstruct -> InitializingBean.afterPropertiesSet -> initMethod
+        # 对齐Spring标准生命周期顺序
+
+        # 1. @PostConstruct 注解方法
+        self._invoke_post_construct(instance)
+
+        # 2. InitializingBean.afterPropertiesSet()
+        if isinstance(instance, InitializingBean):
+            try:
+                instance.after_properties_set()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"InitializingBean.afterPropertiesSet failed for {definition.bean_name}"
+                ) from exc
+
+        # 3. 自定义init-method
         if definition.init_method and hasattr(instance, definition.init_method):
             init_method = getattr(instance, definition.init_method)
             if callable(init_method):
@@ -455,7 +614,6 @@ class BeanFactory:
             instance.init()
 
         self._register_rabbit_listeners(instance)
-        self._invoke_post_construct(instance)
 
         definition.mark_initialized()
 
@@ -506,16 +664,21 @@ class BeanFactory:
         if bean_name in self._bean_instances:
             instance = self._bean_instances[bean_name]
 
-            # Run every destruction stage even when an earlier callback is
-            # broken.  ``destroy_all`` can then continue with unrelated beans,
-            # while direct callers still receive the first error afterwards.
-            callbacks = [lambda: self._invoke_pre_destroy(instance)]
+            # 销毁顺序（对齐Spring）：
+            # @PreDestroy -> DisposableBean.destroy() -> 自定义destroy-method
+            callbacks = []
+            callbacks.append(lambda: self._invoke_pre_destroy(instance))
+            if isinstance(instance, DisposableBean):
+                callbacks.append(instance.destroy)
+            if isinstance(instance, SmartLifecycle) and instance.is_running():
+                callbacks.append(instance.stop)
             if definition.destroy_method and hasattr(instance, definition.destroy_method):
                 destroy_method = getattr(instance, definition.destroy_method)
                 if callable(destroy_method):
                     callbacks.append(destroy_method)
             destroy = getattr(instance, 'destroy', None)
-            if callable(destroy):
+            # DisposableBean已经处理过destroy方法，避免重复调用
+            if callable(destroy) and not isinstance(instance, DisposableBean):
                 callbacks.append(destroy)
 
             for callback in callbacks:
@@ -534,10 +697,21 @@ class BeanFactory:
         # singleton map would permit a later teardown to invoke arbitrary user
         # code a second time.
         self._bean_instances.pop(bean_name, None)
+        # 清理二三级缓存
+        self._singleton_factories.pop(bean_name, None)
+        self._early_singleton_objects.pop(bean_name, None)
         definition.mark_destroyed()
 
         if first_error is not None:
             raise first_error
+
+    def start_lifecycles(self) -> None:
+        """启动所有SmartLifecycle组件（在ApplicationContext refresh完成后调用）。"""
+        self._lifecycle_processor.start()
+
+    def stop_lifecycles(self) -> None:
+        """停止所有SmartLifecycle组件（在ApplicationContext close前调用）。"""
+        self._lifecycle_processor.stop()
 
     def _invoke_pre_destroy(self, instance: Any) -> None:
         first_error = None

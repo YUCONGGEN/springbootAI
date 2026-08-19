@@ -15,6 +15,7 @@ from .core import (
     Component,
     Aspect,
     Pointcut,
+    Order,
     Before,
     After,
     Around,
@@ -102,6 +103,10 @@ from .conditional import (
     ConditionalOnBean,
     ConditionalOnMissingBean,
     ConditionalOnClass,
+    ConditionalOnMissingClass,
+    ConditionalOnWebApplication,
+    ConditionalOnNotWebApplication,
+    ConditionalOnExpression,
 )
 
 # 可选导入：消息队列注解（RabbitMQ 需要 pika，Kafka 需要 kafka-python）
@@ -174,6 +179,7 @@ __all__ = [
     "Component",
     "Aspect",
     "Pointcut",
+    "Order",
     "Before",
     "After",
     "Around",
@@ -255,6 +261,10 @@ __all__ = [
     "ConditionalOnBean",
     "ConditionalOnMissingBean",
     "ConditionalOnClass",
+    "ConditionalOnMissingClass",
+    "ConditionalOnWebApplication",
+    "ConditionalOnNotWebApplication",
+    "ConditionalOnExpression",
     # 消息队列注解
     "RabbitListener",
     "RabbitTemplate",

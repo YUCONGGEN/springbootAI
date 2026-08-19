@@ -1,6 +1,6 @@
 # 声明式 AOP、后置鉴权与重试恢复指南
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.4
 >
 > 适用范围：`@Aspect` 通知、`@PostAuthorize` 返回后鉴权、`@Recover` 重试失败兜底。
 
@@ -123,6 +123,10 @@ Controller 通过注入调用 `OrderService.find_order(1)` 时，切面会自动
 | `within(...)` | 类 | `within(myapp.service.*)` |
 | `bean(...)` | 容器中的 Bean 名 | `bean(order*)` |
 | `@annotation(...)` | 带指定注解的方法 | `@annotation(Retryable)` |
+| `@within(...)` | 带指定注解的类 | `@within(Component)` |
+| `@target(...)` | 带指定注解的目标类 | `@target(Service)` |
+| `args(...)` | 方法参数类型 | `args(str)` / `args(int, str)` |
+| `@args(...)` | 参数上带指定注解 | `@args(Validated)` |
 | `pointcutName()` | 当前切面中用 `@Pointcut` 声明的切点 | `service_methods()` |
 
 可以使用 `&&`、`||`、`!` 组合规则，也可以写成 `and`、`or`、`not`：
@@ -132,6 +136,10 @@ Controller 通过注入调用 `OrderService.find_order(1)` 时，切面会自动
 def retrying_order_methods(self):
     pass
 
+@Pointcut("@within(Service) && args(str)")
+def string_param_service_methods(self):
+    pass
+
 @Before("retrying_order_methods()")
 def record_retry_entry(self, join_point):
     print(join_point.method_name)
@@ -139,6 +147,29 @@ def record_retry_entry(self, join_point):
 
 通配符规则：`*` 匹配任意字符；`..` 在方法签名和包路径中也按任意范围匹配。建议先用明确的
 Service 类名或 Bean 名前缀，避免切点过宽，把框架组件也拦截进去。
+
+### 4.1 切面优先级（@Order）
+
+多个切面匹配同一方法时，用 `@Order` 控制执行顺序（对齐 Spring，数值越小优先级越高）：
+
+```python
+from springbootai.annotations import Aspect, Order, Before, After
+
+
+@Aspect
+@Order(1)  # 优先级高于 @Order(2)
+class LoggingAspect:
+    @Before("execution(* *.*Service.*(..))")
+    def log_before(self, join_point):
+        print("先执行（Order 小）")
+
+    @After("execution(* *.*Service.*(..))")
+    def log_after(self, join_point):
+        print("后执行（Order 小）")
+```
+
+- `@Before` / `@Around`：`@Order` 值小的**先**执行
+- `@After` / `@AfterReturning` / `@AfterThrowing`：`@Order` 值小的**后**执行（形成"洋葱"结构）
 
 ### 5. JoinPoint 里有什么？
 
@@ -435,6 +466,10 @@ conda run -n py3.10 python -m pytest tests/test_declarative_aop_post_authorize_r
 ---
 
 ## 改进记录
+
+### AOP 切点增强 — v2.3.4
+
+新增 `args(...)`（参数类型）、`@within(...)`（类注解）、`@target(...)`（目标类注解）、`@args(...)`（参数注解）切点，以及 `@Order` 切面优先级排序。测试见 `tests/test_aop_pointcut_enhancements.py`。
 
 ### AOP 异步切面未正确 await 返回值 — 中 ⏳ 待处理 (v2.3.0)
 

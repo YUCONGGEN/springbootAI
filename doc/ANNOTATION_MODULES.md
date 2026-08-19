@@ -1,6 +1,6 @@
 # SpringBootAI 常用注解模块指南
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.4
 
 ---
 
@@ -126,7 +126,7 @@ class UserService:
 
 **根据配置决定是否启用某个功能。** 就像遥控器上有"3D 模式"按钮才启用 3D 功能——某个条件满足时，框架才创建和管理这个 Bean。
 
-### 五种条件注解速查表
+### 九种条件注解速查表
 
 | 注解 | 一句话解释 | 使用场景 |
 |------|-----------|---------|
@@ -134,6 +134,10 @@ class UserService:
 | `@ConditionalOnBean` | 容器中有指定 Bean 时才注册 | 有 DataSource 才注册 Repository |
 | `@ConditionalOnMissingBean` | 容器中没有指定 Bean 时才注册 | 提供默认实现：用户没自定义就用默认的 |
 | `@ConditionalOnClass` | 指定模块或类可以导入时才注册 | 装了 openpyxl 才启用 Excel 功能 |
+| `@ConditionalOnMissingClass` | 指定模块或类**不存在**时才注册 | 缺某个可选依赖时启用降级实现 |
+| `@ConditionalOnWebApplication` | Web 应用环境下注册 | 仅 Web 环境才需要的组件 |
+| `@ConditionalOnNotWebApplication` | 非 Web 应用环境下注册 | 仅批处理/CLI 环境才需要的组件 |
+| `@ConditionalOnExpression` | 基于表达式求值（属性引用/等值比较/逻辑非） | `${redis.enabled}`、`${env} == 'prod'` |
 | `@Conditional` | 自定义条件函数返回 `True` 才注册 | 复杂的自定义规则 |
 
 ### 怎么用？
@@ -405,6 +409,18 @@ except OptimisticLockError:
 ---
 
 ## 改进记录
+
+### 新增 4 种条件装配注解 — 增强 (v2.3.4)
+
+新增 `@ConditionalOnMissingClass`、`@ConditionalOnWebApplication`、`@ConditionalOnNotWebApplication`、`@ConditionalOnExpression` 四种条件注解，与既有 5 种共同组成九种条件装配能力，见上方 [九种条件注解速查表](#2-条件装配)。配套测试见 `tests/test_ioc_lifecycle_enhancements.py`。
+
+### IoC 容器增强：Bean 生命周期接口与后置处理器 — 增强 (v2.3.4)
+
+新增 `BeanPostProcessor`、`BeanFactoryPostProcessor`、`InitializingBean`、`DisposableBean`、`SmartLifecycle` 及 `BeanFactoryAware` / `ApplicationContextAware` / `EnvironmentAware` 等接口，并对齐 Spring 三级缓存解决循环依赖。详见 [Bean 生命周期与增强注解指南](LIFECYCLE_MODULE.md)。
+
+### AOP 切点表达式增强 — 增强 (v2.3.4)
+
+切点表达式新增 `@within`、`@target`、`args`、`@args` 四种写法，并支持 `@Order` 控制切面优先级。详见 [AOP / 后置鉴权 / 重试恢复指南](AOP_SECURITY_RETRY.md)。
 
 ### Validation Size 约束对非字符串/集合类型静默通过 — 中 ⏳ 待处理 (v2.3.0)
 
