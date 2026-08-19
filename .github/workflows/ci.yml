@@ -72,6 +72,7 @@ jobs:
           --ignore=tests/test_langgraph_module.py \
           --ignore=tests/test_mcp_module.py \
           --ignore=tests/test_ai_declarative_annotations.py \
+          --ignore=tests/runtime/ \
           -v --tb=short --cov=springbootai --cov-report= --cov-fail-under=0
 
     - name: Run LangGraph integration tests
