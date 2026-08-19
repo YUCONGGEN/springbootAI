@@ -1,7 +1,7 @@
 # SpringBootAI
 
 <p align="center">
-  <img src="doc/images/hero-banner.png" alt="SpringBootAI 功能总览" width="100%" />
+  <img src="https://raw.githubusercontent.com/YUCONGGEN/springbootAI/master/doc/images/hero-banner.png" alt="SpringBootAI 功能总览" width="100%" />
 </p>
 
 [![PyPI](https://img.shields.io/pypi/v/springbootAI)](https://pypi.org/project/springbootAI/)
