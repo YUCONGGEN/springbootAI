@@ -10,7 +10,8 @@ __all__ = [
     "DeleteMapping", "Service", "Component", "Aspect", "Pointcut", "Before",
     "After", "Around", "AfterReturning", "AfterThrowing", "Repository", "Autowired",
     "Qualifier", "Configuration", "Scope", "Bean", "Value", "ConfigurationProperties",
-    "RequestParam", "PathVariable", "RequestBody", "Valid", "Validated", "CrossOrigin",
+    "RequestParam", "PathVariable", "RequestBody", "RequestPart", "FileUpload",
+    "Valid", "Validated", "CrossOrigin",
     "ControllerAdvice", "ExceptionHandler", "Slf4j", "LogExecutionTime", "PostConstruct",
     "PreDestroy", "Primary", "Profile", "Lazy", "RequestHeader", "CookieValue",
     "ResponseStatus", "Transactional", "Cacheable", "Retryable", "Recover", "Async",
@@ -416,6 +417,50 @@ class RequestBody:
         if value is not None:
             required = value
         self.required = required
+
+
+class RequestPart:
+    """绑定 ``multipart/form-data`` 中的文件字段。
+
+    这是 Spring ``@RequestPart`` 的 Python 版本。参数类型建议标注为
+    ``UploadFile`` 或 ``list[UploadFile]``，框架会自动生成 FastAPI 的
+    ``File(...)`` 参数并把上传对象传入 Controller。``allowed_extensions``
+    和 ``max_size`` 是框架侧的轻量安全校验，避免每个项目重复写文件名和大小检查。
+    """
+
+    _annotation_type = "param"
+
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        required: bool = True,
+        value: Optional[str] = None,
+        description: str = "",
+        media_type: Optional[str] = None,
+        max_size: Optional[int] = None,
+        allowed_extensions: Optional[List[str] | Tuple[str, ...] | str] = None,
+    ):
+        self.name = value if value is not None else name
+        self.required = bool(required)
+        self.description = description or ""
+        self.media_type = media_type
+        try:
+            self.max_size = int(max_size) if max_size is not None else None
+        except (TypeError, ValueError):
+            raise TypeError("max_size must be a positive integer or None")
+        if self.max_size is not None and self.max_size <= 0:
+            raise ValueError("max_size must be greater than zero")
+        if isinstance(allowed_extensions, str):
+            allowed_extensions = allowed_extensions.split(",")
+        self.allowed_extensions = tuple(
+            str(item).strip().lower().lstrip(".")
+            for item in (allowed_extensions or ())
+            if str(item).strip()
+        )
+
+
+# 文件上传在业务代码里更直观的别名；保留 RequestPart 作为 Spring 风格主名称。
+FileUpload = RequestPart
 
 
 class Valid(SpringAnnotation):

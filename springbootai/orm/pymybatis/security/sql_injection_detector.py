@@ -51,7 +51,11 @@ class SQLInjectionDetector:
     INJECTION_PATTERNS = [
         # 基于注释的注入
         SQLInjectionPattern(
-            r'(--(?:\s|$)|(?:^|\s)#|/\*).*',
+            # ``#`` 既是 MySQL 注释符，也是 Python 源码、Markdown 和配置文本中
+            # 的正常字符。参数会经预编译绑定，不能仅因某一行以 ``#`` 开头就拒绝
+            # 保存草稿。只有它位于引号或语句分隔符之后时，才是典型的 SQL 注释截断
+            # 攻击（如 ``admin' #`` / ``1; #``）。``--`` 与 ``/*`` 仍保持检测。
+            r"(?:--(?:\s|$)|/\*|(?:['\";]\s*)#).*",
             SQLInjectionLevel.HIGH,
             '注释注入',
         ),

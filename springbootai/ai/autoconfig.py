@@ -452,7 +452,14 @@ def configure_ai(registry: Optional[BeanRegistry] = None,
     if config is None:
         config = config_loader
 
-    ai_config = config.get_prefix_config("springbootai.ai") or config.get("ai", {}) or {}
+    # 同时兼容 Spring 风格的 ``spring.ai`` 配置（旧项目和测试常用）以及
+    # 框架原生 ``springbootai.ai``，避免把已配置的 api-key 误判为空。
+    ai_config = (
+        config.get_prefix_config("springbootai.ai")
+        or config.get_prefix_config("spring.ai")
+        or config.get("ai", {})
+        or {}
+    )
     if not ai_config:
         ai_config = {}
 

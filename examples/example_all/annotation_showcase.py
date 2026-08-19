@@ -11,6 +11,10 @@ from __future__ import annotations
 from typing import Any
 
 from springbootai.annotations import (
+    Agent,
+    AiCache,
+    AiRetry,
+    ContentModeration,
     After,
     AfterReturning,
     AfterThrowing,
@@ -65,6 +69,14 @@ from springbootai.annotations import (
     Recover,
     RepositoryRestResource,
     RequestBody,
+    RequestPart,
+    FileUpload,
+    Embedding,
+    Prompt,
+    RAG,
+    StructuredOutput,
+    TokenUsage,
+    VectorStore,
     RequestHeader,
     RequestParam,
     Scope,
@@ -90,6 +102,8 @@ SHOWCASED_ANNOTATIONS = frozenset(
         "GraphRoute", "LangGraph", "EnableOAuth2", "EnableCsrf", "EnableDevTools",
         "EnableConfigServer", "EnableBus", "EnableBatchProcessing", "EnableDataRest",
         "BatchJob", "BatchStep", "RepositoryRestResource",
+        "Prompt", "RAG", "StructuredOutput", "Agent", "Embedding", "VectorStore",
+        "AiRetry", "AiCache", "TokenUsage", "ContentModeration",
     }
 )
 
@@ -97,7 +111,7 @@ SHOWCASED_ANNOTATIONS = frozenset(
 # 不为了让目录格式统一而虚构无效的 ``@`` 语法。
 SHOWCASED_NON_DECORATOR_APIS = frozenset(
     {
-        "AsyncResult", "RequestParam", "PathVariable", "RequestBody",
+        "AsyncResult", "RequestParam", "PathVariable", "RequestBody", "RequestPart", "FileUpload",
         "RequestHeader", "CookieValue", "RabbitTemplate", "KafkaTemplate",
         "kafka_template",
     }
@@ -295,6 +309,13 @@ def build_annotation_showcase() -> dict[str, type]:
         """按原生参数位置展示全部请求绑定描述符。"""
         return query, record_id, payload, request_id, session_id
 
+    def upload_binding_defaults(
+        file: Any = RequestPart("file", allowed_extensions="pdf,docx", max_size=10 * 1024 * 1024),
+        images: Any = FileUpload("images", required=False),
+    ) -> tuple[Any, Any]:
+        """展示单文件和多文件上传字段描述符；不启动 HTTP 服务。"""
+        return file, images
+
     def messaging_templates() -> tuple[RabbitTemplate, KafkaTemplate, KafkaTemplate]:
         """创建消息模板对象，但不打开消息代理连接。"""
         return RabbitTemplate(), KafkaTemplate(), kafka_template
@@ -307,6 +328,36 @@ def build_annotation_showcase() -> dict[str, type]:
         @Validated(groups=["update"])
         def update(self, payload: dict[str, Any]) -> dict[str, Any]:
             return payload
+
+    # AI 注解只声明能力；真正调用时由 BeanFactory 注入 ChatClient、Agent、
+    # EmbeddingModel 和 VectorStore。未配置 AI Bean 时下面的类仍可安全导入。
+    @Agent(agent_type="react", max_iterations=3)
+    class ShowcaseAiAgent:
+        def answer(self, question: str) -> str:
+            return question
+
+    @Embedding
+    @VectorStore
+    class ShowcaseAiService:
+        embedding_model = Embedding()
+        vector_store = VectorStore()
+
+        @Prompt("请总结焊接记录：{record}")
+        @TokenUsage()
+        @ContentModeration(blocked_terms=["恶意指令"])
+        def summarize(self, record: str) -> str:
+            return record
+
+        @RAG(top_k=2)
+        @AiRetry(attempts=2, delay_ms=10)
+        @AiCache(ttl=30, key="{question}")
+        def answer_from_knowledge(self, question: str) -> str:
+            return question
+
+        @Prompt("输出 JSON：{text}")
+        @StructuredOutput(dict)
+        def structured(self, text: str) -> dict[str, Any]:
+            return text
 
     return {
         name: value

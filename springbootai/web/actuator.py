@@ -41,12 +41,22 @@ _SENSITIVE_KEYS = (
 # admin 端点仅返回静态 HTML（无敏感数据），保持开放但页面内 JS 调用的端点受鉴权保护
 _SENSITIVE_ENDPOINTS = frozenset({
     "env", "loggers", "metrics", "beans", "configprops", "mappings", "threaddump",
-    "heapdump", "prometheus", "sysmetrics", "request-metrics",
+    "heapdump", "prometheus", "sysmetrics", "request-metrics", "alert", "alerts",
 })
 
 # Actuator 鉴权开关（由 configure_actuator 从配置读取）
 _actuator_secured = True
 _actuator_admin_roles = frozenset({"ADMIN", "ACTUATOR"})
+
+# 运维敏感端点默认关闭。测试或嵌入式调用若未执行 configure_actuator，保留
+# 兼容行为；正式应用启动时 configure_actuator 会根据最终配置重新计算此表。
+_OPTIONAL_ACTUATOR_ENDPOINTS = (
+    "env", "loggers", "metrics", "beans", "configprops", "mappings",
+    "threaddump", "heapdump", "prometheus", "sysmetrics", "request-metrics",
+    "alert", "alerts",
+)
+_actuator_endpoint_enabled = {name: True for name in _OPTIONAL_ACTUATOR_ENDPOINTS}
+_actuator_configured = False
 
 # 内置 Admin 面板默认值。应用只需在 application.yml 中覆盖需要调整的字段；
 # 未配置、空值或非法值都会回退到这些默认值，确保升级框架后页面仍可直接使用。
@@ -66,6 +76,72 @@ _admin_dashboard_config = dict(_ADMIN_DASHBOARD_DEFAULTS)
 _alert_history: List[Dict[str, Any]] = []
 
 
+def _resolve_actuator_endpoint_flags(config: Any) -> Dict[str, bool]:
+    """解析可选运维端点开关；未配置时全部关闭，避免 Admin 无 token 轮询。"""
+    flags = {name: False for name in _OPTIONAL_ACTUATOR_ENDPOINTS}
+    if not isinstance(config, Mapping):
+        return flags
+    management = config.get("management", {})
+    management = management if isinstance(management, Mapping) else {}
+    endpoints = management.get("endpoints", {})
+    endpoints = endpoints if isinstance(endpoints, Mapping) else {}
+    web = endpoints.get("web", {})
+    web = web if isinstance(web, Mapping) else {}
+    exposure = web.get("exposure", {})
+    exposure = exposure if isinstance(exposure, Mapping) else {}
+
+    def names(value: Any) -> set[str]:
+        if isinstance(value, str):
+            value = value.split(",")
+        if not isinstance(value, (list, tuple, set)):
+            return set()
+        return {str(item).strip().lower() for item in value if str(item).strip()}
+
+    included = names(exposure.get("include"))
+    excluded = names(exposure.get("exclude"))
+    if "*" in included:
+        for name in flags:
+            flags[name] = True
+    else:
+        for name in flags:
+            flags[name] = name in included
+
+    # Spring 风格的 management.endpoints.<name>.enabled 优先级高于 exposure。
+    for name in flags:
+        section = endpoints.get(name, {})
+        if isinstance(section, Mapping) and "enabled" in section:
+            raw = section.get("enabled")
+            flags[name] = raw if isinstance(raw, bool) else str(raw).strip().lower() in {
+                "1", "true", "yes", "on"
+            }
+        if name in excluded:
+            flags[name] = False
+
+    admin = management.get("admin", {})
+    admin = admin if isinstance(admin, Mapping) else {}
+    for name in flags:
+        section = admin.get(name, {})
+        if isinstance(section, Mapping) and "enabled" in section:
+            raw = section.get("enabled")
+            flags[name] = raw if isinstance(raw, bool) else str(raw).strip().lower() in {
+                "1", "true", "yes", "on"
+            }
+    # 兼容历史 prometheus.enabled 配置；request-metrics 使用同一路径配置。
+    prometheus = config.get("prometheus", {})
+    if isinstance(prometheus, Mapping) and "enabled" in prometheus:
+        raw = prometheus.get("enabled")
+        flags["prometheus"] = raw if isinstance(raw, bool) else str(raw).strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+    request_metrics = admin.get("request-metrics", admin.get("request_metrics", {}))
+    if isinstance(request_metrics, Mapping):
+        raw = request_metrics.get("enabled", False)
+        flags["request-metrics"] = raw if isinstance(raw, bool) else str(raw).strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+    return flags
+
+
 def configure_actuator(application_context) -> None:
     """注入应用上下文 + 读取 Actuator 鉴权配置。
 
@@ -73,11 +149,14 @@ def configure_actuator(application_context) -> None:
     - ``enabled``: 是否对敏感端点启用鉴权（生产环境默认 True）
     - ``roles``: 允许访问的角色列表（默认 ADMIN/ACTUATOR）
     """
-    global _application_context, _actuator_secured, _actuator_admin_roles, _admin_dashboard_config
+    global _application_context, _actuator_secured, _actuator_admin_roles
+    global _admin_dashboard_config, _actuator_endpoint_enabled, _actuator_configured
     _application_context = application_context
     # 每次配置都先恢复安全默认值，避免测试、热刷新或上下文重建沿用上一次的全局状态。
     _actuator_secured = True
     _actuator_admin_roles = frozenset({"ADMIN", "ACTUATOR"})
+    _actuator_configured = True
+    _actuator_endpoint_enabled = {name: False for name in _OPTIONAL_ACTUATOR_ENDPOINTS}
     _admin_dashboard_config = dict(_ADMIN_DASHBOARD_DEFAULTS)
     try:
         config = application_context.get_config()
@@ -104,9 +183,26 @@ def configure_actuator(application_context) -> None:
             if normalized_roles:
                 _actuator_admin_roles = normalized_roles
         _admin_dashboard_config = _resolve_admin_dashboard_config(config)
+        _actuator_endpoint_enabled = _resolve_actuator_endpoint_flags(config)
+        # 开发者显式关闭 Actuator 鉴权时，保留历史的本地调试体验；生产默认
+        # 鉴权开启时则严格遵守 exposure/endpoint.enabled 的显式开关。
+        if not _actuator_secured:
+            _actuator_endpoint_enabled.update({
+                name: True for name in _OPTIONAL_ACTUATOR_ENDPOINTS
+                if name != "request-metrics"
+            })
+        _admin_dashboard_config.update({
+            f"endpoint_{name.replace('-', '_')}_enabled": enabled
+            for name, enabled in _actuator_endpoint_enabled.items()
+        })
     except Exception:
         # 配置读取失败时不让运维页失效，回退到框架内置默认配置。
         _admin_dashboard_config = dict(_ADMIN_DASHBOARD_DEFAULTS)
+        _actuator_endpoint_enabled = {name: False for name in _OPTIONAL_ACTUATOR_ENDPOINTS}
+
+
+def _is_actuator_endpoint_enabled(endpoint_name: str) -> bool:
+    return bool(_actuator_endpoint_enabled.get(endpoint_name, True))
 
 
 def _resolve_admin_dashboard_config(config: Any) -> Dict[str, Any]:
@@ -236,7 +332,8 @@ def get_endpoint_directory() -> dict:
         "alerts": {"href": "/actuator/alerts", "methods": ["GET"]},
         "admin": {"href": "/actuator/admin", "methods": ["GET"]},
     }
-    return {"_links": {k: v for k, v in endpoints.items()}}
+    # 目录保持稳定，便于监控客户端缓存链接；未启用端点不会由内置 Admin 自动轮询。
+    return {"_links": endpoints}
 
 
 # ==================== /env 环境配置 ====================
@@ -533,6 +630,8 @@ _heapdump_auth = _create_actuator_dependency("heapdump")
 _prometheus_auth = _create_actuator_dependency("prometheus")
 _sysmetrics_auth = _create_actuator_dependency("sysmetrics")
 _request_metrics_auth = _create_actuator_dependency("request-metrics")
+_alert_auth = _create_actuator_dependency("alert")
+_alerts_auth = _create_actuator_dependency("alerts")
 
 
 @actuator_router.get('/env')
@@ -686,7 +785,7 @@ def add_alert_record(alert: Dict[str, Any]) -> None:
 
 
 @actuator_router.post('/alert')
-def alert_webhook(payload: Dict[str, Any] = Body(...)):
+def alert_webhook(payload: Dict[str, Any] = Body(...), _: None = Depends(_alert_auth)):
     """接收 Alertmanager 推送的告警通知。
 
     Alertmanager 配置 webhook_configs 后，告警会以 JSON 格式 POST 到此端点。
@@ -737,7 +836,7 @@ def alert_webhook(payload: Dict[str, Any] = Body(...)):
 
 
 @actuator_router.get('/alerts')
-def alerts_history(_: None = Depends(_sysmetrics_auth)):
+def alerts_history(_: None = Depends(_alerts_auth)):
     """获取告警历史记录（供 Admin 面板展示）。"""
     return JSONResponse(content=get_alert_history(), status_code=200)
 
@@ -833,55 +932,22 @@ def _build_admin_dashboard_html() -> str:
             <h2>健康状态</h2>
             <div id="health"><span class="spinner"></span> 加载中...</div>
         </div>
-        <!-- 告警通知 -->
-        <div class="card">
-            <h2>告警通知</h2>
-            <div id="alerts"><span class="spinner"></span> 加载中...</div>
-        </div>
+        __ALERTS_CARD__
         <!-- 系统信息 -->
         <div class="card">
             <h2>系统信息</h2>
             <div id="info"><span class="spinner"></span> 加载中...</div>
         </div>
-        <!-- 内存 & CPU -->
-        <div class="card">
-            <h2>内存 & CPU</h2>
-            <div id="metrics-system"><span class="spinner"></span> 加载中...</div>
-        </div>
-        <!-- 线程概览 -->
-        <div class="card">
-            <h2>线程概览</h2>
-            <div id="threads-summary"><span class="spinner"></span> 加载中...</div>
-        </div>
+        __SYSTEM_METRICS_CARD__
+        __THREADS_CARD__
         __REQUEST_METRICS_CARD__
-        <!-- 日志级别管理 -->
-        <div class="card card-full">
-            <h2>日志级别管理（点击切换）</h2>
-            <div id="loggers"><span class="spinner"></span> 加载中...</div>
-        </div>
-        <!-- Prometheus 指标 -->
-        <div class="card card-full">
-            <h2>Prometheus 指标</h2>
-            <div class="tabs">
-                <div class="tab active" onclick="switchTab(this,'prom-raw')">原始数据</div>
-                <div class="tab" onclick="switchTab(this,'prom-summary')">指标摘要</div>
-            </div>
-            <div id="prom-summary" class="tab-content">
-                <table><thead><tr><th>指标名</th><th>类型</th><th>值</th></tr></thead>
-                <tbody id="prom-summary-body"></tbody></table>
-            </div>
-            <div id="prom-raw" class="tab-content active">
-                <pre id="prom-raw-text"><span class="spinner"></span> 加载中...</pre>
-            </div>
-        </div>
-        <!-- Bean 列表 -->
-        <div class="card card-full">
-            <h2>Bean 列表</h2>
-            <div id="beans"><span class="spinner"></span> 加载中...</div>
-        </div>
+        __LOGGERS_CARD__
+        __PROMETHEUS_CARD__
+        __BEANS_CARD__
     </div>
     <script>
     const ACTUATOR_TOKEN_KEY = 'springbootai_actuator_token';
+    const ACTUATOR_ENDPOINTS = __ACTUATOR_ENDPOINTS__;
     // 只有 management.admin.request-metrics.enabled=true 才启用。
     const REQUEST_METRICS_URL = __REQUEST_METRICS_URL__;
 
@@ -1023,6 +1089,7 @@ def _build_admin_dashboard_html() -> str:
         });
     }
     function loadSystemMetrics() {
+        if (!ACTUATOR_ENDPOINTS.sysmetrics) return;
         fetchJSON('/actuator/sysmetrics').then(d => {
             var el = document.getElementById('metrics-system');
             if (d.error) { el.innerHTML = '<span class="status-down">' + d.error + '</span>'; return; }
@@ -1041,6 +1108,7 @@ def _build_admin_dashboard_html() -> str:
         });
     }
     function loadThreads() {
+        if (!ACTUATOR_ENDPOINTS.threaddump) return;
         fetchJSON('/actuator/threaddump').then(d => {
             var el = document.getElementById('threads-summary');
             if (d.error || !d.threads) { el.innerHTML = '无法获取'; return; }
@@ -1158,6 +1226,7 @@ def _build_admin_dashboard_html() -> str:
     }
 
     function loadLoggers() {
+        if (!ACTUATOR_ENDPOINTS.loggers) return;
         fetchJSON('/actuator/loggers').then(d => {
             var el = document.getElementById('loggers');
             if (d.error || !d.loggers) { el.innerHTML = '无法获取'; return; }
@@ -1181,6 +1250,7 @@ def _build_admin_dashboard_html() -> str:
         });
     }
     function loadPrometheus() {
+        if (!ACTUATOR_ENDPOINTS.prometheus) return;
         actuatorFetch('/actuator/prometheus').then(function(r) {
             return r.ok ? r.text() : '# error: ' + r.status;
         }).then(function(text) {
@@ -1243,6 +1313,7 @@ def _build_admin_dashboard_html() -> str:
     }
 
     function loadBeans() {
+        if (!ACTUATOR_ENDPOINTS.beans) return;
         fetchJSON('/actuator/beans').then(d => {
             var el = document.getElementById('beans');
             if (d.error || !d.contexts || !d.contexts.application) { el.innerHTML = '无法获取'; return; }
@@ -1260,6 +1331,7 @@ def _build_admin_dashboard_html() -> str:
         document.getElementById(contentId).classList.add('active');
     }
     function loadAlerts() {
+        if (!ACTUATOR_ENDPOINTS.alerts) return;
         actuatorFetch('/actuator/alerts')
             .then(r => r.ok ? r.json() : [])
             .then(alerts => {
@@ -1291,7 +1363,8 @@ def _build_admin_dashboard_html() -> str:
             });
     }
     function loadAll() {
-        loadHealth(); loadAlerts(); loadInfo(); loadSystemMetrics(); loadThreads(); loadRequestMetrics();
+        loadHealth(); loadInfo();
+        loadAlerts(); loadSystemMetrics(); loadThreads(); loadRequestMetrics();
         loadLoggers(); loadPrometheus(); loadBeans();
     }
     // Inline handlers are intentionally avoided for the token and refresh buttons.
@@ -1329,13 +1402,57 @@ def _build_admin_dashboard_html() -> str:
             '            <div id="request-metrics"><span class="spinner"></span> 加载中...</div>\n'
             '        </div>'
         )
+    endpoint_flags = (
+        dict(_actuator_endpoint_enabled)
+        if _actuator_configured else
+        {name: True for name in _OPTIONAL_ACTUATOR_ENDPOINTS}
+    )
+    def card(enabled: bool, title: str, body_id: str, *, full: bool = False) -> str:
+        cls = ' class="card card-full"' if full else ' class="card"'
+        body = (
+            '<span class="spinner"></span> 加载中...' if enabled
+            else '<span class="metric-label">未启用（请在 management.endpoints.web.exposure 或 management.admin 中配置）</span>'
+        )
+        return (
+            f'        <div{cls}>\n'
+            f'            <h2>{escape(title)}</h2>\n'
+            f'            <div id="{body_id}">{body}</div>\n'
+            '        </div>'
+        )
+    alerts_card = card(endpoint_flags["alerts"], "告警通知", "alerts")
+    system_metrics_card = card(endpoint_flags["sysmetrics"], "内存 & CPU", "metrics-system")
+    threads_card = card(endpoint_flags["threaddump"], "线程概览", "threads-summary")
+    loggers_card = card(endpoint_flags["loggers"], "日志级别管理（点击切换）", "loggers", full=True)
+    beans_card = card(endpoint_flags["beans"], "Bean 列表", "beans", full=True)
+    prometheus_state = (
+        '<div class="tabs">'
+        '<div class="tab active" onclick="switchTab(this,\'prom-raw\')">原始数据</div>'
+        '<div class="tab" onclick="switchTab(this,\'prom-summary\')">指标摘要</div></div>'
+        '<div id="prom-summary" class="tab-content"><table><thead><tr><th>指标名</th><th>类型</th><th>值</th></tr></thead><tbody id="prom-summary-body"></tbody></table></div>'
+        '<div id="prom-raw" class="tab-content active"><pre id="prom-raw-text"><span class="spinner"></span> 加载中...</pre></div>'
+        if endpoint_flags["prometheus"] else
+        '<div class="metric-label">未启用（请在 management.endpoints.web.exposure 或 prometheus.enabled 中配置）</div>'
+    )
+    prometheus_card = (
+        '        <div class="card card-full">\n'
+        '            <h2>Prometheus 指标</h2>\n'
+        f'            {prometheus_state}\n'
+        '        </div>'
+    )
     # 文本进入 HTML/JavaScript 前均转义；数值已经在配置解析阶段限制为正整数。
     return (html
             .replace("__ADMIN_TITLE__", escape(_admin_dashboard_config["title"]))
             .replace("__ADMIN_SUBTITLE__", escape(_admin_dashboard_config["subtitle"]))
             .replace("__ADMIN_PAGE_SIZE__", str(_admin_dashboard_config["page_size"]))
             .replace("__REQUEST_METRICS_CARD__", request_metrics_card)
+            .replace("__ALERTS_CARD__", alerts_card)
+            .replace("__SYSTEM_METRICS_CARD__", system_metrics_card)
+            .replace("__THREADS_CARD__", threads_card)
+            .replace("__LOGGERS_CARD__", loggers_card)
+            .replace("__PROMETHEUS_CARD__", prometheus_card)
+            .replace("__BEANS_CARD__", beans_card)
             .replace("__REQUEST_METRICS_URL__", json.dumps(request_metrics_url))
+            .replace("__ACTUATOR_ENDPOINTS__", json.dumps(endpoint_flags))
             .replace(
                 "__ADMIN_REFRESH_MS__",
                 str(_admin_dashboard_config["refresh_interval_seconds"] * 1000),

@@ -121,6 +121,17 @@ class TestSQLInjectionDetector:
             level = self.detector.detect(payload)
             assert level.value >= SQLInjectionLevel.HIGH.value, f"注释注入应被检测: {payload}"
 
+    def test_python_source_comments_are_safe_parameter_values(self):
+        """生成的 Python 源码是预编译参数，# 注释不能被误判为 SQL 注入。"""
+        generated_source = '''
+def calculate(value: int) -> int:
+    # 保留业务说明，供草稿编辑器再次加载
+    return value + 1
+'''
+        assert self.detector.is_safe(generated_source) is True
+        # 收紧规则不能放过 SQL 中常见的引号后 # 注释截断攻击。
+        assert self.detector.is_safe("editor' # ignore password check") is False
+
     def test_stacked_queries_detected(self):
         """测试堆叠查询检测"""
         from springbootai.orm.pymybatis.security.sql_injection_detector import SQLInjectionLevel

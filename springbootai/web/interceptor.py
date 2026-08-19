@@ -37,6 +37,10 @@ class InterceptorRegistry:
     def get_interceptors(self) -> List[HandlerInterceptor]:
         return list(self._interceptors)
 
+    def remove_interceptors(self, predicate: Callable[[HandlerInterceptor], bool]) -> None:
+        """Remove managed interceptors without exposing the internal list."""
+        self._interceptors[:] = [item for item in self._interceptors if not predicate(item)]
+
     def should_intercept(self, path: str) -> bool:
         if self._include_paths:
             if not any(self._matches(path, p) for p in self._include_paths):

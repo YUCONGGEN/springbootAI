@@ -31,6 +31,8 @@ from .core import (
     RequestParam,
     PathVariable,
     RequestBody,
+    RequestPart,
+    FileUpload,
     Valid,
     Validated,
     CrossOrigin,
@@ -149,6 +151,12 @@ from .batch import BatchJob, BatchStep
 # 数据 REST 注解（@RepositoryRestResource）
 from .data import RepositoryRestResource
 
+# AI 声明式注解单独依赖 AI 运行时，导入本包不会初始化模型或第三方 SDK。
+from springbootai.ai.annotations import (
+    Agent, AiCache, AiRetry, ContentModeration, Embedding, Prompt, RAG,
+    StructuredOutput, TokenUsage, VectorStore,
+)
+
 __all__ = [
     "SpringBootApplication",
     "ComponentScan",
@@ -182,6 +190,8 @@ __all__ = [
     "RequestParam",
     "PathVariable",
     "RequestBody",
+    "RequestPart",
+    "FileUpload",
     "CrossOrigin",
     "ControllerAdvice",
     "ExceptionHandler",
@@ -281,4 +291,14 @@ __all__ = [
     "BatchStep",
     # 数据 REST 注解
     "RepositoryRestResource",
+    "Prompt",
+    "RAG",
+    "StructuredOutput",
+    "Agent",
+    "Embedding",
+    "VectorStore",
+    "AiRetry",
+    "AiCache",
+    "TokenUsage",
+    "ContentModeration",
 ]

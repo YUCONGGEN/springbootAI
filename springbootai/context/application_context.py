@@ -818,9 +818,16 @@ class ApplicationContext:
         return self.config_loader.get_value(key, default)
 
     def refresh_configuration(self) -> List[str]:
-        """Reload ``application.yml`` and rebind refreshable Beans."""
+        """重新加载配置并刷新 Web/Actuator 与可刷新 Bean。"""
         self.config_loader.reload()
         refreshed = self.bean_factory.refresh_configuration()
+        # Web 运行时配置不属于 Bean 绑定范围；Nacos 热更新后显式重读最终配置，
+        # 使 Admin 参数、Actuator 鉴权和请求监控规则即时生效。
+        web_context = getattr(self, "web_context", None)
+        if web_context is not None:
+            refresh_web = getattr(web_context, "refresh_runtime_configuration", None)
+            if callable(refresh_web):
+                refresh_web()
         try:
             from springbootai.aop.cloud_aop import trigger_config_refresh
             trigger_config_refresh()

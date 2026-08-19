@@ -5,9 +5,9 @@ def _default_version() -> str:
     # 读取 spring 包的 __version__，避免每次发版都要修改本文件
     try:
         import springbootai  # noqa: WPS433 (局部导入避免循环依赖)
-        return getattr(spring, "__version__", "2.3.3")
+        return getattr(spring, "__version__", "2.3.4")
     except Exception:  # pragma: no cover - 极端情况下兜底
-        return "2.3.3"
+        return "2.3.4"
 
 
 class BannerPrinter:

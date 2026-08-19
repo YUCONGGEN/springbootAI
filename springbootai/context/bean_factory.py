@@ -392,6 +392,13 @@ class BeanFactory:
         return annotation, qualifier, optional_type
 
     def _populate_bean(self, definition: BeanDefinition, instance: Any) -> None:
+        # AI 注入标记（Embedding()/VectorStore()）采用懒解析，缺少可选
+        # AI Bean 时保留原标记，不阻断普通 Bean 启动。
+        try:
+            from springbootai.ai.annotation_runtime import inject_ai_marker
+            inject_ai_marker(self, instance)
+        except Exception as exc:
+            logger.debug("AI 字段注入跳过: %s", exc)
         for field_name, field_type in definition.dependencies.items():
             qualifier = definition.qualifiers.get(field_name)
             if qualifier:
@@ -624,6 +631,14 @@ class BeanFactory:
                     method = wrapped_method
                 except ImportError as e:
                     logger.error(f"  Failed to import cloud_aop: {e}")
+
+                # AI 注解层：使用已注册 ChatClient/VectorStore/Agent Bean，
+                # 依赖在方法首次调用时解析，兼容 Nacos/环境动态装配。
+                try:
+                    from springbootai.ai.annotation_runtime import apply_ai_annotations
+                    method = apply_ai_annotations(self, instance, method)
+                except Exception as e:
+                    logger.error(f"  Failed to apply AI annotations: {e}")
                 
                 # 固定包装顺序：事务在计算内部，缓存命中可跳过事务，异步最外层调度。
                 for annotation in annotations:

@@ -12,6 +12,7 @@ import fnmatch
 import logging
 import threading
 import time
+import re
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, Optional
 
@@ -108,7 +109,10 @@ class RequestMetricsStore:
 
     def __init__(self, config: Dict[str, Any], table: str):
         self._lock = threading.Lock()
-        self.table = table if table.replace("_", "").isalnum() else "springbootai_request_metrics"
+        self.table = (
+            table if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(table or ""))
+            else "springbootai_request_metrics"
+        )
         self.engine = create_engine(_database_url(config), future=True)
         self._ensure_table()
 
@@ -148,6 +152,10 @@ class RequestMetricsStore:
             )).mappings().all()
         return [dict(row) for row in rows]
 
+    def close(self) -> None:
+        """释放 SQLAlchemy 连接池，便于热更新数据库配置。"""
+        self.engine.dispose()
+
     def purge_paths_not_matching(self, include_paths: Iterable[str], exclude_paths: Iterable[str]) -> int:
         """删除旧版本已写入的非业务历史记录，防止历史运维访问继续污染面板。"""
         include_paths = tuple(include_paths)
@@ -184,6 +192,7 @@ class RequestMetricsInterceptor(HandlerInterceptor):
         exclude_paths: Iterable[str] = DEFAULT_EXCLUDE_PATHS,
     ):
         self.store = store
+        self._springbootai_request_metrics = True
         self.include_paths = tuple(include_paths)
         self.exclude_paths = tuple(exclude_paths)
 
@@ -237,11 +246,16 @@ _metrics_error: Optional[str] = None
 def configure_request_metrics(config: Any) -> Optional[RequestMetricsInterceptor]:
     """按配置初始化存储；关闭时返回 ``None``。"""
     global _store, _metrics_enabled, _metrics_error
+    previous_store = _store
+    previous_enabled = _metrics_enabled
+    previous_error = _metrics_error
     options = resolve_request_metrics_config(config)
     _metrics_enabled = options["enabled"]
     _metrics_error = None
     if not options["enabled"]:
         _store = None
+        if previous_store is not None:
+            previous_store.close()
         return None
     try:
         store = RequestMetricsStore(config, options["table"])
@@ -249,6 +263,13 @@ def configure_request_metrics(config: Any) -> Optional[RequestMetricsInterceptor
         if removed:
             logger.info("已清理 %s 条非业务请求监控历史记录", removed)
         _store = store
+        # 热更新数据库或表名时释放旧连接池；只有新存储已成功建表后才关闭，
+        # 确保初始化失败时仍可继续使用上一次可用的监控实例。
+        if previous_store is not None and previous_store is not store:
+            try:
+                previous_store.close()
+            except Exception:
+                logger.debug("关闭旧请求监控连接池失败", exc_info=True)
         return RequestMetricsInterceptor(
             store,
             include_paths=options["include_paths"],
@@ -256,8 +277,14 @@ def configure_request_metrics(config: Any) -> Optional[RequestMetricsInterceptor
         )
     except Exception as exc:
         # 数据库不可用、URL 拼写错误等不能阻断应用启动；Admin 页面会得到明确状态。
-        _store = None
-        _metrics_error = "监控存储不可用"
+        # 热更新失败时保留旧实例，避免一次错误的远程配置让已工作的监控消失。
+        if previous_store is not None:
+            _store = previous_store
+            _metrics_enabled = previous_enabled
+            _metrics_error = previous_error
+        else:
+            _store = None
+            _metrics_error = "监控存储不可用"
         logger.warning("内置请求监控未启用存储，将继续启动应用: %s", exc)
         return None
 

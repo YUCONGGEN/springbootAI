@@ -34,3 +34,6 @@ def test_all_isolated_annotation_examples_are_real_declarations():
     assert [type(value).__name__ for value in templates] == [
         "RabbitTemplate", "KafkaTemplate", "KafkaTemplate",
     ]
+    uploads = targets["upload_binding_defaults"]()
+    assert [type(value).__name__ for value in uploads] == ["RequestPart", "RequestPart"]
+    assert uploads[0].allowed_extensions == ("pdf", "docx")

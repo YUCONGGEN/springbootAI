@@ -210,6 +210,14 @@ FEATURE_SNIPPETS = {
         "code": '@PostMapping("/users")\ndef create_user(self, payload: dict):\n    return payload',
         "notes": "框架将 JSON 请求体绑定到带类型的参数。",
     },
+    "RequestPart": {
+        "code": 'def upload(self, file: UploadFile = RequestPart("file", allowed_extensions="pdf,png", max_size=5 * 1024 * 1024)):\n    return {"filename": file.filename}',
+        "notes": "自动绑定 multipart/form-data 文件，并可校验扩展名与大小。",
+    },
+    "FileUpload": {
+        "code": 'def upload(self, file: UploadFile = FileUpload("file")):\n    return {"filename": file.filename}',
+        "notes": "RequestPart 的易读别名，用于文件上传参数。",
+    },
     "RequestHeader": {
         "code": '@GetMapping("/trace")\ndef trace(self, x_request_id: str):\n    return {"request_id": x_request_id}',
         "notes": "框架将请求头绑定到匹配参数。",
@@ -242,6 +250,30 @@ FEATURE_SNIPPETS = {
         "code": 'from springbootai.annotations import RabbitTemplate\n\ntemplate = RabbitTemplate()\ntemplate.convert_and_send("weld.events", {"job_id": 1})',
         "notes": "需要 pika 和可访问的 RabbitMQ 消息代理。",
     },}
+
+# AI 注解示例单独追加，避免修改自动生成目录的主体字典时漏项。
+FEATURE_SNIPPETS.update({
+    "Prompt": {"code": '@Prompt("请总结：{text}")\ndef summarize(self, text: str):\n    pass',
+                  "notes": "从方法参数渲染模板并调用 aiChatClient。"},
+    "RAG": {"code": '@RAG(top_k=4)\ndef answer(self, question: str):\n    return question',
+             "notes": "自动使用 aiVectorStore 检索，再调用 ChatClient。"},
+    "StructuredOutput": {"code": '@StructuredOutput(WeldResult)\ndef classify(self, text: str):\n    return text',
+                          "notes": "把模型 JSON 响应绑定到 Pydantic 模型。"},
+    "Agent": {"code": '@Agent(agent_type="react")\nclass WeldingAgent:\n    pass',
+              "notes": "声明式复用 lcAgentService 执行工具 Agent。"},
+    "Embedding": {"code": 'embedding_model = Embedding()\nvector = embedding_model.embed_one("焊缝")',
+                   "notes": "从容器注入 aiEmbeddingModel。"},
+    "VectorStore": {"code": 'vector_store = VectorStore()\nvector_store.similarity_search(request)',
+                     "notes": "从容器注入 aiVectorStore。"},
+    "AiRetry": {"code": '@AiRetry(attempts=3, delay_ms=200)\ndef call_model(self, prompt: str):\n    pass',
+                "notes": "复用框架 resilient_call 处理瞬态模型错误。"},
+    "AiCache": {"code": '@AiCache(ttl=300, key="{question}")\ndef answer(self, question: str):\n    pass',
+                "notes": "稳定序列化参数并缓存 AI 结果。"},
+    "TokenUsage": {"code": '@TokenUsage()\ndef call_model(self, prompt: str):\n    pass',
+                    "notes": "把响应 usage 写入 AI Prometheus 指标。"},
+    "ContentModeration": {"code": '@ContentModeration(blocked_terms=["敏感词"])\ndef answer(self, text: str):\n    pass',
+                           "notes": "在模型调用前后拦截命中敏感词的内容。"},
+})
 
 
 def get_snippet(name: str):

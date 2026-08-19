@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.3.4] - 2026-08-19
+
+### 新增与完善
+
+- 新增声明式 AI 注解：`@Prompt`、`@RAG`、`@StructuredOutput`、`@Agent`、`@Embedding`、`@VectorStore`、`@AiRetry`、`@AiCache`、`@TokenUsage`、`@ContentModeration`；复用 ChatClient、RAG、Agent、向量库和可观测性组件，并支持同步、异步与 Pydantic v1/v2。
+- 新增 AI 注解中文用例、实时功能目录和模块文档；未配置 AI Bean 或可选依赖时不影响普通应用启动。
+- 完善 Actuator Admin、Nacos 动态刷新、请求监控与文件上传能力，并补充对应文档与回归测试。
+- 修复 PyMyBatis 参数检测将 Python 源码中的普通 `#` 注释误判为 SQL 注入的问题；真实引号/分号后的 SQL 注释截断攻击仍会被拦截。
+
+### 兼容性
+
+- AI 自动配置同时支持 `springbootai.ai` 与 Spring 风格的 `spring.ai` 配置前缀，避免已有配置中的 API Key 被遗漏。
+
 ## [2.3.3] - 2026-08-18
 
 ### 测试补充与文档完善

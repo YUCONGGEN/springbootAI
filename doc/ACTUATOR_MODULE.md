@@ -128,6 +128,29 @@ management:
 `/actuator/request-metrics` 端点向面板提供请求总数、错误总数、平均耗时和最常访问路径。
 项目不需要提供任何业务监控接口。
 
+### 4.2.0.1 可选端点默认不主动启用
+
+框架启动时如果没有显式配置可选运维端点，Admin 页面不会展示并轮询 Prometheus、系统指标、
+线程、日志、Bean、告警等接口，因此不会因缺少管理员 Token 产生一批 401 日志。健康和
+info 仍保持可用。需要哪些能力时，在配置中心、环境变量或本地 YAML 中显式开启：
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: [prometheus, sysmetrics, threaddump, loggers, beans]
+  admin:
+    request-metrics:
+      enabled: true
+```
+
+也可以单独写 `management.endpoints.web.<endpoint>.enabled: true`，或通过
+`PROMETHEUS_ENABLED=true` 开启 Prometheus。配置优先级和 Nacos 热更新规则与本节其他
+字段相同；未开启的面板区域会显示“未启用”，不会发起后台请求。底层路由为保持
+兼容仍保留，但仍受原有 Actuator 鉴权保护；生产环境可通过网关或 exposure 规则进一步
+限制外部访问。
+
 采集范围的规则是：框架始终排除 `/actuator/**`、`/docs/**`、`/doc/**`、`/redoc/**`、
 `/openapi.json` 和 `/favicon.ico`，因此健康检查、Admin 自动轮询、Prometheus 抓取等运维请求不会进入业务统计。
 `include-paths` 未配置时，其他所有 HTTP 路径都会采集，以兼容不使用 `/api` 前缀的项目；如果项目业务 API 有统一前缀，建议配置白名单（如 `/api/**`）。

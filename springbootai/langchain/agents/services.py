@@ -189,7 +189,8 @@ class AgentService:
 
     def run_agent(self, executor_or_tools, user_input: str,
                   agent_type: str = "react",
-                  llm: Optional[Any] = None) -> str:
+                  llm: Optional[Any] = None,
+                  max_iterations: int = 10) -> str:
         """
         便捷执行 Agent。
 
@@ -201,7 +202,8 @@ class AgentService:
         if hasattr(executor_or_tools, "invoke"):
             executor = executor_or_tools
         else:
-            executor = self.create_agent(executor_or_tools, agent_type=agent_type, llm=llm)
+            executor = self.create_agent(executor_or_tools, agent_type=agent_type,
+                                         llm=llm, max_iterations=max_iterations)
         result = executor.invoke({"input": user_input})
         return result.get("output") if isinstance(result, dict) else str(result)
 

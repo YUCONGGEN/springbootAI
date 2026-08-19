@@ -25,6 +25,7 @@
 | `@RequestParam` | 绑定查询参数 / 表单字段 | 参数 |
 | `@PathVariable` | 绑定 URL 路径变量 | 参数 |
 | `@RequestBody` | 绑定请求体 JSON | 参数 |
+| `@RequestPart` / `@FileUpload` | 绑定 `multipart/form-data` 文件 | 参数 |
 | `@RequestHeader` | 绑定请求头 | 参数 |
 | `@CookieValue` | 绑定 Cookie 值 | 参数 |
 | `@CrossOrigin` | 跨域资源共享配置 | 类/方法 |
@@ -163,15 +164,19 @@ def sync_data(self):
 | `@RequestParam` | URL 查询参数 / 表单字段 | `?name=abc` |
 | `@PathVariable` | URL 路径变量 | `/users/{id}` 中的 `id` |
 | `@RequestBody` | 请求体 JSON | `{"name":"abc"}` |
+| `@RequestPart` / `@FileUpload` | multipart 文件字段 | `-F file=@report.pdf` |
 | `@RequestHeader` | 请求头 | `Authorization: Bearer xxx` |
 | `@CookieValue` | Cookie | `session_id=abc123` |
 
 ### 怎么用？
 
 ```python
+from fastapi import UploadFile
+
 from springbootai.annotations import (
     RestController, GetMapping, PostMapping,
-    RequestParam, PathVariable, RequestBody, RequestHeader, CookieValue,
+    RequestParam, PathVariable, RequestBody, RequestPart,
+    RequestHeader, CookieValue,
 )
 
 
@@ -194,6 +199,16 @@ class OrderController:
     def create_order(self, body: dict = RequestBody()):  # 请求体 JSON
         return {"created": body}
 
+    @PostMapping("/upload")
+    def upload(self, file: UploadFile = RequestPart(
+        name="file", allowed_extensions="pdf,docx", max_size=10 * 1024 * 1024,
+    )):
+        return {"filename": file.filename, "content_type": file.content_type}
+
+    @PostMapping("/upload-many")
+    def upload_many(self, files: list[UploadFile] = RequestPart("files")):
+        return {"count": len(files)}
+
     @GetMapping("/profile")
     def get_profile(
         self,
@@ -208,6 +223,24 @@ class OrderController:
     ):
         return {"session": session_id}
 ```
+
+### 文件上传参数
+
+`@RequestPart` 自动把参数声明为 `multipart/form-data` 的文件字段，Controller 不需要
+手动接收 `Request` 或调用 `request.form()`。`@FileUpload` 是同一个注解的易读别名。
+参数类型使用 FastAPI 的 `UploadFile`；使用 `list[UploadFile]` 即可接收同名多文件字段。
+
+| 参数 | 说明 |
+|------|------|
+| `name` / `value` | multipart 字段名，默认使用 Python 参数名 |
+| `required` | 是否必须上传，默认 `True` |
+| `description` / `media_type` | OpenAPI 文档描述和媒体类型 |
+| `allowed_extensions` | 可选扩展名列表或逗号字符串，例如 `"jpg,png"` |
+| `max_size` | 单个文件最大字节数；超过时返回 400 |
+
+框架只在请求进入 Controller 前做文件名扩展名和 `UploadFile.size` 校验，不会消耗文件
+流。文件的落盘位置、病毒扫描和对象存储上传仍应放在 Service 中；生产环境不要直接
+信任客户端文件名，建议生成服务端文件名并限制上传目录。
 
 ### 参数说明
 

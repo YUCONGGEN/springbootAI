@@ -223,9 +223,18 @@ class NacosConfigClient:
                     parsed = yaml.safe_load(content) or {}
                     if not isinstance(parsed, dict):
                         raise NacosConfigError("Nacos YAML 根节点必须是对象")
-                    self._last_content = str(content)
                     logger.info("Nacos config changed: dataId=%s", self.properties.data_id)
-                    on_change()
+                    previous_content = self._last_content
+                    try:
+                        on_change()
+                    except Exception:
+                        # 回调通常会重新执行 ConfigLoader.reload()，其中一次 fetch
+                        # 可能已经写入版本字段。失败时恢复旧版本，确保下一轮仍会重试。
+                        self._last_content = previous_content
+                        raise
+                    # 只有回调完整成功后才提交版本标记。回调失败时保留旧值，
+                    # 下一轮会重试同一份远程配置，避免一次临时错误永久跳过更新。
+                    self._last_content = str(content)
                 except Exception as exc:
                     # 暂时网络抖动或一次错误更新不应终止后续监听。
                     logger.error("Ignoring Nacos config refresh failure: %s", exc)

@@ -90,6 +90,19 @@ class AIMetrics:
         except Exception as exc:  # 监控不应影响主流程
             logger.debug("record_call 失败: %s", exc)
 
+    def record_tokens(self, provider: str, usage: dict):
+        """只记录 token 用量，不额外虚构一次模型调用。"""
+        if not self.enabled:
+            return
+        try:
+            for key, label in (("prompt_tokens", "prompt"),
+                               ("completion_tokens", "completion")):
+                value = usage.get(key)
+                if value:
+                    self._tokens.labels(provider=provider or "unknown", type=label).inc(value)
+        except Exception as exc:
+            logger.debug("record_tokens 失败: %s", exc)
+
     def record_tool_call(self, tool: str, status: str):
         """记录一次工具调用"""
         if not self.enabled:

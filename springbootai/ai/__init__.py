@@ -18,7 +18,13 @@ from springbootai.ai.core import (
     ChatResponse, EmbeddingModel, Generation, Message, MessageType,
     PromptSpec,
 )
-from springbootai.ai.annotations import AiAdvisor, AiClient, AiMemory, Tool
+from springbootai.ai.annotations import (
+    Agent, AiAdvisor, AiCache, AiClient, AiMemory, AiRetry, ContentModeration,
+    Embedding, Prompt, RAG, StructuredOutput, TokenUsage, Tool, VectorStore,
+)
+# ``VectorStore`` 在本模块历史上表示向量库接口；保留该公开名称，注解通过
+# ``springbootai.ai.annotations.VectorStore`` 或这个别名使用。
+VectorStoreAnnotation = VectorStore
 from springbootai.ai.advisors import (
     MessageChatMemoryAdvisor, QuestionAnswerAdvisor, SimpleLoggerAdvisor,
 )
@@ -46,8 +52,9 @@ from springbootai.ai.resilience import (
 )
 from springbootai.ai.observability import AIMetrics, ai_metrics
 from springbootai.ai.autoconfig import AIProperties, bind_ai_config, configure_ai
+from springbootai.ai.annotation_runtime import ContentModerationError
 
-__version__ = "2.3.3"
+__version__ = "2.3.4"
 
 __all__ = [
     # core
@@ -55,7 +62,11 @@ __all__ = [
     "ChatModel", "ChatResponse", "EmbeddingModel", "Generation", "Message",
     "MessageType", "PromptSpec",
     # annotations
-    "AiAdvisor", "AiClient", "AiMemory", "Tool",
+    "AiAdvisor", "AiClient", "AiMemory", "Tool", "Prompt", "RAG",
+    "StructuredOutput", "Agent", "Embedding", "VectorStore", "AiRetry",
+    "AiCache", "TokenUsage", "ContentModeration",
+    "VectorStoreAnnotation",
+    "ContentModerationError",
     # advisors
     "MessageChatMemoryAdvisor", "QuestionAnswerAdvisor", "SimpleLoggerAdvisor",
     # memory

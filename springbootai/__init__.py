@@ -1,12 +1,25 @@
 from .annotations import SpringBootApplication
 from .annotations import *
+from .ai.annotations import (
+    Agent,
+    AiCache,
+    AiRetry,
+    ContentModeration,
+    Embedding,
+    Prompt,
+    RAG,
+    StructuredOutput,
+    TokenUsage,
+    VectorStore,
+)
+from .ai.annotation_runtime import ContentModerationError
 from .context import *
 from .web import *
 from .config import *
 from .utils import *
 from .main import create_app, run, SpringApplication, run_cli
 
-__version__ = "2.3.3"
+__version__ = "2.3.4"
 __author__ = "yuconggen"
 __license__ = "MIT"
 
@@ -126,6 +139,17 @@ __all__ = [
     'Get',
     'Set',
     'ToString',
+    'Prompt',
+    'RAG',
+    'StructuredOutput',
+    'Agent',
+    'Embedding',
+    'VectorStore',
+    'AiRetry',
+    'AiCache',
+    'TokenUsage',
+    'ContentModeration',
+    'ContentModerationError',
     'EnableDiscoveryClient',
     'NacosValue',
     'RefreshScope',

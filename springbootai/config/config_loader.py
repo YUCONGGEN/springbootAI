@@ -413,11 +413,21 @@ class ConfigLoader:
                 )
             return
 
+        # reload() 会在监听回调内部执行。保留回调前的内容版本，避免本次
+        # fetch() 在 Bean/Web 刷新尚未成功时提前提交版本，导致失败后不再重试。
+        previous_client = self._nacos_config_client
+        previous_content = getattr(previous_client, '_last_content', None)
         try:
             client, remote_config = bootstrap_nacos_config(
                 self._config, existing_client=self._nacos_config_client
             )
             self._nacos_config_client = client
+            if client is previous_client and previous_client is not None:
+                try:
+                    previous_client._last_content = previous_content
+                except Exception:
+                    # 第三方/测试客户端可能没有可写的版本字段；不影响配置加载。
+                    pass
             if remote_config:
                 self._config = self._deep_merge(self._config, remote_config)
                 self._normalize_section_mappings()
@@ -542,7 +552,18 @@ class ConfigLoader:
 
         # 数据库配置
         database_config = self._ensure_section('database')
-        database_config['url'] = os.getenv('DB_URL', database_config.get('url', 'sqlite:///./test.db'))
+        # ``database.database`` 是 PyMyBatis/SQLite 项目常用的文件路径，
+        # ``database.url`` 是 SQLAlchemy 风格连接串。没有显式 URL 时不要
+        # 强行写入 test.db，否则框架扩展（请求监控等）会与业务库分离。
+        configured_url = database_config.get('url')
+        if configured_url is None or (isinstance(configured_url, str) and not configured_url.strip()):
+            driver = str(database_config.get('driver', 'sqlite')).lower()
+            database_path = database_config.get('database')
+            if driver == 'sqlite' and database_path:
+                configured_url = 'sqlite:///' + str(database_path).replace('\\', '/')
+            else:
+                configured_url = 'sqlite:///./test.db'
+        database_config['url'] = os.getenv('DB_URL', configured_url)
         database_config['echo'] = _to_bool(os.getenv('DB_ECHO', database_config.get('echo', False)), False)
         # database.enabled 默认 True（对齐 application.yml 占位符 ${DB_ENABLED:true}）
         database_config['enabled'] = _to_bool(os.getenv('DB_ENABLED', database_config.get('enabled', True)), True)

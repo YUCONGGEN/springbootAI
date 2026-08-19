@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, date
 from decimal import Decimal
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -21,6 +21,7 @@ from springbootai.annotations.core import (
     RequestParam,
     PathVariable,
     RequestBody,
+    RequestPart,
     Valid,
     Validated,
     RequestHeader,
@@ -93,7 +94,11 @@ class WebApplicationContext:
         self._static_dir = static_dir
         self._logger = logging.getLogger("Spring.Web")
         self._interceptor_registry = interceptor_registry
+        self._runtime_interceptor_registry = None
         self._interceptors_registered = False
+        # ApplicationContext.refresh_configuration() uses this back-reference
+        # to refresh framework-owned Web configuration after Nacos changes.
+        setattr(application_context, "web_context", self)
         thread_pool = self._get_thread_pool_config()
         self._sync_max_workers = max(1, self._safe_int(thread_pool.get('max_workers', 40)))
         self._sync_max_queue = max(0, self._safe_int(thread_pool.get('max_queue', 100)))
@@ -200,6 +205,7 @@ class WebApplicationContext:
         from springbootai.web.interceptor import HandlerInterceptor, InterceptorManager, InterceptorRegistry
 
         registry = self._interceptor_registry or InterceptorRegistry()
+        self._runtime_interceptor_registry = registry
         # 请求持久化监控是框架能力，默认关闭；开启后自动加入拦截器，
         # 项目无需再定义实体、Mapper、Controller 或手工注册 Bean。
         try:
@@ -218,10 +224,6 @@ class WebApplicationContext:
                     continue
                 if isinstance(bean, HandlerInterceptor):
                     registry.add_interceptor(bean)
-        if not registry.get_interceptors():
-            self._interceptors_registered = True
-            return
-
         manager = InterceptorManager(registry)
 
         @self.fastapi_app.middleware("http")
@@ -247,6 +249,39 @@ class WebApplicationContext:
                     self._logger.exception("Interceptor after_completion failed")
 
         self._interceptors_registered = True
+
+    def refresh_runtime_configuration(self) -> None:
+        """应用 Nacos/环境热更新后的 Web 配置，不重复注册 FastAPI 路由或中间件。"""
+        config = self.application_context.get_config()
+        try:
+            from springbootai.web.actuator import configure_actuator
+            configure_actuator(self.application_context)
+        except Exception as exc:
+            self._logger.warning("Actuator runtime configuration refresh skipped: %s", exc)
+
+        try:
+            from springbootai.web.request_metrics import configure_request_metrics
+            from springbootai.web.request_metrics import resolve_request_metrics_config
+            replacement = configure_request_metrics(config)
+            registry = self._runtime_interceptor_registry
+            if registry is not None:
+                # 统一复用监控配置解析器，兼容 request-metrics/request_metrics、
+                # 布尔值和环境变量合并后的字符串值。不能仅凭 replacement 判断，
+                # 因为启用配置存储失败时 replacement 也会是 None，此时应保留旧实例。
+                options = resolve_request_metrics_config(config)
+                # replacement is None for both disabled and failed reconfiguration.
+                # Only remove the old interceptor when the new config explicitly disables it;
+                # failed hot updates keep the last known-good monitor running.
+                if replacement is not None or not options["enabled"]:
+                    registry.remove_interceptors(
+                        lambda interceptor: getattr(
+                            interceptor, "_springbootai_request_metrics", False
+                        )
+                    )
+                if replacement is not None:
+                    registry.add_interceptor(replacement)
+        except Exception as exc:
+            self._logger.warning("Request metrics runtime configuration refresh skipped: %s", exc)
 
     def _register_controllers(self) -> None:
         self._logger.info(f"Registering controllers, found {len(self.application_context.get_bean_names())} beans")
@@ -365,7 +400,7 @@ class WebApplicationContext:
                             self._method_param_meta[key] = method_params
 
     def _create_endpoint(self, controller_instance: Any, method: Callable, path: str) -> Callable:
-        from fastapi import Path as FastPath, Query as FastQuery, Body as FastBody
+        from fastapi import Path as FastPath, Query as FastQuery, Body as FastBody, File as FastFile
 
         sig = inspect.signature(method)
         param_infos = []
@@ -403,6 +438,19 @@ class WebApplicationContext:
                     'name': param_name, 'kind': 'body', 'http_name': param_name,
                     'annotation': body_annotation, 'default': None,
                     'required': getattr(param.default, 'required', True),
+                })
+            elif isinstance(param.default, RequestPart):
+                file_annotation = (
+                    param.annotation
+                    if param.annotation is not inspect.Parameter.empty
+                    else UploadFile
+                )
+                ann = param.default
+                actual_name = ann.name or param_name
+                param_infos.append({
+                    'name': param_name, 'kind': 'file', 'http_name': actual_name,
+                    'annotation': file_annotation, 'default': None,
+                    'required': ann.required, 'upload': ann,
                 })
             elif isinstance(param.default, RequestHeader):
                 ann = param.default
@@ -475,6 +523,18 @@ class WebApplicationContext:
                     info['name'], inspect.Parameter.POSITIONAL_OR_KEYWORD,
                     default=FastBody(... if info['required'] else None), annotation=info['annotation'],
                 ))
+            elif info['kind'] == 'file':
+                upload = info['upload']
+                endpoint_params.append(inspect.Parameter(
+                    info['name'], inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    default=FastFile(
+                        ... if info['required'] else None,
+                        alias=info['http_name'],
+                        description=upload.description or None,
+                        media_type=upload.media_type,
+                    ),
+                    annotation=info['annotation'],
+                ))
 
         def make_endpoint(controller_instance, method, param_infos):
             method_annotations = getattr(method, '__spring_annotations__', [])
@@ -501,9 +561,13 @@ class WebApplicationContext:
                     for info in param_infos:
                         name = info['name']
                         if name in kwargs:
-                            if kwargs[name] is None and info['required'] and info['kind'] in {'query', 'path', 'body'}:
+                            if kwargs[name] is None and info['required'] and info['kind'] in {'query', 'path', 'body', 'file'}:
                                 raise ValueError(f"请求参数 '{info['http_name']}' 不能为空")
-                            call_params[name] = self._convert_type(kwargs[name], info['annotation'])
+                            if info['kind'] == 'file':
+                                self._validate_upload(kwargs[name], info['upload'])
+                                call_params[name] = kwargs[name]
+                            else:
+                                call_params[name] = self._convert_type(kwargs[name], info['annotation'])
                         elif info['kind'] == 'body':
                             try:
                                 body = await request.json()
@@ -619,6 +683,34 @@ class WebApplicationContext:
             return endpoint
 
         return make_endpoint(controller_instance, method, param_infos)
+
+    @staticmethod
+    def _validate_upload(value: Any, annotation: RequestPart) -> None:
+        """执行上传文件的可选扩展名和大小校验，不读取/消耗文件流。"""
+        values = value if isinstance(value, (list, tuple)) else [value]
+        for upload in values:
+            if upload is None:
+                continue
+            filename = str(getattr(upload, "filename", "") or "")
+            if annotation.allowed_extensions:
+                suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                if suffix not in annotation.allowed_extensions:
+                    allowed = ", ".join(f".{item}" for item in annotation.allowed_extensions)
+                    raise ValueError(
+                        f"文件 '{filename or '未命名文件'}' 类型不允许，仅支持: {allowed}"
+                    )
+            if annotation.max_size is not None:
+                size = getattr(upload, "size", None)
+                if size is not None:
+                    try:
+                        numeric_size = int(size)
+                    except (TypeError, ValueError):
+                        numeric_size = None
+                    if numeric_size is not None and numeric_size > annotation.max_size:
+                        raise ValueError(
+                            f"文件 '{filename or '未命名文件'}' 超过大小限制 "
+                            f"({annotation.max_size} bytes)"
+                        )
 
     @staticmethod
     def _security_failure_response(error: Exception) -> Optional[JSONResponse]:

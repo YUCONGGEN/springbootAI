@@ -1028,3 +1028,49 @@ A：按 `order` 值从小到大执行。比如 Memory Advisor 设 `order=1`，RA
 **现象**：`MAX_TOOL_ITERATIONS = 5` 限制了往返轮数，但未限制累计 token 数。每轮工具调用返回超大结果时，5 轮可能消耗数万 token。
 
 **改进方案**：增加配置项 `max_total_tokens`（默认 100000），每轮调用前估算累计 token，超限则终止循环。
+
+## 声明式 AI 注解（2.3.4）
+
+以下注解由 BeanFactory 在受管 Bean 方法调用时执行，默认不改变普通方法；显式写出注解后才启用。ChatClient、AgentService、EmbeddingModel 和 VectorStore 均按 Bean 名称懒加载，因此配置可以来自本地 YAML、环境变量或 Nacos。
+
+```python
+from pydantic import BaseModel
+from springbootai.annotations import (
+    Prompt, RAG, StructuredOutput, Agent, Embedding, VectorStore,
+    AiRetry, AiCache, TokenUsage, ContentModeration,
+)
+
+class WeldResult(BaseModel):
+    passed: bool
+    reason: str
+
+class WeldingAiService:
+    embedding_model = Embedding()       # 注入 aiEmbeddingModel
+    vector_store = VectorStore()        # 注入 aiVectorStore
+
+    @Prompt("请总结焊接记录：{record}")
+    @TokenUsage()
+    def summarize(self, record: str):
+        pass                            # 框架调用 aiChatClient
+
+    @RAG(top_k=4)
+    @AiRetry(attempts=3, delay_ms=200)
+    @AiCache(ttl=300, key="{question}")
+    @ContentModeration(blocked_terms=["恶意指令"])
+    def answer(self, question: str):
+        return question                  # 返回值作为检索 query
+
+    @Prompt("输出 JSON：{text}")
+    @StructuredOutput(WeldResult)
+    def classify(self, text: str):
+        pass
+
+@Agent(agent_type="react", max_iterations=5)
+class WeldingAgent:
+    def run(self, question: str):
+        return question
+```
+
+`@Prompt` 返回文本（或 `response="response"` 返回 `ChatResponse`）；`@RAG` 先检索再问答；`@StructuredOutput` 支持 Pydantic v1/v2 以及 `dict`；`@Agent` 优先调用 `lcAgentService`，没有 LangChain Bean 时回退 ChatClient。`@AiRetry` 只包装该方法，`@AiCache` 使用稳定参数键和 TTL 内存缓存，`@TokenUsage` 不虚构调用次数而只累计 token，`@ContentModeration` 命中规则时抛出 `ContentModerationError`。第三方依赖未安装、AI Bean 未配置时不会阻断框架启动，但调用显式注解方法会给出明确的运行时错误。
+
+示例和注解索引位于 `examples/example_all/ai_annotations_examples.py`、`annotation_showcase.py` 与 `FEATURE_CATALOG.md`，可用 `python -m example_all.feature_catalog Prompt` 查询真实定义和用法。
