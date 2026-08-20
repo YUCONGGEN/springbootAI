@@ -12,9 +12,9 @@ build-backend = "setuptools.build_meta"
 [project]
 # Distribution name: springbootAI (pip install springbootAI); import package: springbootai.
 name = "springbootAI"
-version = "2.3.6"
+version = "2.3.7"
 description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
-readme = "README_PYPI.md"
+readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [

@@ -43,7 +43,7 @@ from .annotations import (
     ds_route_decorator, ds_decorator_factory, apply_ds_annotations, is_slave_placeholder,
 )
 
-__version__ = "2.3.6"
+__version__ = "2.3.7"
 
 __all__ = [
     "DataSourceContextHolder",
