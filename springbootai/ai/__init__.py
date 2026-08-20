@@ -54,7 +54,7 @@ from springbootai.ai.observability import AIMetrics, ai_metrics
 from springbootai.ai.autoconfig import AIProperties, bind_ai_config, configure_ai
 from springbootai.ai.annotation_runtime import ContentModerationError
 
-__version__ = "2.3.5"
+__version__ = "2.3.6"
 
 __all__ = [
     # core

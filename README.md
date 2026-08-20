@@ -54,7 +54,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.3.5`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
+当前版本是 `2.3.6`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -235,10 +235,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `springbootai` 框架 API | 2.3.5 |
-| `springbootai.orm.pymybatis` | 2.3.5 |
-| `springbootai.ai` AI 模块 | 2.3.5 |
-| `springbootai.langchain` LangChain 模块 | 2.3.5 |
+| `springbootai` 框架 API | 2.3.6 |
+| `springbootai.orm.pymybatis` | 2.3.6 |
+| `springbootai.ai` AI 模块 | 2.3.6 |
+| `springbootai.langchain` LangChain 模块 | 2.3.6 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景
