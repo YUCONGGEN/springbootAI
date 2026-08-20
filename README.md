@@ -4,6 +4,12 @@
   <img src="https://raw.githubusercontent.com/YUCONGGEN/springbootAI/master/doc/images/hero-banner.png" alt="SpringBootAI 功能总览" width="100%" />
 </p>
 
+[![PyPI](https://img.shields.io/pypi/v/springbootAI)](https://pypi.org/project/springbootAI/)
+[![Python](https://img.shields.io/pypi/pyversions/springbootAI)](https://pypi.org/project/springbootAI/)
+[![CI](https://github.com/YUCONGGEN/springbootAI/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/YUCONGGEN/springbootAI/actions/workflows/ci.yml)
+[![Security](https://github.com/YUCONGGEN/springbootAI/actions/workflows/security.yml/badge.svg?branch=master)](https://github.com/YUCONGGEN/springbootAI/actions/workflows/security.yml)
+[![License](https://img.shields.io/pypi/l/springbootAI)](https://github.com/YUCONGGEN/springbootAI/blob/master/LICENSE)
+
 ## SpringBootAI 考试认证与证书
 
 SpringBootAI 已提供配套的在线考试认证平台，学习者、团队成员和项目使用方可以通过认证考试检验自己对框架核心能力的掌握情况，并在通过考试后获得对应证书。
@@ -36,11 +42,6 @@ SpringBootAI 已提供配套的在线考试认证平台，学习者、团队成�
 | 安全能力 | JWT、密码加密、SQL 注入防护、CSRF、OAuth2、访问控制与常见错误处理 |
 | AI 生态 | ChatClient、Tools、RAG、Advisor、LangChain、LangGraph、MCP client/server |
 
-[![PyPI](https://img.shields.io/pypi/v/springbootAI)](https://pypi.org/project/springbootAI/)
-[![Python](https://img.shields.io/pypi/pyversions/springbootAI)](https://pypi.org/project/springbootAI/)
-[![CI](https://github.com/YUCONGGEN/springbootAI/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/YUCONGGEN/springbootAI/actions/workflows/ci.yml)
-[![Security](https://github.com/YUCONGGEN/springbootAI/actions/workflows/security.yml/badge.svg?branch=master)](https://github.com/YUCONGGEN/springbootAI/actions/workflows/security.yml)
-[![License](https://img.shields.io/pypi/l/springbootAI)](https://github.com/YUCONGGEN/springbootAI/blob/master/LICENSE)
 
 SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用框架。你使用 Python 编写 `@RestController`、`@Service`、`@Mapper` 和 `@Autowired`，框架负责组件扫描、依赖注入、Web 路由、事务切面及生命周期；Web 运行时建立在 FastAPI/Starlette/Uvicorn 之上。
 
