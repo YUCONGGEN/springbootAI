@@ -4,6 +4,38 @@
   <img src="https://raw.githubusercontent.com/YUCONGGEN/springbootAI/master/doc/images/hero-banner.png" alt="SpringBootAI 功能总览" width="100%" />
 </p>
 
+## SpringBootAI 考试认证与证书
+
+SpringBootAI 已提供配套的在线考试认证平台，学习者、团队成员和项目使用方可以通过认证考试检验自己对框架核心能力的掌握情况，并在通过考试后获得对应证书。
+
+认证入口：[http://www.yucg.cn:8230](http://www.yucg.cn:8230)
+
+认证适合以下场景：
+
+- **个人学习证明**：用于记录自己已经系统学习 SpringBootAI 的 Web、IoC、配置、数据访问、AOP、AI 扩展和生产治理等核心内容。
+- **团队能力评估**：团队引入 SpringBootAI 前，可以让成员通过统一考试确认基础概念、开发规范和常见问题处理能力。
+- **项目交付背书**：在培训、内部推广、项目验收或技术选型说明中，证书可作为使用者熟悉框架体系和最佳实践的辅助证明。
+- **持续学习路径**：认证内容覆盖从入门到进阶的关键知识点，适合结合 README、模块文档和示例工程逐步学习后再参加考试。
+
+建议的认证准备流程：
+
+1. 先按 README 中的“10 分钟跑通第一个接口”完成本地环境搭建，确认能够创建应用、启动服务并访问 Swagger。
+2. 阅读 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md)，理解 `@SpringBootApplication`、`@RestController`、`@Service`、`@Autowired`、配置文件和依赖注入的基本用法。
+3. 根据实际使用方向阅读模块文档，例如 Web MVC、ORM、事务、缓存、安全、配置绑定、测试切片、AI、LangChain、LangGraph、MCP 和 Cloud 微服务等。
+4. 运行示例或编写一个小型业务接口，至少覆盖 Controller、Service、配置读取、异常处理、Swagger 文档和数据访问中的若干能力。
+5. 访问认证平台参加考试，通过后按平台页面提示查看、下载或领取证书。证书信息、考试规则、题量、通过标准和有效期以认证平台展示为准。
+
+认证重点建议关注：
+
+| 方向 | 建议掌握内容 |
+|---|---|
+| 快速入门 | 安装方式、项目结构、启动入口、扫描包、`application.yml`、Swagger 访问 |
+| Web 与 IoC | 路由映射、参数绑定、Controller/Service 分层、Bean 注册、依赖注入、生命周期 |
+| 数据与事务 | PyMyBatis Mapper、XML Mapper、分页、动态 SQL、事务边界、回滚行为 |
+| 工程治理 | 配置合并、Profile、日志、健康检查、Prometheus、限流、熔断、测试切片 |
+| 安全能力 | JWT、密码加密、SQL 注入防护、CSRF、OAuth2、访问控制与常见错误处理 |
+| AI 生态 | ChatClient、Tools、RAG、Advisor、LangChain、LangGraph、MCP client/server |
+
 [![PyPI](https://img.shields.io/pypi/v/springbootAI)](https://pypi.org/project/springbootAI/)
 [![Python](https://img.shields.io/pypi/pyversions/springbootAI)](https://pypi.org/project/springbootAI/)
 [![CI](https://github.com/YUCONGGEN/springbootAI/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/YUCONGGEN/springbootAI/actions/workflows/ci.yml)
@@ -21,7 +53,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.3.2`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
+当前版本是 `2.3.5`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -202,10 +234,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `springbootai` 框架 API | 2.3.2 |
-| `springbootai.orm.pymybatis` | 2.3.2 |
-| `springbootai.ai` AI 模块 | 2.3.2 |
-| `springbootai.langchain` LangChain 模块 | 2.3.2 |
+| `springbootai` 框架 API | 2.3.5 |
+| `springbootai.orm.pymybatis` | 2.3.5 |
+| `springbootai.ai` AI 模块 | 2.3.5 |
+| `springbootai.langchain` LangChain 模块 | 2.3.5 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景

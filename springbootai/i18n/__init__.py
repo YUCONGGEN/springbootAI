@@ -65,7 +65,7 @@ from .properties import load_properties, parse_properties
 from .middleware import LocaleResolverMiddleware, get_request_locale
 from .auto_config import MessageSourceAutoConfiguration, configure_message_source
 
-__version__ = "2.3.4"
+__version__ = "2.3.5"
 
 __all__ = [
     # Locale
