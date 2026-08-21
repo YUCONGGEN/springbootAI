@@ -25,7 +25,7 @@ SpringBootAI 已提供配套的在线考试认证平台，学习者、团队成�
 
 建议的认证准备流程：
 
-1. 先按 README 中的“10 分钟跑通第一个接口”完成本地环境搭建，确认能够创建应用、启动服务并访问 Swagger。
+1. 先按 README 中的“1 分钟跑通第一个接口”完成本地环境搭建，确认能够创建应用、启动服务并访问 Swagger。
 2. 阅读 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md)，理解 `@SpringBootApplication`、`@RestController`、`@Service`、`@Autowired`、配置文件和依赖注入的基本用法。
 3. 根据实际使用方向阅读模块文档，例如 Web MVC、ORM、事务、缓存、安全、配置绑定、测试切片、AI、LangChain、LangGraph、MCP 和 Cloud 微服务等。
 4. 运行示例或编写一个小型业务接口，至少覆盖 Controller、Service、配置读取、异常处理、Swagger 文档和数据访问中的若干能力。
@@ -58,86 +58,36 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
-## 10 分钟跑通第一个接口
+## 1 分钟跑通第一个接口
 
-以下示例不需要数据库、Redis 或大模型 API Key。先创建项目和虚拟环境：
-
-```powershell
-mkdir my-first-app
-cd my-first-app
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install springbootAI
-
-mkdir demo
-mkdir demo\controller
-New-Item demo\__init__.py -ItemType File
-New-Item demo\controller\__init__.py -ItemType File
-```
-
-Linux/macOS 激活命令是 `source .venv/bin/activate`，其余 Python 命令相同。
-
-创建 `demo/Application.py`：
-
-```python
-from springbootai.annotations import SpringBootApplication
-from springbootai.main import run
-
-
-@SpringBootApplication(scan_base_packages=["demo"])
-class Application:
-    pass
-
-
-if __name__ == "__main__":
-    run(Application)
-```
-
-创建 `demo/controller/HelloController.py`：
-
-```python
-from springbootai.annotations import GetMapping, RequestMapping, RestController
-from springbootai.web.swagger import Operation, Tag
-
-
-@Tag(name="入门接口", description="确认应用已经正常运行")
-@RequestMapping("/api")
-@RestController
-class HelloController:
-    @Operation(summary="打招呼")
-    @GetMapping("/hello/{name}")
-    def hello(self, name: str):
-        return {"message": f"Hello, {name}"}
-```
-
-创建 `demo/application.yml`。这里显式关闭暂时用不到的外部资源，避免新手第一次启动就连接数据库：
-
-```yaml
-server:
-  host: 127.0.0.1
-  port: 8080
-
-database:
-  enabled: false
-
-redis:
-  enabled: false
-```
-
-在 `demo` 目录的上一层启动：
+已安装 Python 3.10、3.11 或 3.12 时，直接执行下面五条命令。示例不需要数据库、Redis、Docker 或大模型 API Key：
 
 ```powershell
-python -m demo.Application
+python -m pip install --upgrade springbootAI
+springbootai init demo --modules web --no-docker --non-interactive
+cd demo
+python -m pip install -r requirements.txt
+python Application.py
 ```
 
-另开终端验证：
+`springbootai init demo` 会自动创建 `demo` 项目目录、启动类、配置文件和 Hello 示例接口。`--non-interactive` 表示直接使用默认配置，不进入问答；`--no-docker` 表示本次不生成 Docker 文件。
+
+看到下面的输出就说明启动成功：
+
+```text
+Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+
+保持服务运行，另开终端验证：
 
 ```powershell
-curl http://127.0.0.1:8080/api/hello/Alice
+curl http://127.0.0.1:8000/api/hello/Alice
+curl http://127.0.0.1:8000/actuator/health/liveness
 ```
 
-返回数据中应包含 `"message":"Hello, Alice"`。浏览器访问 `http://127.0.0.1:8080/docs` 可以看到 Swagger 页面。遇到目录、虚拟环境或启动错误时，按[新手入门指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md)逐步排查。
+第一个请求的返回数据中会包含 `"message":"Hello, Alice!"`，健康检查会返回 `"status":"UP"`。浏览器访问 `http://127.0.0.1:8000/docs` 可以直接查看并测试 Swagger 接口。
+
+生成的业务代码位于 `demo/src/demo/`，主配置文件位于 `demo/config/application.yml`。完整参数见 [CLI 模块指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/CLI_MODULE.md)，遇到启动问题时按[新手入门指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md)排查。
 
 ---
 
