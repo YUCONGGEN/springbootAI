@@ -111,9 +111,9 @@ Python 中的"注解"实际是装饰器。你在类或方法上面写 `@Service`
 
 ---
 
-## 4. 快速开始：6 步跑通第一个接口
+## 4. 快速开始：用 CLI 跑通第一个接口
 
-> **📌 这一节的目标**：从安装框架开始，到最后用浏览器看到返回的 JSON 数据。全部代码可以直接复制粘贴，不需要改动任何地方。预计耗时：5 分钟。
+> **📌 这一节的目标**：安装框架后执行 `springbootai init`，让脚手架自动创建目录、配置文件、启动类和示例接口。你不需要手工新建文件夹或 `__init__.py`，预计 3 分钟即可跑起来。
 
 ### 第 1 步：检查 Python 环境
 
@@ -126,158 +126,66 @@ python --version
 
 如果提示"找不到 python"，说明还没有安装 Python。请去 [https://www.python.org/downloads/](https://www.python.org/downloads/) 下载安装，安装时**一定要勾选"Add Python to PATH"**。
 
-### 第 2 步：创建项目文件夹并安装框架
+### 第 2 步：安装 SpringBootAI
 
-在终端中依次执行以下命令（一行一行来）：
+打开 PowerShell，安装或升级框架。CLI 会随框架一起安装：
 
 ```powershell
-# 1. 创建项目文件夹并进入
-mkdir my-first-app
-cd my-first-app
-
-# 2. 创建虚拟环境（给这个项目一个隔离的 Python 环境，不会弄乱电脑上的其他项目）
-python -m venv .venv
-
-# 3. 激活虚拟环境（Windows PowerShell）
-.\.venv\Scripts\Activate.ps1
-# 看到命令行前面出现 (.venv) 就说明激活成功了
-
-# 如果你是 Linux 或 macOS，激活命令是：
-# source .venv/bin/activate
-
-# 4. 升级 pip（Python 的包管理工具）
-python -m pip install --upgrade pip
-
-# 5. 安装 SpringBootAI 框架
-python -m pip install springbootAI
-# 看到 "Successfully installed springbootAI-x.x.x" 就说明安装成功
+python -m pip install --upgrade springbootAI
+springbootai version
 ```
 
-### 第 3 步：创建项目文件
+看到 SpringBootAI 版本信息，就说明 CLI 已经可以使用。
 
-在 `my-first-app` 文件夹里，创建以下文件结构（`__init__.py` 必须是空文件，但不能省略）：
+### 第 3 步：自动创建并启动项目
+
+依次执行下面四条命令：
+
+```powershell
+springbootai init my-first-app --modules web --no-docker --non-interactive
+cd my-first-app
+python -m pip install -r requirements.txt
+python Application.py
+```
+
+`springbootai init` 会自动创建 `my-first-app` 文件夹，并生成可直接运行的 Web 项目。数据库、Redis、AI 和 Cloud 默认关闭，不需要先安装 MySQL、Redis 或 Docker。
+
+生成的关键文件如下，全部由 CLI 创建：
 
 ```text
 my-first-app/
-|-- demo/
-|   |-- __init__.py          （空文件，必须有）
-|   |-- Application.py       （启动类）
-|   |-- application.yml      （配置文件）
-|   `-- controller/
-|       |-- __init__.py      （空文件，必须有）
-|       `-- HelloController.py  （接口文件）
+|-- Application.py
+|-- config/application.yml
+|-- requirements.txt
+`-- src/my_first_app/controllers/hello_controller.py
 ```
-
-**你可以直接在文件管理器里创建这些文件夹和文件**。或者用 VS Code 打开 `my-first-app` 文件夹，在左侧文件树中右键创建。
-
-### 第 4 步：填写代码（以下三份代码可直接复制粘贴）
-
-**文件 1：`demo/Application.py`**（启动类——程序的入口）
-
-```python
-# 导入框架提供的"启动应用"注解和运行函数
-from springbootai.annotations import SpringBootApplication
-from springbootai.main import run
-
-
-# @SpringBootApplication 告诉框架："这是一个 SpringBootAI 应用"
-# scan_base_packages 告诉框架："去 demo 这个包里找 Controller、Service 等组件"
-@SpringBootApplication(scan_base_packages=["demo"])
-class Application:
-    pass
-
-
-# 这是 Python 的标准写法：当直接运行这个文件时，启动应用
-if __name__ == "__main__":
-    run(Application)
-# 启动后控制台会输出：Uvicorn running on http://127.0.0.1:8080
-```
-
-**文件 2：`demo/controller/HelloController.py`**（接口——处理用户请求）
-
-```python
-# 导入需要的注解
-from springbootai.annotations import GetMapping, RequestMapping, RestController
-from springbootai.web.swagger import Operation, Tag
-
-
-# @Tag 在 Swagger 文档页面上给这组接口起个名字
-# @RequestMapping 把这组接口的网址都加上 /api 前缀
-# @RestController 告诉框架：这是一个 Controller（前台服务员）
-@Tag(name="入门接口", description="用于确认项目已经正常启动")
-@RequestMapping("/api")
-@RestController
-class HelloController:
-
-    # @Operation 在 Swagger 页面上说明这个接口是干什么的
-    # @GetMapping 表示：当有人用 GET 方式访问 /api/hello/某个名字 时，执行这个方法
-    # {name} 是路径中的变量——写成 /hello/Alice，方法里的 name 就是 "Alice"
-    @Operation(summary="打招呼", description="把路径中的名字放进欢迎语")
-    @GetMapping("/hello/{name}")
-    def hello(self, name: str):
-        return {"message": f"Hello, {name}"}
-# 访问示例：GET /api/hello/Alice → 返回 {"code":200,"message":"success","data":{"message":"Hello, Alice"}}
-```
-
-**文件 3：`demo/application.yml`**（配置文件——设置端口和开关）
-
-```yaml
-# 服务器设置：监听哪个 IP 和端口
-server:
-  host: 127.0.0.1
-  port: 8080
-
-# 先用最简单的模式：关掉数据库和 Redis（后面需要时再打开）
-redis:
-  enabled: false
-
-database:
-  enabled: false
-
-# JWT 设置：登录功能需要用到，先设个开发用的临时值
-jwt:
-  secret_key: development-only-secret
-  algorithm: HS256
-```
-
-### 第 5 步：启动应用
-
-**在终端中，确保你在 `my-first-app` 目录下**（就是 `demo/` 文件夹的父目录），然后运行：
-
-```powershell
-python -m demo.Application
-```
-
-> **⚠️ 这一步最容易出错！**
-> - ✅ 正确的做法：在 `my-first-app/` 目录下，运行 `python -m demo.Application`
-> - ❌ 错误：进入 `demo/` 目录里运行 `python Application.py`——这样会报 `ModuleNotFoundError`
->
-> 简单记忆：**你要站在 `demo` 文件夹的外面，用 `-m` 模块方式来运行它。**
 
 看到类似下面的输出，说明启动成功：
 
-```
-Uvicorn running on http://127.0.0.1:8080 (Press CTRL+C to quit)
+```text
+Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
-### 第 6 步：验证接口
+> 如果提示找不到 `springbootai` 命令，请关闭并重新打开终端；仍然找不到时，确认 Python 的 Scripts 目录已经加入 PATH。完整 CLI 参数见 [CLI 模块指南](CLI_MODULE.md#项目脚手架springbootai-init)。
+
+### 第 4 步：验证接口
 
 **保持第一个终端运行**（不要关掉），打开第二个终端：
 
 ```powershell
 # 测试打招呼接口
-curl http://127.0.0.1:8080/api/hello/Alice
-# 返回：{"code":200,"message":"success","data":{"message":"Hello, Alice"}}
+curl http://127.0.0.1:8000/api/hello/Alice
+# 返回数据中会包含："message":"Hello, Alice!"
 
 # 测试健康检查接口
-curl http://127.0.0.1:8080/actuator/health/liveness
+curl http://127.0.0.1:8000/actuator/health/liveness
 # 返回：{"status":"UP"}
 ```
 
 **或者直接用浏览器打开：**
 
-- `http://127.0.0.1:8080/api/hello/小白` → 浏览器显示 JSON 数据
-- `http://127.0.0.1:8080/docs` → Swagger 文档页面（网页版的"接口说明书"，你可以在上面直接点击"Try it out"测试接口）
+- `http://127.0.0.1:8000/api/hello/小白` → 浏览器显示 JSON 数据
+- `http://127.0.0.1:8000/docs` → Swagger 文档页面（网页版的"接口说明书"，你可以在上面直接点击"Try it out"测试接口）
 
 > 🎉 恭喜！你已经成功跑通了第一个 SpringBootAI 接口！
 
@@ -290,8 +198,8 @@ curl http://127.0.0.1:8080/actuator/health/liveness
 > 🍽️ **比喻**：还记得餐厅的故事吗？现在我们的餐厅要升级——前台服务员（Controller）不再自己说"Hello"，而是把客户的名字递给后厨大厨（Service），大厨负责组织欢迎语。`@Autowired` 就是让 HR 系统自动把大厨派给服务员做搭档。
 
 ```python
-# 文件：demo/controller/GreetingController.py
-# 把下面整段代码复制替换你之前的 HelloController.py，或者新建一个文件
+# 文件：src/my_first_app/controllers/hello_controller.py
+# 把下面整段代码替换脚手架生成的 hello_controller.py
 
 # ---------- 以下是完整可运行代码，可直接复制粘贴 ----------
 
@@ -310,7 +218,7 @@ class GreetingService:
 # RestController = 前台服务员，负责"接单和返回"
 @RequestMapping("/api")
 @RestController
-class GreetingController:
+class HelloController:
     # @Autowired 告诉容器："我需要一个 GreetingService，帮我自动传进来"
     # 你不用自己写 greeting_service = GreetingService()
     @Autowired
@@ -326,11 +234,11 @@ class GreetingController:
 # ---------- 以上是完整可运行代码 ----------
 
 # 重新启动应用后测试：
-# curl http://127.0.0.1:8080/api/greeting/小白
+# curl http://127.0.0.1:8000/api/greeting/小白
 # 返回：{"code":200,"message":"success","data":{"message":"Hello, 小白"}}
 ```
 
-**验证**：重新运行 `python -m demo.Application`，然后访问 `http://127.0.0.1:8080/api/greeting/小白`，看到返回的欢迎信息就说明 Controller 成功调用了 Service。
+**验证**：重新运行 `python Application.py`，然后访问 `http://127.0.0.1:8000/api/greeting/小白`，看到返回的欢迎信息就说明 Controller 成功调用了 Service。
 
 > **⚠️ 新手常见错误**：
 > - ❌ 错误：在 Controller 里写 `self.greeting_service = GreetingService()`，然后问"为什么 `@Cacheable` 不生效？"
@@ -374,12 +282,12 @@ class GreetingController:
 
 ### 7.1 基本语法
 
-`application.yml` 是项目的主配置文件。`${变量名:默认值}` 的意思是：先看有没有设置环境变量，没设置就用冒号后面的默认值。
+`config/application.yml` 是脚手架项目的主配置文件。`${变量名:默认值}` 的意思是：先看有没有设置环境变量，没设置就用冒号后面的默认值。
 
 ```yaml
-# 示例：端口号先从环境变量 SERVER_PORT 读取，没读到就用 8080
+# 示例：端口号先从环境变量 SERVER_PORT 读取，没读到就用 8000
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT:8000}
 ```
 
 ### 7.2 怎么临时改端口
@@ -390,7 +298,7 @@ server:
 # 设置环境变量
 $env:SERVER_PORT='9000'
 # 启动应用（这次启动会使用 9000 端口）
-python -m demo.Application
+python Application.py
 # 输出：Uvicorn running on http://127.0.0.1:9000
 ```
 
@@ -422,23 +330,14 @@ python -m demo.Application
 | 数据库 | SQLite（文件数据库，不用装服务） | MySQL / PostgreSQL（专业的数据库服务） |
 | JWT 密钥 | 可以用简单的开发密钥 | 必须用至少 32 字符的随机密钥，从环境变量注入 |
 | CORS | 可以允许所有来源 | 必须限制具体的前端域名 |
-| 启动方式 | `python -m demo.Application` | `uvicorn asgi:app --workers 4` |
+| 启动方式 | `python Application.py` | `uvicorn Application:create_app --factory --workers 4` |
 | 日志 | 打印到控制台就行 | 输出到文件，配合监控告警 |
 
-生产环境的 ASGI 入口示例：
-
-```python
-# 文件：asgi.py（放在项目根目录）
-from springbootai.main import create_app
-from demo.Application import Application
-
-# create_app 生成一个 ASGI 应用对象，交给 uvicorn 管理
-app = create_app(Application)
-```
+脚手架生成的 `Application.py` 已经提供 `create_app` 工厂，不需要再手工创建 `asgi.py`。
 
 ```powershell
-# 生产环境启动命令：4 个 worker 进程，监听所有网卡的 8080 端口
-uvicorn asgi:app --host 0.0.0.0 --port 8080 --workers 4
+# 生产环境启动命令：4 个 worker 进程，监听所有网卡的 8000 端口
+uvicorn Application:create_app --factory --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 > **⚠️ 新手常见错误**：
@@ -458,8 +357,8 @@ uvicorn asgi:app --host 0.0.0.0 --port 8080 --workers 4
 | **1** | `ModuleNotFoundError: No module named 'springbootai'` | 虚拟环境没激活，或者安装没成功 | 先激活 `.venv`，再 `pip install springbootAI`，最后用 `python -c "import springbootai; print(springbootai.__version__)"` 验证 |
 | **2** | Controller 写好了但 `/docs` 里看不到 | 包目录缺 `__init__.py`，或 `scan_base_packages` 没包含那个包 | 检查每个目录是否有 `__init__.py`（可以为空但必须有），确认 `scan_base_packages` 里写了正确的包名 |
 | **3** | `@Transactional` 或 `@Cacheable` 不生效 | 对象是手动 `ClassName()` 创建的，不是容器给的 | 改用 `@Autowired` 构造器注入获取对象，不要自己 `new` |
-| **4** | `Address already in use`（端口被占用） | 8080 端口被上次没关的进程占着 | 改端口：`$env:SERVER_PORT='9000'`；或者用 `netstat -ano | findstr 8080` 找到占用进程并关掉 |
-| **5** | `python -m demo.Application` 报找不到模块 | 你不在正确的目录 | `cd` 到 `demo/` 的**外面那层**（项目根目录）再执行命令 |
+| **4** | `Address already in use`（端口被占用） | 8000 端口被上次没关的进程占着 | 改端口：`$env:SERVER_PORT='9000'`；或者用 `netstat -ano | findstr 8000` 找到占用进程并关掉 |
+| **5** | `python Application.py` 提示找不到文件 | 你不在脚手架生成的项目目录 | 先执行 `cd my-first-app`，确认当前目录能看到 `Application.py` |
 
 ### 其他常见问题
 
@@ -487,7 +386,7 @@ uvicorn asgi:app --host 0.0.0.0 --port 8080 --workers 4
     │
     ├─→ 3. 确认你当前所在的目录
     │       PowerShell: Get-Location   Linux/Mac: pwd
-    │       应该在 demo/ 的外面那层（项目根目录）
+    │       应该在脚手架生成的项目根目录，当前目录能看到 Application.py
     │       ↓ 目录不对？ → cd 到正确位置
     │       ↓ 目录正确？
     │
@@ -500,7 +399,7 @@ uvicorn asgi:app --host 0.0.0.0 --port 8080 --workers 4
            ② 框架版本：python -c "import springbootai; print(springbootai.__version__)"
            ③ 完整的错误信息（从 Traceback 第一个字到最后一行）
            ④ 你执行了什么命令
-           ⑤ demo/ 下面有什么文件
+           ⑤ 项目根目录和 src/my_first_app/ 下面有什么文件
 ```
 
 ---
@@ -539,8 +438,8 @@ A：YAML 配置是启动时一次性读取的。修改后必须重启应用（`C
 ### Q5：`__init__.py` 是干什么的？为什么每个目录都要有？
 A：`__init__.py` 告诉 Python"这个目录是一个包（package）"。没有它，Python 就找不到目录里的模块。**文件内容可以为空，但文件本身不能省略。**
 
-### Q6：启动时一定要用 `python -m demo.Application` 吗？不能直接 `python demo/Application.py` 吗？
-A：不能用后者。`-m` 模块方式能让 Python 正确解析包路径，框架的组件扫描依赖于正确的包结构。用 `-m` 方式，并且要站在 `demo/` 的父目录执行。
+### Q6：脚手架项目怎么启动？
+A：进入 `springbootai init` 生成的项目根目录，直接运行 `python Application.py`。这个入口已经自动把 `src` 加入 Python 路径，并配置好组件扫描。
 
 ### Q7：框架支持 WebSocket 吗？
 A：支持。详见 [WebSocket 指南](WEBSOCKET_MODULE.md)。
