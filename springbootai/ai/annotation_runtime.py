@@ -11,8 +11,10 @@ import functools
 import inspect
 import json
 import logging
+import os
 import threading
 import time
+from collections import OrderedDict
 from typing import Any, Callable, Iterable
 
 from springbootai.ai.annotations import (
@@ -27,8 +29,287 @@ class ContentModerationError(ValueError):
     """输入或模型输出命中敏感词时抛出的安全异常。"""
 
 
-_CACHE: dict[str, tuple[float, Any]] = {}
+# ``@AiCache`` is intentionally a bounded process-local cache.  The old
+# implementation used a plain dictionary and treated ``ttl <= 0`` as an
+# infinite TTL, so every distinct prompt/argument combination stayed alive
+# forever.  OrderedDict gives us O(1) LRU promotion/eviction while the lock
+# protects both readers and writers.  Keep the module-level name for backwards
+# compatibility with applications/tests which clear the old cache directly.
+_CACHE: "OrderedDict[str, tuple[float, Any]]" = OrderedDict()
 _CACHE_LOCK = threading.RLock()
+
+# Calls for the same key are coalesced.  A slow model request should not be
+# executed N times merely because N requests arrived at the same instant.
+# Sync callers use Events (which do not hold the cache lock while waiting),
+# async callers use a Future per event loop (a Future cannot be awaited from a
+# different loop).  Each value also records its owner so accidental recursive
+# calls do not deadlock the owning thread/task.
+_CACHE_INFLIGHT: dict[str, tuple[threading.Event, int]] = {}
+_ASYNC_CACHE_INFLIGHT: dict[tuple[str, int], tuple[asyncio.Future, int]] = {}
+
+# A hard process-wide ceiling remains in place even when one annotation asks
+# for a very large value.  It can be raised for a trusted workload via the
+# environment without making an annotation an unbounded memory sink.
+_DEFAULT_CACHE_MAX_SIZE = 1024
+try:
+    _configured_cache_max = int(os.getenv(
+        "SPRINGBOOTAI_AI_CACHE_MAX_SIZE", str(_DEFAULT_CACHE_MAX_SIZE)))
+except (TypeError, ValueError):
+    _configured_cache_max = _DEFAULT_CACHE_MAX_SIZE
+_CACHE_MAX_SIZE = max(1, _configured_cache_max)
+
+
+def _cache_max_size(annotation: AiCache) -> int:
+    """Return the effective bounded size for an ``@AiCache`` annotation."""
+    try:
+        requested = int(getattr(annotation, "max_size", _CACHE_MAX_SIZE))
+    except (TypeError, ValueError):
+        requested = _CACHE_MAX_SIZE
+    # <=0 is a convenient per-method switch to disable cache storage.
+    if requested <= 0:
+        return 0
+    return min(requested, _CACHE_MAX_SIZE)
+
+
+def _purge_expired_locked(now: float) -> None:
+    """Remove expired entries; caller must hold ``_CACHE_LOCK``."""
+    # Iterating over a snapshot keeps this safe when an expired entry is
+    # removed while walking the OrderedDict.  Cache sizes are deliberately
+    # bounded, so a full sweep is cheap and guarantees stale values do not
+    # accumulate when their keys are never requested again.
+    for key, entry in list(_CACHE.items()):
+        if entry[0] <= now:
+            _CACHE.pop(key, None)
+
+
+def _cache_get(key: str, now: float) -> tuple[bool, Any]:
+    """Get a fresh value and promote it to the MRU end."""
+    with _CACHE_LOCK:
+        _purge_expired_locked(now)
+        entry = _CACHE.get(key)
+        if entry is None:
+            return False, None
+        # A defensive check handles malformed entries left by old versions or
+        # by user code that directly touched the compatibility global.
+        try:
+            expires_at, value = entry
+            if expires_at <= now:
+                _CACHE.pop(key, None)
+                return False, None
+        except (TypeError, ValueError):
+            _CACHE.pop(key, None)
+            return False, None
+        _CACHE.move_to_end(key)
+        return True, value
+
+
+def _cache_claim(key: str, now: float) -> tuple[bool, Any, threading.Event | None, bool]:
+    """Return ``(hit, value, event, is_owner)`` for a sync cache lookup.
+
+    ``event`` is the Event belonging to the in-flight owner.  ``is_owner`` is
+    true only for the caller which created that Event; other callers should
+    wait and retry the lookup.
+    """
+    with _CACHE_LOCK:
+        _purge_expired_locked(now)
+        entry = _CACHE.get(key)
+        if entry is not None:
+            try:
+                expires_at, value = entry
+                if expires_at > now:
+                    _CACHE.move_to_end(key)
+                    return True, value, None, False
+            except (TypeError, ValueError):
+                pass
+            _CACHE.pop(key, None)
+
+        current_owner = _CACHE_INFLIGHT.get(key)
+        if current_owner is not None:
+            event, owner_ident = current_owner
+            # Recursive calls from the owner itself must not wait forever.
+            if owner_ident == threading.get_ident():
+                return False, None, None, False
+            return False, None, event, False
+
+        event = threading.Event()
+        _CACHE_INFLIGHT[key] = (event, threading.get_ident())
+        return False, None, event, True
+
+
+def _cache_store_and_release(key: str, event: threading.Event, value: Any,
+                             expires_at: float, max_size: int) -> None:
+    """Store a successful result and wake same-key waiters."""
+    with _CACHE_LOCK:
+        if max_size > 0:
+            _purge_expired_locked(time.monotonic())
+            _CACHE[key] = (expires_at, value)
+            _CACHE.move_to_end(key)
+            # Respect both the annotation limit and the process ceiling.  The
+            # lower limit wins for the call which populated this key.
+            limit = min(max_size, _CACHE_MAX_SIZE)
+            while len(_CACHE) > limit:
+                _CACHE.popitem(last=False)
+        owner = _CACHE_INFLIGHT.get(key)
+        if owner is not None and owner[0] is event:
+            _CACHE_INFLIGHT.pop(key, None)
+            event.set()
+
+
+def _cache_release_on_error(key: str, event: threading.Event) -> None:
+    """Wake waiters when the owner request fails without caching an error."""
+    with _CACHE_LOCK:
+        owner = _CACHE_INFLIGHT.get(key)
+        if owner is not None and owner[0] is event:
+            _CACHE_INFLIGHT.pop(key, None)
+            event.set()
+
+
+def _cache_claim_async(key: str, now: float, loop: asyncio.AbstractEventLoop,
+                      task_ident: int) -> tuple[bool, Any, asyncio.Future | None, bool]:
+    """Async equivalent of :func:`_cache_claim`, scoped to one event loop."""
+    with _CACHE_LOCK:
+        _purge_expired_locked(now)
+        entry = _CACHE.get(key)
+        if entry is not None:
+            try:
+                expires_at, value = entry
+                if expires_at > now:
+                    _CACHE.move_to_end(key)
+                    return True, value, None, False
+            except (TypeError, ValueError):
+                pass
+            _CACHE.pop(key, None)
+
+        inflight_key = (key, id(loop))
+        current_owner = _ASYNC_CACHE_INFLIGHT.get(inflight_key)
+        if current_owner is not None:
+            future, owner_ident = current_owner
+            # As with sync calls, bypass coalescing for accidental recursion
+            # by the owner task rather than deadlocking it.
+            if owner_ident == task_ident:
+                return False, None, None, False
+            return False, None, future, False
+
+        future = loop.create_future()
+        _ASYNC_CACHE_INFLIGHT[inflight_key] = (future, task_ident)
+        return False, None, future, True
+
+
+def _cache_finish_async(key: str, future: asyncio.Future,
+                        loop: asyncio.AbstractEventLoop, value: Any = None,
+                        error: BaseException | None = None,
+                        expires_at: float | None = None,
+                        max_size: int = 0) -> None:
+    """Publish an async result (or failure) and wake all same-key waiters."""
+    with _CACHE_LOCK:
+        if error is None and max_size > 0 and expires_at is not None:
+            _purge_expired_locked(time.monotonic())
+            _CACHE[key] = (expires_at, value)
+            _CACHE.move_to_end(key)
+            limit = min(max_size, _CACHE_MAX_SIZE)
+            while len(_CACHE) > limit:
+                _CACHE.popitem(last=False)
+        inflight_key = (key, id(loop))
+        current = _ASYNC_CACHE_INFLIGHT.get(inflight_key)
+        if current is not None and current[0] is future:
+            _ASYNC_CACHE_INFLIGHT.pop(inflight_key, None)
+            # Store a tuple instead of setting an exception on an unobserved
+            # Future; owners with no waiters then do not emit "Future exception
+            # was never retrieved" warnings.  Waiters re-raise the same error.
+            if not future.done():
+                future.set_result((error is None, value if error is None else error))
+
+
+def _make_cache_key(method: Callable, annotation: AiCache,
+                    values: dict[str, Any]) -> str:
+    """Build a deterministic cache key shared by sync and async wrappers."""
+    if annotation.key:
+        try:
+            key_data = annotation.key.format(**values)
+        except KeyError as exc:
+            raise ValueError(f"@AiCache key 缺少参数: {exc.args[0]}") from exc
+    else:
+        key_data = json.dumps(_stable(values), ensure_ascii=False, sort_keys=True)
+    return f"{method.__module__}.{method.__qualname__}:{key_data}"
+
+
+def _cached_sync_call(key: str, annotation: AiCache, call: Callable[[], Any]) -> Any:
+    """Execute a sync call with bounded TTL/LRU storage and request coalescing."""
+    ttl = float(getattr(annotation, "ttl", 0.0) or 0.0)
+    max_size = _cache_max_size(annotation)
+    # TTL/max_size <= 0 is an explicit cache-off switch.  In particular, it
+    # must never create a permanent entry as the legacy implementation did.
+    if ttl <= 0 or max_size <= 0:
+        return call()
+
+    while True:
+        now = time.monotonic()
+        hit, value, owner_event, is_owner = _cache_claim(key, now)
+        if hit:
+            return value
+        if is_owner:
+            event = owner_event
+            assert event is not None
+            try:
+                result = call()
+            except BaseException:
+                _cache_release_on_error(key, event)
+                raise
+            _cache_store_and_release(
+                key, event, result, time.monotonic() + ttl, max_size,
+            )
+            return result
+        if owner_event is None:
+            # Recursive invocation by the owner itself; bypass coalescing to
+            # avoid deadlock rather than waiting on our own Event.
+            return call()
+        # Another thread owns this key.  Waiting outside the lock allows it to
+        # publish the result; retry handles both success and owner failures.
+        owner_event.wait()
+
+
+async def _cached_async_call(key: str, annotation: AiCache,
+                             call: Callable[[], Any]) -> Any:
+    """Async counterpart with loop-local Future request coalescing."""
+    ttl = float(getattr(annotation, "ttl", 0.0) or 0.0)
+    max_size = _cache_max_size(annotation)
+    if ttl <= 0 or max_size <= 0:
+        return await call()
+
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    task_ident = id(task)
+    while True:
+        now = time.monotonic()
+        hit, value, owner_future, is_owner = _cache_claim_async(
+            key, now, loop, task_ident)
+        if hit:
+            return value
+        if is_owner:
+            future = owner_future
+            assert future is not None
+            try:
+                result = await call()
+            except BaseException as exc:
+                _cache_finish_async(key, future, loop, error=exc)
+                raise
+            _cache_finish_async(
+                key, future, loop, value=result,
+                expires_at=time.monotonic() + ttl, max_size=max_size,
+            )
+            return result
+        if owner_future is None:
+            # Recursive invocation by this task; do not await our own Future.
+            return await call()
+
+        # A waiter may be cancelled without cancelling the owner Future.
+        # shield() keeps other callers from losing the in-flight computation.
+        ok, payload = await asyncio.shield(owner_future)
+        if ok:
+            return payload
+        # The failed owner has already released its slot; retrying permits one
+        # waiter to become the next owner and gives transient errors a chance
+        # to recover, while the original failure is not cached.
 
 
 def _stable(value: Any) -> Any:
@@ -310,24 +591,8 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
                 retry_exceptions=retry_ann.exceptions,
             )
         if cache_ann:
-            if cache_ann.key:
-                try:
-                    key_data = cache_ann.key.format(**values)
-                except KeyError as exc:
-                    raise ValueError(f"@AiCache key 缺少参数: {exc.args[0]}") from exc
-            else:
-                key_data = json.dumps(_stable(values), ensure_ascii=False, sort_keys=True)
-            key = f"{method.__module__}.{method.__qualname__}:{key_data}"
-            now = time.time()
-            with _CACHE_LOCK:
-                hit = _CACHE.get(key)
-                if hit and (cache_ann.ttl <= 0 or hit[0] > now):
-                    return hit[1]
-                _CACHE.pop(key, None)
-            result = call()
-            with _CACHE_LOCK:
-                _CACHE[key] = (now + cache_ann.ttl, result)
-            return result
+            key = _make_cache_key(method, cache_ann, values)
+            return _cached_sync_call(key, cache_ann, call)
         return call()
 
     if inspect.iscoroutinefunction(method):
@@ -349,24 +614,8 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
                     raise last
                 return await execute_async(*args, **kwargs)
             if cache_ann:
-                if cache_ann.key:
-                    try:
-                        key_data = cache_ann.key.format(**values)
-                    except KeyError as exc:
-                        raise ValueError(f"@AiCache key 缺少参数: {exc.args[0]}") from exc
-                else:
-                    key_data = json.dumps(_stable(values), ensure_ascii=False, sort_keys=True)
-                key = f"{method.__module__}.{method.__qualname__}:{key_data}"
-                now = time.time()
-                with _CACHE_LOCK:
-                    hit = _CACHE.get(key)
-                    if hit and (cache_ann.ttl <= 0 or hit[0] > now):
-                        return hit[1]
-                    _CACHE.pop(key, None)
-                result = await call_async()
-                with _CACHE_LOCK:
-                    _CACHE[key] = (now + cache_ann.ttl, result)
-                return result
+                key = _make_cache_key(method, cache_ann, values)
+                return await _cached_async_call(key, cache_ann, call_async)
             return await call_async()
         return async_wrapped
 

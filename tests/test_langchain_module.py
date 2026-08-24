@@ -249,6 +249,20 @@ class TestAutoConfig:
         )
         assert beans == {}
 
+    def test_configure_langchain_disabled_package_aligned_prefix(self, spring_chat):
+        """package-aligned ``springbootai.langchain.enabled=false`` 也生效。"""
+        class _FullConfig:
+            def get_config(self):
+                return {"springbootai": {"langchain": {"enabled": False}}}
+
+            def get_prefix_config(self, prefix):
+                return {}
+
+        beans = configure_langchain(
+            registry=BeanRegistry(), config=_FullConfig(), chat_model=spring_chat,
+        )
+        assert beans == {}
+
     def test_configure_langchain_auto_reuses_spring_model(self, spring_chat, spring_emb):
         """default-llm=auto 时复用传入的 springbootAI ChatModel 做桥接。"""
         registry = BeanRegistry()

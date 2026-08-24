@@ -179,6 +179,97 @@ def bind_langchain_config(lc_config: Dict[str, Any]) -> LangChainProperties:
     return props
 
 
+# ``application.yml`` produced by early SpringBootAI scaffolds used
+# ``spring.langchain`` while the framework documentation recommends the
+# package-aligned ``springbootai.langchain`` prefix.  Keep both aliases (and a
+# short ``langchain`` root) compatible.  Most importantly, do not silently
+# fall back to ``enabled=True`` when a caller explicitly sets one alias to
+# ``false``.  That was the reason disabled applications still received all
+# fourteen LangChain beans.
+_LANGCHAIN_CONFIG_PATHS = (
+    ("springbootai", "langchain"),
+    ("spring", "langchain"),
+    ("langchain",),
+)
+_LANGCHAIN_DIRECT_KEYS = {
+    "enabled", "default-llm", "default_llm", "chains", "agents",
+    "vector-store", "vector_store", "retriever", "memory", "partners",
+}
+
+
+def _lookup_mapping_key(mapping: Dict[str, Any], key: str) -> tuple[Any, bool]:
+    """Look up a config key with exact and kebab/snake-case matching."""
+    if key in mapping:
+        return mapping[key], True
+    normalized = key.replace("-", "").replace("_", "").lower()
+    for candidate, value in mapping.items():
+        if str(candidate).replace("-", "").replace("_", "").lower() == normalized:
+            return value, True
+    return None, False
+
+
+def _lookup_mapping_path(mapping: Any, path: tuple[str, ...]) -> tuple[Dict[str, Any] | None, bool]:
+    """Safely traverse a possibly malformed config mapping."""
+    node = mapping
+    for part in path:
+        if not isinstance(node, dict):
+            return None, False
+        node, found = _lookup_mapping_key(node, part)
+        if not found:
+            return None, False
+    return (node if isinstance(node, dict) else {}), True
+
+
+def _extract_langchain_candidate(candidate: Any) -> tuple[Dict[str, Any] | None, bool]:
+    """Extract a LangChain subtree from a full config or direct test stub."""
+    if not isinstance(candidate, dict):
+        return None, False
+    for path in _LANGCHAIN_CONFIG_PATHS:
+        value, found = _lookup_mapping_path(candidate, path)
+        if found:
+            return value or {}, True
+    # ``ConfigLoader.get_prefix_config`` normally returns the direct subtree;
+    # test/config-provider adapters may do the same without a root wrapper.
+    normalized_keys = {
+        str(key).replace("_", "-").lower() for key in candidate
+    }
+    if normalized_keys.intersection(_LANGCHAIN_DIRECT_KEYS):
+        return candidate, True
+    return None, False
+
+
+def _read_langchain_config(config: Any) -> Dict[str, Any]:
+    """Read LangChain config from YAML, env-backed loader, or a provider.
+
+    ``get_config`` is preferred because it distinguishes a missing subtree
+    from an explicitly empty one.  The prefix fallback keeps lightweight
+    config-provider implementations (and existing integrations) working.
+    Every provider failure is isolated so optional config support cannot break
+    application startup.
+    """
+    try:
+        full_config = config.get_config()
+    except Exception:
+        full_config = None
+    extracted, found = _extract_langchain_candidate(full_config)
+    if found:
+        return extracted or {}
+
+    try:
+        prefixes = ("springbootai.langchain", "spring.langchain", "langchain")
+        for prefix in prefixes:
+            try:
+                candidate = config.get_prefix_config(prefix)
+            except Exception:
+                continue
+            extracted, found = _extract_langchain_candidate(candidate)
+            if found:
+                return extracted or {}
+    except Exception as exc:
+        logger.debug("读取 LangChain 配置失败，使用默认值: %s", exc)
+    return {}
+
+
 # ==================== Bean 构建 ====================
 
 def _build_langchain_model(props: LangChainProperties,
@@ -274,7 +365,7 @@ def configure_langchain(registry: Optional[BeanRegistry] = None,
     if config is None:
         config = config_loader
 
-    lc_config = config.get_prefix_config("springbootai.langchain") or {}
+    lc_config = _read_langchain_config(config)
     props = bind_langchain_config(lc_config)
 
     if not props.enabled:

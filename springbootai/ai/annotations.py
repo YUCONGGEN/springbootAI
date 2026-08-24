@@ -155,11 +155,28 @@ class AiRetry(SpringAnnotation):
 
 
 class AiCache(SpringAnnotation):
-    """AI 结果缓存；默认内存缓存，TTL 到期自动淘汰。"""
+    """AI 结果缓存。
+
+    ``ttl`` 小于等于 0 时表示禁用缓存（方法仍然会正常执行），避免把
+    一个看似临时的缓存错误地变成永久的全局内存引用。默认缓存最多保留
+    ``max_size`` 条目，运行时使用线程安全的 LRU 淘汰策略。这里的缓存是
+    进程内缓存，跨进程/多副本场景应改用 Redis 等共享缓存。
+    """
     _annotation_type = "ai"
 
-    def __init__(self, ttl: float = 300.0, key: str = ""):
-        super().__init__(ttl=max(0.0, float(ttl)), key=key)
+    def __init__(self, ttl: float = 300.0, key: str = "", max_size: int = 1024):
+        # 不在这里把 ttl<=0 改成一个正数；运行时需要据此明确跳过缓存。
+        # max_size<=0 同样表示禁用该方法的缓存，便于配置驱动地关闭。
+        try:
+            normalized_ttl = float(ttl)
+        except (TypeError, ValueError):
+            normalized_ttl = 0.0
+        try:
+            normalized_max_size = int(max_size)
+        except (TypeError, ValueError):
+            normalized_max_size = 0
+        super().__init__(ttl=max(0.0, normalized_ttl), key=key,
+                         max_size=normalized_max_size)
 
 
 class TokenUsage(SpringAnnotation):
