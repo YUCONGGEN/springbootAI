@@ -24,9 +24,6 @@ on:
 permissions:
   contents: read
 
-env:
-  AI_ALLOW_FAKE: "true"
-
 jobs:
   build-and-publish:
     name: Build and publish to PyPI
