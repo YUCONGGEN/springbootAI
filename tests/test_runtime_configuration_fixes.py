@@ -57,3 +57,25 @@ def test_request_metrics_runtime_config_accepts_alias_and_string_boolean():
     resolved = resolve_request_metrics_config(config)
     assert resolved["enabled"] is True
     assert resolved["include_paths"] == ["/api/**"]
+
+
+def test_reload_clears_in_progress_flag_when_success_hook_fails(monkeypatch, tmp_path):
+    """刷新完成后的日志/清理钩子异常不能让 loader 永久卡在刷新状态。"""
+    config_file = tmp_path / "application.yml"
+    config_file.write_text("server:\n  port: 8080\n", encoding="utf-8")
+    loader = ConfigLoader(config_path=str(config_file), log_events=False)
+    original_log = loader._log
+
+    def fail_success_log(level, message, *args):
+        if message == "Config reloaded":
+            raise RuntimeError("logging hook failed")
+        return original_log(level, message, *args)
+
+    monkeypatch.setattr(loader, "_log", fail_success_log)
+    try:
+        loader.reload()
+    except RuntimeError as exc:
+        assert str(exc) == "logging hook failed"
+    else:
+        raise AssertionError("reload should surface a failing success hook")
+    assert loader._reload_in_progress is False

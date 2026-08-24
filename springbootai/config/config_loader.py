@@ -1343,25 +1343,29 @@ class ConfigLoader:
                     logger.debug("配置监控记录失败", exc_info=True)
                 self._reload_in_progress = False
                 raise
-            duration_ms = (time.perf_counter() - started) * 1000
             try:
-                self._config_monitor.record_refresh(
-                    previous=previous, current=current,
-                    source="+".join(dict.fromkeys(self._config_sources)) or "reload",
-                    success=True, duration_ms=duration_ms,
-                )
-            except Exception:
-                logger.debug("配置监控记录失败", exc_info=True)
-            self._log("info", "Config reloaded")
-            if previous_client is not None and self._nacos_config_client is None:
+                duration_ms = (time.perf_counter() - started) * 1000
                 try:
-                    previous_client.close()
+                    self._config_monitor.record_refresh(
+                        previous=previous, current=current,
+                        source="+".join(dict.fromkeys(self._config_sources)) or "reload",
+                        success=True, duration_ms=duration_ms,
+                    )
                 except Exception:
-                    # 释放旧 Nacos 客户端属于清理动作，不能把已经成功提交的
-                    # 新配置变成一次失败刷新；客户端自身仍会在下一次重载时
-                    # 被替换，记录日志供运维排查。
-                    logger.warning("关闭旧 Nacos 配置客户端失败", exc_info=True)
-            self._reload_in_progress = False
+                    logger.debug("配置监控记录失败", exc_info=True)
+                self._log("info", "Config reloaded")
+                if previous_client is not None and self._nacos_config_client is None:
+                    try:
+                        previous_client.close()
+                    except Exception:
+                        # 释放旧 Nacos 客户端属于清理动作，不能把已经成功提交的
+                        # 新配置变成一次失败刷新；客户端自身仍会在下一次重载时
+                        # 被替换，记录日志供运维排查。
+                        logger.warning("关闭旧 Nacos 配置客户端失败", exc_info=True)
+            finally:
+                # 无论成功后的日志/清理钩子是否抛出异常，都必须恢复状态，
+                # 否则后续启动期加载会永久误判为刷新期并改变 Nacos 失败语义。
+                self._reload_in_progress = False
 
 
 # 创建全局配置加载器实例
