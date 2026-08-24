@@ -33,8 +33,12 @@ from springbootai.annotations import (
     Conditional,
     ConditionalOnBean,
     ConditionalOnClass,
+    ConditionalOnExpression,
+    ConditionalOnMissingClass,
     ConditionalOnMissingBean,
+    ConditionalOnNotWebApplication,
     ConditionalOnProperty,
+    ConditionalOnWebApplication,
     EnableBatchProcessing,
     EnableBus,
     EnableConfigServer,
@@ -64,6 +68,7 @@ from springbootai.annotations import (
     PathVariable,
     Pointcut,
     PostAuthorize,
+    Order,
     Qualifier,
     RabbitTemplate,
     Recover,
@@ -91,12 +96,14 @@ from springbootai.annotations import (
 # ``@AsyncResult`` 会造成误导。
 SHOWCASED_ANNOTATIONS = frozenset(
     {
-        "ComponentScan", "Aspect", "Pointcut", "Before", "After", "Around",
+        "ComponentScan", "Aspect", "Order", "Pointcut", "Before", "After", "Around",
         "AfterReturning", "AfterThrowing", "Qualifier", "Scope", "Recover",
         "PostAuthorize", "EnableFeignClients", "FeignClient", "EnableGateway",
         "Valid", "Validated", "CachePut", "CacheEvict", "CacheConfig", "Caching",
         "Conditional", "ConditionalOnProperty", "ConditionalOnBean",
-        "ConditionalOnMissingBean", "ConditionalOnClass", "KafkaListener", "MCPCall",
+        "ConditionalOnMissingBean", "ConditionalOnClass", "ConditionalOnMissingClass",
+        "ConditionalOnWebApplication", "ConditionalOnNotWebApplication",
+        "ConditionalOnExpression", "KafkaListener", "MCPCall",
         "MCPClient", "MCPPrompt", "MCPResource", "MCPServer", "MCPTool",
         "LangChainCall", "LangChainClient", "GraphEdge", "GraphInvoke", "GraphNode",
         "GraphRoute", "LangGraph", "EnableOAuth2", "EnableCsrf", "EnableDevTools",
@@ -131,6 +138,7 @@ def build_annotation_showcase() -> dict[str, type]:
         pass
 
     @Aspect("annotationShowcaseAspect")
+    @Order(10)
     class AnnotationShowcaseAspect:
         @Pointcut("execution(* example_all.service.*.*(..))")
         def service_operations(self) -> None:
@@ -213,6 +221,24 @@ def build_annotation_showcase() -> dict[str, type]:
 
     @ConditionalOnClass(name="json.JSONEncoder")
     class ClasspathConditionExample:
+        pass
+
+    # 以下四个条件在独立的类上展示，避免把条件叠加到上面的示例而导致
+    # example_all 启动时受当前运行环境影响。每个类都可直接交给容器评估。
+    @ConditionalOnMissingClass(name="example_all.optional.MissingDependency")
+    class MissingClasspathConditionExample:
+        pass
+
+    @ConditionalOnWebApplication()
+    class WebApplicationConditionExample:
+        pass
+
+    @ConditionalOnNotWebApplication()
+    class NonWebApplicationConditionExample:
+        pass
+
+    @ConditionalOnExpression("true")
+    class ExpressionConditionExample:
         pass
 
     # Cloud、批处理、REST 和安全开关通常放在专用应用根类中。这里仅做声明，
