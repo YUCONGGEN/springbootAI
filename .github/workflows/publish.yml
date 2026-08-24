@@ -13,7 +13,9 @@ name: Publish
 #     workflow filename = publish.yml, environment 留空
 #   参见 https://docs.pypi.org/trusted-publishers/
 #
-# 版本：pyproject.toml 是单一来源，Release tag 必须严格等于 v<version>。
+# 版本：pyproject.toml 是单一来源。GitHub Release 必须使用严格匹配
+# v<version> 的 tag；手动触发时允许从当前分支发布，便于修复发布工作流
+# 后重新执行尚未上传的版本。
 # ====================================================================
 
 on:
@@ -54,12 +56,19 @@ jobs:
             echo "::error::Version not found in pyproject.toml"
             exit 1
           fi
-          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
-            echo "::error::PyPI publishing must run from a git tag, not a branch"
-            exit 1
-          fi
-          if [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
-            echo "::error::Git tag must equal v$VERSION (current ref: ${GITHUB_REF_NAME})"
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+              echo "::error::Release publishing must run from a git tag"
+              exit 1
+            fi
+            if [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
+              echo "::error::Git tag must equal v$VERSION (current ref: ${GITHUB_REF_NAME})"
+              exit 1
+            fi
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "Manual PyPI publish from ref: ${GITHUB_REF_NAME}"
+          else
+            echo "::error::Unsupported publish event: ${GITHUB_EVENT_NAME}"
             exit 1
           fi
 
