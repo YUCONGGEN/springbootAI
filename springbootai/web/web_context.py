@@ -98,7 +98,12 @@ class WebApplicationContext:
         self._interceptors_registered = False
         # ApplicationContext.refresh_configuration() uses this back-reference
         # to refresh framework-owned Web configuration after Nacos changes.
-        setattr(application_context, "web_context", self)
+        # 测试/嵌入式调用可能传入不可变的占位对象；反向引用只是运行期优化，
+        # 设置失败不能阻止 Web 上下文创建。
+        try:
+            setattr(application_context, "web_context", self)
+        except (AttributeError, TypeError):
+            self._logger.debug("Application context does not allow web_context back-reference")
         thread_pool = self._get_thread_pool_config()
         self._sync_max_workers = max(1, self._safe_int(thread_pool.get('max_workers', 40)))
         self._sync_max_queue = max(0, self._safe_int(thread_pool.get('max_queue', 100)))

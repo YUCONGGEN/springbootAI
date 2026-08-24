@@ -40,6 +40,12 @@ def _as_positive_int(value: Any, default: int) -> int:
     return number if number > 0 else default
 
 
+def _as_bounded_positive_int(value: Any, default: int, maximum: int) -> int:
+    """解析正整数并限制上界，防止错误配置造成超长阻塞或休眠。"""
+    number = _as_positive_int(value, default)
+    return min(number, maximum)
+
+
 @dataclass(frozen=True)
 class NacosConfigProperties:
     """Nacos Config 的最小引导信息。"""
@@ -99,12 +105,17 @@ class NacosConfigProperties:
             namespace=str(value("NACOS_CONFIG_NAMESPACE", "namespace", default="")).strip(),
             username=str(value("NACOS_CONFIG_USERNAME", "username", default="")).strip(),
             password=str(value("NACOS_CONFIG_PASSWORD", "password", default="")),
-            timeout_ms=_as_positive_int(value("NACOS_CONFIG_TIMEOUT_MS", "timeout-ms", "timeout_ms", default=5000), 5000),
+            # SDK 请求超时最多 120 秒；监听周期最多 1 小时。超过上限时
+            # 自动收敛到安全上限，避免误填大整数让启动/关闭看似“卡死”。
+            timeout_ms=_as_bounded_positive_int(
+                value("NACOS_CONFIG_TIMEOUT_MS", "timeout-ms", "timeout_ms", default=5000),
+                5000, 120_000,
+            ),
             fail_fast=_as_bool(value("NACOS_CONFIG_FAIL_FAST", "fail-fast", "fail_fast", default=False)),
             refresh_enabled=_as_bool(value("NACOS_CONFIG_REFRESH_ENABLED", "refresh-enabled", "refresh_enabled", default=True), True),
-            refresh_interval_seconds=_as_positive_int(
+            refresh_interval_seconds=_as_bounded_positive_int(
                 value("NACOS_CONFIG_REFRESH_INTERVAL_SECONDS", "refresh-interval-seconds", "refresh_interval_seconds", default=5),
-                5,
+                5, 3600,
             ),
         )
 
@@ -123,15 +134,26 @@ class NacosConfigClient:
         self._stop_event = threading.Event()
         self._change_callback: Optional[Callable[[], None]] = None
         self._last_content: Optional[str] = None
+        # 监听、reload 与 close 可能并发访问 SDK 客户端和版本字段。
+        self._state_lock = threading.RLock()
+        self._content_lock = threading.RLock()
+        # stop_event 会在新线程启动时清空，generation 防止旧线程复活。
+        self._listener_generation = 0
+        self._listener_failures = 0
 
     def configure(self, properties: NacosConfigProperties) -> None:
-        """更新引导参数；地址、Data ID 等变更时重建 SDK 客户端。"""
-        if properties != self.properties:
-            self.close()
+        """更新引导参数；地址、Data ID 等变更时安全重建 SDK 客户端。"""
+        with self._state_lock:
+            if properties == self.properties:
+                return
+        self.close()
+        with self._state_lock:
             self.properties = properties
             self._client = None
             self._clients.clear()
-            self._last_content = None
+            with self._content_lock:
+                self._last_content = None
+            self._listener_failures = 0
 
     def _new_client(self, authenticated: bool = False):
         try:
@@ -149,38 +171,39 @@ class NacosConfigClient:
     def _get_content(self) -> Optional[str]:
         """优先无认证读取，认证服务拒绝后再带账号密码重试。"""
         errors = []
-        # 先复用上一次成功的客户端；没有成功记录时先尝试匿名，再按需
-        # 尝试账号密码。客户端对象只在首次使用时创建，后续刷新直接复用。
-        clients = []
-        if self._client is not None:
-            clients.append(self._client)
-        else:
-            anonymous = self._clients.get(False)
-            if anonymous is None:
-                anonymous = self._new_client(False)
-                self._clients[False] = anonymous
-            clients.append(anonymous)
-        if self.properties.username and self.properties.password:
-            authenticated = self._clients.get(True)
-            if authenticated is None:
-                authenticated = self._new_client(True)
-                self._clients[True] = authenticated
-            if authenticated not in clients:
-                clients.append(authenticated)
-        for client in clients:
-            try:
-                content = client.get_config(
-                    self.properties.data_id,
-                    self.properties.group,
-                    timeout=self.properties.timeout_ms / 1000,
-                )
-                self._client = client
-                return content
-            except Exception as exc:
-                errors.append(exc)
+        # 创建/复用客户端与 properties 读取串行，避免 close 清空正在使用的 SDK。
+        with self._state_lock:
+            properties = self.properties
+            clients = []
+            if self._client is not None:
+                clients.append(self._client)
+            else:
+                anonymous = self._clients.get(False)
+                if anonymous is None:
+                    anonymous = self._new_client(False)
+                    self._clients[False] = anonymous
+                clients.append(anonymous)
+            if properties.username and properties.password:
+                authenticated = self._clients.get(True)
+                if authenticated is None:
+                    authenticated = self._new_client(True)
+                    self._clients[True] = authenticated
+                if authenticated not in clients:
+                    clients.append(authenticated)
+            for client in clients:
+                try:
+                    content = client.get_config(
+                        properties.data_id, properties.group,
+                        timeout=properties.timeout_ms / 1000,
+                    )
+                    self._client = client
+                    return content
+                except Exception as exc:
+                    errors.append(exc)
+        detail = errors[-1] if errors else "unknown error"
         raise NacosConfigError(
-            f"无法读取 Nacos 配置 dataId={self.properties.data_id!r}, "
-            f"group={self.properties.group!r}, server={self.properties.server_addr!r}: {errors[-1]}"
+            f"无法读取 Nacos 配置 dataId={properties.data_id!r}, "
+            f"group={properties.group!r}, server={properties.server_addr!r}: {detail}"
         )
 
     def fetch(self) -> Dict[str, Any]:
@@ -198,74 +221,121 @@ class NacosConfigClient:
             ) from exc
         if not isinstance(parsed, dict):
             raise NacosConfigError("Nacos YAML 根节点必须是对象")
-        self._last_content = str(content)
+        with self._content_lock:
+            self._last_content = str(content)
         return parsed
 
     def start_listener(self, on_change: Callable[[], None]) -> None:
-        """监听 Nacos 变更，内容合法时通知 ConfigLoader 重新加载并刷新 Bean。
+        """启动一个可控轮询监听器；重复调用不会创建多个线程。"""
+        with self._state_lock:
+            if not self.properties.refresh_enabled or self._client is None:
+                return
+            if self._listener_thread is not None and self._listener_thread.is_alive():
+                return
+            self._listener_generation += 1
+            generation = self._listener_generation
+            self._change_callback = on_change
+            self._stop_event.clear()
+            interval = max(1, self.properties.refresh_interval_seconds)
 
-        ``nacos-sdk-python`` 的 watcher 在 Windows 上会启动无法可靠关闭的子进程。
-        框架因此使用受控后台轮询：启动/关闭可预测，兼容 Windows、Docker 与 SDK
-        不同版本，同时仍能自动发现 Nacos 配置变化。
-        """
-        if not self.properties.refresh_enabled or self._client is None or self._listener_thread:
-            return
-        self._change_callback = on_change
-        self._stop_event.clear()
+        def is_current() -> bool:
+            with self._state_lock:
+                return generation == self._listener_generation and not self._stop_event.is_set()
 
         def poll() -> None:
-            interval = self.properties.refresh_interval_seconds
-            while not self._stop_event.wait(interval):
-                try:
-                    content = self._get_content()
-                    if content is None or str(content) == self._last_content:
-                        continue
-                    parsed = yaml.safe_load(content) or {}
-                    if not isinstance(parsed, dict):
-                        raise NacosConfigError("Nacos YAML 根节点必须是对象")
-                    logger.info("Nacos config changed: dataId=%s", self.properties.data_id)
-                    previous_content = self._last_content
+            wait_seconds = interval
+            try:
+                while is_current():
+                    if self._stop_event.wait(wait_seconds) or not is_current():
+                        break
+                    callback_failed = False
                     try:
-                        on_change()
-                    except Exception:
-                        # 回调通常会重新执行 ConfigLoader.reload()，其中一次 fetch
-                        # 可能已经写入版本字段。失败时恢复旧版本，确保下一轮仍会重试。
-                        self._last_content = previous_content
-                        raise
-                    # 只有回调完整成功后才提交版本标记。回调失败时保留旧值，
-                    # 下一轮会重试同一份远程配置，避免一次临时错误永久跳过更新。
-                    self._last_content = str(content)
-                except Exception as exc:
-                    # 暂时网络抖动或一次错误更新不应终止后续监听。
-                    logger.error("Ignoring Nacos config refresh failure: %s", exc)
+                        content = self._get_content()
+                        with self._content_lock:
+                            previous_content = self._last_content
+                        if content is None or str(content) == previous_content:
+                            self._listener_failures = 0
+                            continue
+                        parsed = yaml.safe_load(content) or {}
+                        if not isinstance(parsed, dict):
+                            raise NacosConfigError("Nacos YAML 根节点必须是对象")
+                        logger.info("Nacos config changed: dataId=%s", self.properties.data_id)
+                        if not is_current():
+                            break
+                        try:
+                            callback_failed = True
+                            on_change()
+                        except Exception:
+                            with self._content_lock:
+                                self._last_content = previous_content
+                            raise
+                        with self._content_lock:
+                            self._last_content = str(content)
+                        self._listener_failures = 0
+                        wait_seconds = interval
+                    except Exception as exc:
+                        if callback_failed:
+                            # Bean/Web 刷新失败通常是瞬态依赖问题；保持基础周期，
+                            # 让下一轮尽快重试，且保留旧版本标记。
+                            self._listener_failures = 0
+                            wait_seconds = interval
+                        else:
+                            # Nacos 网络/解析故障采用有限指数退避，避免在服务
+                            # 不可用时刷满日志；上限仍会定期探测恢复。
+                            self._listener_failures = min(self._listener_failures + 1, 6)
+                            wait_seconds = min(
+                                interval * (2 ** self._listener_failures),
+                                interval * 32,
+                            )
+                        if self._listener_failures in {1, 2, 4, 6} or callback_failed:
+                            logger.error("Ignoring Nacos config refresh failure: %s", exc)
+                        else:
+                            logger.debug("Ignoring Nacos config refresh failure: %s", exc)
+            finally:
+                with self._state_lock:
+                    if self._listener_generation == generation:
+                        self._listener_thread = None
 
-        self._listener_thread = threading.Thread(
-            target=poll,
-            name=f"nacos-config-{self.properties.data_id}",
-            daemon=True,
+        thread = threading.Thread(
+            target=poll, name=f"nacos-config-{self.properties.data_id}", daemon=True,
         )
-        self._listener_thread.start()
+        with self._state_lock:
+            self._listener_thread = thread
+        thread.start()
         logger.info(
             "Nacos config refresh listener started: %s (interval=%ss)",
-            self.properties.data_id, self.properties.refresh_interval_seconds,
+            self.properties.data_id, interval,
         )
 
     def close(self) -> None:
-        self._stop_event.set()
-        thread = self._listener_thread
+        """停止监听并释放 SDK 客户端；可从监听回调线程安全调用。"""
+        with self._state_lock:
+            self._listener_generation += 1
+            self._stop_event.set()
+            thread = self._listener_thread
+            self._listener_thread = None
+            self._change_callback = None
+            timeout = min(max(self.properties.timeout_ms / 1000 + 1, 1), 10)
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
-        self._listener_thread = None
-        self._change_callback = None
-        self._client = None
-        self._clients.clear()
+            thread.join(timeout=timeout)
+        with self._state_lock:
+            self._client = None
+            self._clients.clear()
 
 
 def bootstrap_nacos_config(
     local_config: Dict[str, Any],
     existing_client: Optional[NacosConfigClient] = None,
+    *,
+    raise_on_unavailable: bool = False,
 ) -> tuple[Optional[NacosConfigClient], Dict[str, Any]]:
-    """加载启动期远程配置；调用方根据 fail-fast 决定是否中止启动。"""
+    """加载启动期或刷新期远程配置。
+
+    启动阶段默认遵循 ``fail_fast``：可选的 Nacos 不可用时继续使用本地
+    配置。刷新阶段则应把瞬时读取失败交给监听器重试，因此调用方可以通过
+    ``raise_on_unavailable=True`` 强制向上抛出本次读取错误，而不会把一次
+    未完成的刷新误记录成成功。
+    """
     properties = NacosConfigProperties.from_sources(local_config)
     if not properties.enabled:
         return None, {}
@@ -275,7 +345,7 @@ def bootstrap_nacos_config(
     try:
         remote_config = client.fetch()
     except NacosConfigError:
-        if properties.fail_fast:
+        if properties.fail_fast or raise_on_unavailable:
             raise
         logger.warning("Nacos Config unavailable; continuing with local/framework defaults", exc_info=True)
         return client, {}

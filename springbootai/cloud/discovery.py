@@ -3,6 +3,7 @@
 集成 Nacos 作为注册中心
 """
 import logging
+import math
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -18,6 +19,12 @@ logger = logging.getLogger("Spring.Cloud.Discovery")
 
 class NacosDiscoveryClient:
     """Nacos服务注册发现客户端"""
+
+    # Nacos SDK 的 ``default_timeout`` 是每个 HTTP 请求的超时时间。
+    # 这里提供一个有限且较短的默认值，避免可选的 Nacos 服务不可用时
+    # 阻塞应用启动；用户仍可通过 discovery.timeout（或环境变量）调大。
+    DEFAULT_TIMEOUT_SECONDS = 3.0
+    MAX_TIMEOUT_SECONDS = 60.0
     
     _instance = None
     _lock = __import__('threading').Lock()
@@ -29,17 +36,21 @@ class NacosDiscoveryClient:
                     cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, server_addr: str = "localhost:8848", namespace: str = "", group: str = "DEFAULT_GROUP", username: str = "", password: str = ""):
+    def __init__(self, server_addr: str = "localhost:8848", namespace: str = "", group: str = "DEFAULT_GROUP", username: str = "", password: str = "", timeout: Optional[float] = None):
         if hasattr(self, '_initialized'):
             # 已初始化：委托给 configure() 做原地更新，保持单一更新路径
             self.configure(server_addr=server_addr, namespace=namespace,
-                           group=group, username=username, password=password)
+                           group=group, username=username, password=password,
+                           timeout=timeout)
             return
         self.server_addr = server_addr
         self.namespace = namespace
         self.group = group
         self.username = username
         self.password = password
+        self.timeout = self._normalize_timeout(
+            self.DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
+        )
         self._client: Optional[NacosClient] = None
         self._ready = False
         self._service_name: Optional[str] = None
@@ -49,7 +60,11 @@ class NacosDiscoveryClient:
 
     def configure(self, server_addr: Optional[str] = None, namespace: Optional[str] = None,
                   group: Optional[str] = None, username: Optional[str] = None,
-                  password: Optional[str] = None) -> None:
+                  password: Optional[str] = None,
+                  timeout: Optional[float] = None,
+                  timeout_seconds: Optional[float] = None,
+                  connect_timeout: Optional[float] = None,
+                  request_timeout: Optional[float] = None) -> None:
         """重新配置单例的 Nacos 连接参数（读取配置后调用）。
 
         ``NacosDiscoveryClient`` 为单例，``__init__`` 的 ``_initialized`` 守卫会
@@ -64,6 +79,10 @@ class NacosDiscoveryClient:
             group: 分组，None 表示保留原值
             username: 用户名，None 表示保留原值
             password: 密码，None 表示保留原值
+            timeout: Nacos HTTP 请求超时时间（秒），None 表示保留原值。
+                超时时间始终限制在 (0, 60] 秒，防止误配置导致启动无限等待。
+            timeout_seconds/connect_timeout/request_timeout: ``timeout`` 的
+                兼容别名；同时提供时按 ``timeout`` 优先。
         """
         changed = False
         if server_addr is not None and self.server_addr != server_addr:
@@ -81,9 +100,51 @@ class NacosDiscoveryClient:
         if password is not None and self.password != password:
             self.password = password
             changed = True
+        timeout = next(
+            (item for item in (timeout, timeout_seconds, connect_timeout, request_timeout)
+             if item is not None),
+            None,
+        )
+        if timeout is not None:
+            normalized_timeout = self._normalize_timeout(timeout)
+            if self.timeout != normalized_timeout:
+                self.timeout = normalized_timeout
+                changed = True
         if changed:
             self._client = None
             self._ready = False
+
+    @classmethod
+    def _normalize_timeout(cls, value: Any) -> float:
+        """将超时配置规范化为安全的有限值。
+
+        配置通常来自 YAML、环境变量或 Nacos，可能出现空字符串、字典或
+        ``NaN``。可选组件不应因这些输入让整个应用启动失败，因此统一回退
+        到默认值；极大值则截断到上限，确保网络调用不会无限期阻塞。
+        """
+        if isinstance(value, dict):
+            value = value.get("seconds", value.get("timeout", value.get("value")))
+        try:
+            timeout = float(value)
+        except (TypeError, ValueError):
+            timeout = cls.DEFAULT_TIMEOUT_SECONDS
+        if not math.isfinite(timeout) or timeout <= 0:
+            timeout = cls.DEFAULT_TIMEOUT_SECONDS
+        return min(timeout, cls.MAX_TIMEOUT_SECONDS)
+
+    def _apply_client_timeout(self, client: Any) -> None:
+        """把框架超时应用到 Nacos SDK 实例。
+
+        ``nacos-sdk-python`` 不同版本没有统一的构造器 timeout 参数，直接
+        传参会在旧版本抛 ``TypeError``。SDK 实例都暴露 ``default_timeout``，
+        因而在构造成功后赋值，兼容各版本并覆盖 SDK 默认值。
+        """
+        try:
+            client.default_timeout = self.timeout
+        except Exception:
+            # 第三方替身或未来 SDK 可能使用只读属性；连接本身仍可继续，
+            # 但不会把兼容性问题升级为应用启动异常。
+            logger.debug("Unable to apply Nacos request timeout", exc_info=True)
     
     def connect(self) -> None:
         """连接Nacos"""
@@ -95,45 +156,38 @@ class NacosDiscoveryClient:
 
         try:
             # nacos-sdk-python 使用 server_addresses 作为第一个参数
-            # 开发环境如果没有配置认证，不传用户名密码也能连接
+            # 先无认证构造客户端，再把用户名密码写入实例后探测。这样可以
+            # 在构造器触发登录请求前应用自定义 timeout；否则 SDK 构造器会
+            # 使用其硬编码的默认 3 秒，导致认证连接忽略框架配置。
             client_kwargs = {"namespace": self.namespace}
-            
-            # 先尝试不带认证参数连接（开发环境常用）
+            self._client = NacosClient(self.server_addr, **client_kwargs)
+            self._apply_client_timeout(self._client)
+            if self.username:
+                # nacos-sdk-python 通过实例属性决定是否在请求中获取 token；
+                # setattr 也兼容只实现了最小构造器的测试替身/旧 SDK。
+                try:
+                    self._client.username = self.username
+                    self._client.password = self.password
+                except Exception:
+                    logger.debug("Unable to apply Nacos credentials", exc_info=True)
+            # 测试连接是否正常 - 发送一个测试服务注册
+            self._client.add_naming_instance(
+                service_name="_health_check",
+                ip="127.0.0.1",
+                port=0,
+                group_name=self.group,
+                ephemeral=True
+            )
+            # 立即注销测试服务
             try:
-                self._client = NacosClient(self.server_addr, **client_kwargs)
-                # 测试连接是否正常 - 发送一个测试服务注册
-                self._client.add_naming_instance(
+                self._client.remove_naming_instance(
                     service_name="_health_check",
                     ip="127.0.0.1",
                     port=0,
-                    group_name=self.group,
-                    ephemeral=True
+                    group_name=self.group
                 )
-                # 立即注销测试服务
-                try:
-                    self._client.remove_naming_instance(
-                        service_name="_health_check",
-                        ip="127.0.0.1",
-                        port=0,
-                        group_name=self.group
-                    )
-                except Exception:
-                    pass
-            except Exception as e1:
-                # 如果失败，尝试带认证参数
-                if self.username:
-                    client_kwargs.update({
-                        "username": self.username,
-                        "password": self.password,
-                    })
-                    try:
-                        self._client = NacosClient(self.server_addr, **client_kwargs)
-                    except TypeError:
-                        client_kwargs.pop("username", None)
-                        client_kwargs.pop("password", None)
-                        self._client = NacosClient(self.server_addr, **client_kwargs)
-                else:
-                    raise
+            except Exception:
+                pass
             self._ready = True
             logger.info(f"Connected to Nacos: {self.server_addr}")
         except Exception as e:
@@ -141,7 +195,7 @@ class NacosDiscoveryClient:
             self._client = None
             self._ready = False
 
-    def is_healthy(self, timeout: float = 2.0) -> bool:
+    def is_healthy(self, timeout: Optional[float] = None) -> bool:
         """Check the Nacos server liveness endpoint."""
         if not self._ready or self._client is None:
             return False
@@ -155,8 +209,9 @@ class NacosDiscoveryClient:
             logger.error("Nacos health URL must use HTTP(S): %s", health_url)
             return False
 
+        probe_timeout = self.timeout if timeout is None else self._normalize_timeout(timeout)
         try:
-            with urlopen(health_url, timeout=timeout) as response:  # nosec B310 - validated above
+            with urlopen(health_url, timeout=probe_timeout) as response:  # nosec B310 - validated above
                 return 200 <= response.status < 300
         except Exception as e:
             logger.debug(f"Nacos health check failed: {e}")
@@ -374,6 +429,22 @@ class NacosDiscoveryClient:
 nacos_client = NacosDiscoveryClient()
 
 
+def _first_timeout(config: dict) -> float:
+    """从 discovery 配置读取兼容的超时字段。
+
+    早期版本没有超时选项，调用方可能只提供 ``connect_timeout`` 或
+    ``request_timeout``。统一接受这些别名，且把非法值交给客户端规范化，
+    这样 YAML、环境变量和 Nacos 热更新都走同一条安全路径。
+    """
+    if not isinstance(config, dict):
+        return NacosDiscoveryClient.DEFAULT_TIMEOUT_SECONDS
+    for name in ("timeout", "timeout_seconds", "connect_timeout", "request_timeout"):
+        value = config.get(name)
+        if value is not None:
+            return value
+    return NacosDiscoveryClient.DEFAULT_TIMEOUT_SECONDS
+
+
 def init_discovery(config: dict) -> None:
     """
     初始化服务注册发现
@@ -383,8 +454,12 @@ def init_discovery(config: dict) -> None:
     更新参数。
 
     Args:
-        config: 配置字典，包含server_addr, namespace, group等
+        config: 配置字典，包含 server_addr、namespace、group 及可选 timeout（秒）
     """
+    if not isinstance(config, dict):
+        # 可选组件配置缺失/类型错误时采用安全默认，不让启动阶段
+        # 因 ``None.get`` 这类低级异常中断整个应用。
+        config = {}
     # 单例原地更新配置，避免 _initialized 守卫导致配置被忽略
     nacos_client.configure(
         server_addr=config.get('server_addr', 'localhost:8848'),
@@ -392,6 +467,7 @@ def init_discovery(config: dict) -> None:
         group=config.get('group', 'DEFAULT_GROUP'),
         username=config.get('username', ''),
         password=config.get('password', ''),
+        timeout=_first_timeout(config),
     )
     nacos_client.connect()
     return nacos_client

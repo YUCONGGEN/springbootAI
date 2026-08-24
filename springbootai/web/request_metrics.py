@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import os
 import threading
 import time
 import re
@@ -17,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any, Dict, Iterable, Optional
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 from .interceptor import HandlerInterceptor
 
@@ -113,7 +115,21 @@ class RequestMetricsStore:
             table if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(table or ""))
             else "springbootai_request_metrics"
         )
-        self.engine = create_engine(_database_url(config), future=True)
+        database_url = _database_url(config)
+        # The framework fallback intentionally lives under ``runtime`` rather
+        # than the repository root.  Create that directory before SQLAlchemy
+        # opens SQLite; otherwise enabling the optional monitor on a fresh
+        # checkout silently degrades because SQLite cannot create its parent.
+        if database_url.startswith("sqlite:///"):
+            try:
+                sqlite_path = make_url(database_url).database
+                if sqlite_path and sqlite_path != ":memory:":
+                    parent = os.path.dirname(os.path.abspath(sqlite_path))
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+            except (TypeError, ValueError, OSError) as exc:
+                logger.warning("请求监控 SQLite 目录创建失败，将交由 SQLAlchemy 处理: %s", exc)
+        self.engine = create_engine(database_url, future=True)
         self._ensure_table()
 
     def _ensure_table(self) -> None:

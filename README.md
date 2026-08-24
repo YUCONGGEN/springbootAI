@@ -54,7 +54,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.3.7`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
+当前版本是 `2.3.8`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -185,10 +185,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `springbootai` 框架 API | 2.3.7 |
-| `springbootai.orm.pymybatis` | 2.3.7 |
-| `springbootai.ai` AI 模块 | 2.3.7 |
-| `springbootai.langchain` LangChain 模块 | 2.3.7 |
+| `springbootai` 框架 API | 2.3.8 |
+| `springbootai.orm.pymybatis` | 2.3.8 |
+| `springbootai.ai` AI 模块 | 2.3.8 |
+| `springbootai.langchain` LangChain 模块 | 2.3.8 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景
@@ -553,14 +553,30 @@ Profile 用于 Bean 过滤和生产安全校验。多环境配置可使用以下
 | `/actuator/admin` | **Spring Boot Admin 风格可视化面板**（浏览器打开即用，每 30 秒自动刷新） |
 | `/actuator/prometheus` | **Prometheus 文本格式指标**（供 Prometheus Server 抓取） |
 | `/actuator/sysmetrics` | **进程级系统指标**（RSS/CPU/线程/FD，供 Admin 面板 JS 调用） |
+| `/actuator/config-monitor` | 配置加载与 Nacos 热刷新历史（`management.config-monitor.enabled=true` 后启用，默认关闭） |
 
-`database.enabled: false` 时数据库状态为 `DISABLED`，不会创建 `test.db`。
+`database.enabled: false` 时数据库状态为 `DISABLED`，不会创建数据库文件。
+
+配置监控默认关闭。需要排查配置来源或热更新时，可在 YAML、环境变量或 Nacos 中设置：
+
+```yaml
+management:
+  config-monitor:
+    enabled: true
+    include-values: false       # 生产环境建议保持 false
+    history-size: 100
+    refresh-events: true
+```
+
+开启后访问受 Actuator 鉴权保护的 `/actuator/config-monitor`，或直接查看 Admin
+面板中的“配置刷新监控”卡片。关闭时不保留历史，也不读取配置值。
 
 > 详见 [ACTUATOR_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/ACTUATOR_MODULE.md) 第四章（Spring Boot Admin 面板）与第五章（Prometheus + Grafana 工业级监控）。
 
 > **⚠️ 新手常见错误**：
-> - ❌ 错误："我改了 YAML，重新请求接口怎么没生效？"
-> - ✅ 正解：修改 YAML 后需要**重启应用**（`Ctrl+C` 停掉再重新运行）。YAML 配置是启动时一次性读取的。
+> - ❌ 错误："我改了本地 YAML，重新请求接口怎么没生效？"
+> - ✅ 正解：本地 YAML 是启动时读取的，修改后需要重启应用；Nacos 配置只有在启用
+>   `NACOS_CONFIG_ENABLED=true` 且 `refresh-enabled=true` 时才会按轮询间隔热刷新。
 
 ---
 
@@ -1503,9 +1519,13 @@ gunicorn -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8080 myapp.asgi:app
 |---------|------|--------|
 | `SERVER_PORT` | 服务端口 | 8080 |
 | `JWT_SECRET_KEY` | JWT 密钥 | spring-python-secret-key-change-in-production |
-| `DB_URL` | 数据库连接 URL | sqlite:///./test.db |
+| `DB_URL` | 数据库连接 URL | 未设置时使用 `sqlite:///./runtime/springbootai.db` |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | Redis 连接 | localhost/6379/空 |
 | `NACOS_SERVER` | Nacos 地址 | localhost:8848 |
+| `NACOS_TIMEOUT` / `DISCOVERY_TIMEOUT` | Nacos 服务发现单次 HTTP 超时（秒） | 3（最大60） |
+| `RABBITMQ_CONNECTION_TIMEOUT` | RabbitMQ 建连默认超时（秒） | 5 |
+| `RABBITMQ_SOCKET_TIMEOUT` / `RABBITMQ_STACK_TIMEOUT` | RabbitMQ TCP/AMQP 握手超时（秒） | 5/5 |
+| `RABBITMQ_CONNECTION_ATTEMPTS` | RabbitMQ 建连尝试次数 | 1 |
 | `SPRING_DISABLE_DOCKER_IP_DETECT` | 禁用容器 IP 检测 | 0 |
 
 ### 14.5 验证部署 & 故障排查

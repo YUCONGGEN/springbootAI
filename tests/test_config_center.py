@@ -86,6 +86,31 @@ class TestConfigCenterConfigure:
         assert config_client._retry_multiplier == 2.0
         assert config_client._timeout == 3000
 
+    def test_malformed_optional_config_uses_bounded_defaults(self):
+        """坏的远程配置参数不能在启动阶段触发 AttributeError/无限重试。"""
+        config_client.configure({
+            'spring': {
+                'application': None,
+                'profiles': [],
+                'cloud': {'config': {
+                    'enabled': 'true',
+                    'uri': None,
+                    'timeout': 'not-a-number',
+                    'retry': {
+                        'max-attempts': 0,
+                        'initial-interval': -10,
+                        'multiplier': float('inf'),
+                    },
+                    'file': None,
+                }},
+            }
+        })
+        assert config_client.configured is True
+        assert config_client._timeout == 5000
+        assert config_client._retry_max == 1
+        assert config_client._retry_initial == 0
+        assert config_client._retry_multiplier == 1.1
+
 
 class TestConfigCenterFileBackend:
     """本地文件后端测试"""

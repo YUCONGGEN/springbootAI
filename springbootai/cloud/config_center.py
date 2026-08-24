@@ -38,14 +38,25 @@ Spring Cloud Config 配置中心客户端（对齐 Spring Cloud Config Client）
 import hashlib
 import json
 import logging
+import math
 import os
 import threading
 import time
 from copy import deepcopy
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("Spring.Cloud.Config")
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    """解析来自 YAML/环境变量的布尔配置，不让任意字符串被当成 True。"""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class ConfigCenterError(Exception):
@@ -69,6 +80,11 @@ class ConfigCenterClient:
 
     _instance = None
     _lock = threading.Lock()
+    _DEFAULT_TIMEOUT_MS = 5000
+    _MAX_TIMEOUT_MS = 120000
+    _DEFAULT_RETRY_MAX = 6
+    _MAX_RETRY_MAX = 20
+    _MAX_RETRY_INTERVAL_MS = 60000
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -107,38 +123,81 @@ class ConfigCenterClient:
         Args:
             config: 应用配置字典（application.yml 解析后的完整配置）
         """
-        cloud_config = config.get('spring', {}).get('cloud', {}).get('config', {})
-        if not cloud_config.get('enabled', False):
+        # 配置可能来自 YAML、Nacos、环境变量或热更新；任何一层都可能是
+        # ``null``/列表/标量。将其规范化为映射，避免可选配置中心的坏配置
+        # 反向阻断整个应用启动。
+        root = config if isinstance(config, Mapping) else {}
+        spring = root.get('spring') if isinstance(root.get('spring'), Mapping) else {}
+        cloud = spring.get('cloud') if isinstance(spring.get('cloud'), Mapping) else {}
+        cloud_config = cloud.get('config') if isinstance(cloud.get('config'), Mapping) else {}
+        if not _as_bool(cloud_config.get('enabled', False), False):
             self._configured = False
+            # 关闭远程配置时丢弃旧快照，避免下一次重新开启时把上一个应用/环境
+            # 的键误当成当前配置，也避免敏感配置在进程中无期限滞留。
+            self._cached_config.clear()
+            self._cached_hash = ''
             return
 
-        self._backend = str(cloud_config.get('backend', 'http')).lower()
-        self._uri = cloud_config.get('uri', 'http://localhost:8888').rstrip('/')
-        self._name = cloud_config.get(
+        backend = str(cloud_config.get('backend', 'http') or 'http').strip().lower()
+        self._backend = backend if backend in {'http', 'file'} else 'http'
+        uri = cloud_config.get('uri', 'http://localhost:8888')
+        self._uri = str(uri or 'http://localhost:8888').strip().rstrip('/')
+        application = spring.get('application') if isinstance(spring.get('application'), Mapping) else {}
+        profiles = spring.get('profiles') if isinstance(spring.get('profiles'), Mapping) else {}
+        self._name = str(cloud_config.get(
             'name',
-            config.get('spring', {}).get('application', {}).get('name', 'application'),
-        )
-        self._profile = cloud_config.get(
+            application.get('name', 'application'),
+        ) or 'application').strip()
+        self._profile = str(cloud_config.get(
             'profile',
-            config.get('spring', {}).get('profiles', {}).get('active', 'default'),
+            profiles.get('active', 'default'),
+        ) or 'default').strip()
+        self._label = str(cloud_config.get('label', 'master') or 'master').strip()
+        self._fail_fast = _as_bool(cloud_config.get('fail-fast', False), False)
+        self._timeout = self._bounded_int(
+            cloud_config.get('timeout', self._DEFAULT_TIMEOUT_MS),
+            self._DEFAULT_TIMEOUT_MS, 1, self._MAX_TIMEOUT_MS,
         )
-        self._label = cloud_config.get('label', 'master')
-        self._fail_fast = cloud_config.get('fail-fast', False)
-        self._timeout = int(cloud_config.get('timeout', 5000))
 
-        retry_cfg = cloud_config.get('retry', {})
-        self._retry_max = int(retry_cfg.get('max-attempts', 6))
-        self._retry_initial = int(retry_cfg.get('initial-interval', 1000))
-        self._retry_multiplier = float(retry_cfg.get('multiplier', 1.1))
+        retry_cfg = cloud_config.get('retry') if isinstance(cloud_config.get('retry'), Mapping) else {}
+        self._retry_max = self._bounded_int(
+            retry_cfg.get('max-attempts', self._DEFAULT_RETRY_MAX),
+            self._DEFAULT_RETRY_MAX, 1, self._MAX_RETRY_MAX,
+        )
+        self._retry_initial = self._bounded_int(
+            retry_cfg.get('initial-interval', 1000), 1000,
+            0, self._MAX_RETRY_INTERVAL_MS,
+        )
+        self._retry_multiplier = self._bounded_float(
+            retry_cfg.get('multiplier', 1.1), 1.1, 1.0, 10.0,
+        )
 
-        file_cfg = cloud_config.get('file', {})
-        self._file_path = file_cfg.get('path', './config-repo')
+        file_cfg = cloud_config.get('file') if isinstance(cloud_config.get('file'), Mapping) else {}
+        self._file_path = str(file_cfg.get('path', './config-repo') or './config-repo')
 
         self._configured = True
         logger.info(
             f"ConfigCenter configured: backend={self._backend}, "
             f"name={self._name}, profile={self._profile}, label={self._label}"
         )
+
+    @staticmethod
+    def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError, OverflowError):
+            parsed = default
+        return max(minimum, min(parsed, maximum))
+
+    @staticmethod
+    def _bounded_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            parsed = default
+        if not math.isfinite(parsed):
+            parsed = default
+        return max(minimum, min(parsed, maximum))
 
     @property
     def configured(self) -> bool:
@@ -205,7 +264,10 @@ class ConfigCenterClient:
             except Exception as e:
                 last_error = e
                 if attempt < self._retry_max:
-                    delay = self._retry_initial * (self._retry_multiplier ** (attempt - 1))
+                    delay = min(
+                        self._retry_initial * (self._retry_multiplier ** (attempt - 1)),
+                        self._MAX_RETRY_INTERVAL_MS,
+                    )
                     logger.warning(
                         f"Config fetch attempt {attempt}/{self._retry_max} failed: {e}, "
                         f"retrying in {delay:.0f}ms"
@@ -372,7 +434,7 @@ def init_config_center(config: dict) -> None:
             if remote_config:
                 logger.info(f"Config center initialized with {len(remote_config)} properties")
         except ConfigCenterError as e:
-            if config.get('spring', {}).get('cloud', {}).get('config', {}).get('fail-fast', False):
+            if config_client._fail_fast:
                 raise
             logger.error(f"Config center init failed: {e}")
 

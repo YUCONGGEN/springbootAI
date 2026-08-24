@@ -1,6 +1,6 @@
 # Actuator —— 系统健康检查面板
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.8
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -127,6 +127,28 @@ management:
 自动记录业务 HTTP 请求，并通过受 Actuator 鉴权保护的
 `/actuator/request-metrics` 端点向面板提供请求总数、错误总数、平均耗时和最常访问路径。
 项目不需要提供任何业务监控接口。
+
+### 4.2.1.1 配置刷新监控（默认关闭）
+
+需要排查“配置从哪里来、何时刷新、刷新是否成功”时，可开启框架内置配置监控：
+
+\`\`\`yaml
+management:
+  config-monitor:
+    enabled: true
+    include-values: false   # 默认不记录配置值，避免泄露密码、Token 等敏感信息
+    history-size: 100       # 1-10000，超过后淘汰最早事件
+    refresh-events: true
+\`\`\`
+
+开启后，框架记录配置来源（YAML、profile、环境变量、Nacos、命令行）、变更键、
+刷新耗时、成功/失败和错误摘要；不会阻塞配置刷新，记录异常也不会导致应用崩溃。
+通过受 Actuator 鉴权保护的 \`GET /actuator/config-monitor\` 查询，Admin 面板会在
+“配置刷新监控”卡片显示最近事件。未开启时不保存历史、不读取配置值，端点返回
+\`enabled: false\`。也可使用环境变量
+\`MANAGEMENT_CONFIG_MONITOR_ENABLED\`、\`MANAGEMENT_CONFIG_MONITOR_INCLUDE_VALUES\`、
+\`MANAGEMENT_CONFIG_MONITOR_HISTORY_SIZE\` 和 \`MANAGEMENT_CONFIG_MONITOR_REFRESH_EVENTS\`
+进行配置。
 
 ### 4.2.0.1 可选端点默认不主动启用
 

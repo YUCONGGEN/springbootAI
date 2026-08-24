@@ -140,7 +140,9 @@ class MCPServerProperties:
     port: int = 8001
     path: str = "/mcp"
     stateless_http: bool = True
-    json_response: bool = True
+    # MCP SDK clients negotiate the standard SSE stream by default. JSON-only
+    # responses are optional and are not understood by older/third-party clients.
+    json_response: bool = False
     max_request_body_bytes: int = 1_048_576
     allowed_tools: tuple[str, ...] = ()
     allow_dangerous_tools: bool = False
@@ -234,7 +236,7 @@ def _bind_server(data: Mapping[str, Any]) -> MCPServerProperties:
         port=_integer(_get(data, "port", 8001), 8001),
         path=str(_get(data, "path", "/mcp")),
         stateless_http=_bool(_get(data, "stateless-http", True), True),
-        json_response=_bool(_get(data, "json-response", True), True),
+        json_response=_bool(_get(data, "json-response", False), False),
         max_request_body_bytes=_integer(
             _get(data, "max-request-body-bytes", 1_048_576), 1_048_576
         ),

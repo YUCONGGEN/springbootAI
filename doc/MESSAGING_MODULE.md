@@ -1,6 +1,6 @@
 # SpringBootAI 消息队列模块指南
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.8
 
 ---
 
@@ -75,6 +75,10 @@ rabbitmq:
   username: ${RABBITMQ_USERNAME:guest}
   password: ${RABBITMQ_PASSWORD:guest}
   virtual_host: ${RABBITMQ_VHOST:/}
+  connection_timeout: ${RABBITMQ_CONNECTION_TIMEOUT:5}
+  socket_timeout: ${RABBITMQ_SOCKET_TIMEOUT:5}
+  stack_timeout: ${RABBITMQ_STACK_TIMEOUT:5}
+  connection_attempts: ${RABBITMQ_CONNECTION_ATTEMPTS:1}
 ```
 
 **步骤三（进阶）：使用交换机 + 路由键**
@@ -283,6 +287,13 @@ rabbitmq:
   username: ${RABBITMQ_USERNAME:guest}
   password: ${RABBITMQ_PASSWORD:guest}
   virtual_host: ${RABBITMQ_VHOST:/}
+  # 服务不可用时的启动保护：三类网络超时均为秒，连接默认只尝试一次
+  connection_timeout: ${RABBITMQ_CONNECTION_TIMEOUT:5}
+  socket_timeout: ${RABBITMQ_SOCKET_TIMEOUT:5}
+  stack_timeout: ${RABBITMQ_STACK_TIMEOUT:5}
+  connection_attempts: ${RABBITMQ_CONNECTION_ATTEMPTS:1}
+  retry_delay: ${RABBITMQ_RETRY_DELAY:0}
+  blocked_connection_timeout: ${RABBITMQ_BLOCKED_CONNECTION_TIMEOUT:300}
 ```
 
 所有值都支持用环境变量覆盖（`${VAR:默认值}` 语法），便于不同环境（开发/测试/生产）切换：
@@ -334,6 +345,10 @@ $env:RABBITMQ_PASSWORD = "secret"
 - **单例 + `configure`**：`__init__` 用 `_initialized` 守卫防止重复初始化，所以读取配置后必须用 `configure()` 重新设置连接参数，否则会停留在默认值 `localhost:5672`。
 - **消息确认机制**：`auto_ack=False` 时，方法处理成功会 `basic_ack`；抛异常会 `basic_nack` 并 `requeue=True`（消息重新入队重试）。
 - **心跳保活**：连接参数设置 `heartbeat=600`、`blocked_connection_timeout=300`，防止长连接被中间网络设备断开。
+- **启动不阻塞**：`connection_timeout`、`socket_timeout`、`stack_timeout` 默认均为 5 秒，
+  `connection_attempts` 默认 1、`retry_delay` 默认 0。RabbitMQ 未启动时会在有限时间内
+  返回错误，由 `startup.fail_fast` 决定是否终止进程；组件关闭（`enabled=false`）时完全
+  不建连。生产环境可按网络情况调大超时，但不要设置为 0 或无限重试。
 - **消费在守护线程**：`start_consuming_background()` 启动的线程是 daemon，主进程退出时自动结束，不会阻塞关闭。
 
 ### 初始化流程

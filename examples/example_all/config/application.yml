@@ -79,6 +79,7 @@ discovery:
   group: "DEFAULT_GROUP"
   username: "nacos"
   password: "nacos"
+  timeout: 3
 
 # RabbitMQ 消息队列 (Docker: rabbitmq:3-management-alpine)
 rabbitmq:
@@ -88,6 +89,12 @@ rabbitmq:
   username: admin
   password: admin123
   virtual_host: "/"
+  connection_timeout: 5
+  socket_timeout: 5
+  stack_timeout: 5
+  connection_attempts: 1
+  retry_delay: 0
+  blocked_connection_timeout: 300
 
 # Prometheus 监控
 prometheus:
@@ -95,3 +102,11 @@ prometheus:
   namespace: spring
   subsystem: example_all
   port: 8000
+
+# 配置来源/热刷新监控（默认关闭；需要排查 Nacos 或环境配置时再开启）
+management:
+  config-monitor:
+    enabled: ${MANAGEMENT_CONFIG_MONITOR_ENABLED:false}
+    include-values: ${MANAGEMENT_CONFIG_MONITOR_INCLUDE_VALUES:false}
+    history-size: ${MANAGEMENT_CONFIG_MONITOR_HISTORY_SIZE:100}
+    refresh-events: ${MANAGEMENT_CONFIG_MONITOR_REFRESH_EVENTS:true}

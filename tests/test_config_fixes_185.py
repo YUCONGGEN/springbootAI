@@ -101,6 +101,25 @@ class TestProfileConfig:
         loader = ConfigLoader(config_path=str(main_yml))
         assert loader.get('server.port') == 9000
 
+    def test_profile_active_placeholder_uses_default_profile_file(self, tmp_path, monkeypatch):
+        """active 的环境占位符在选择 profile 文件前也必须被解析。"""
+        from springbootai.config.config_loader import ConfigLoader
+
+        monkeypatch.delenv('SPRING_PROFILES_ACTIVE', raising=False)
+        main_yml = tmp_path / "application.yml"
+        main_yml.write_text(
+            "spring:\n  profiles:\n    active: ${SPRING_PROFILES_ACTIVE:default}\n"
+            "server:\n  port: 8080\n",
+            encoding="utf-8",
+        )
+        profile_yml = tmp_path / "application-default.yml"
+        profile_yml.write_text("server:\n  port: 8111\n", encoding="utf-8")
+
+        loader = ConfigLoader(config_path=str(main_yml))
+
+        assert loader.get('server.port') == 8111
+        assert loader.get_active_profile() == 'default'
+
     def test_profile_deep_merge_keeps_unrelated_keys(self, tmp_path, monkeypatch):
         from springbootai.config.config_loader import ConfigLoader
         main_yml = tmp_path / "application.yml"

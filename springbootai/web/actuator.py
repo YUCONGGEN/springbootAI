@@ -41,7 +41,8 @@ _SENSITIVE_KEYS = (
 # admin 端点仅返回静态 HTML（无敏感数据），保持开放但页面内 JS 调用的端点受鉴权保护
 _SENSITIVE_ENDPOINTS = frozenset({
     "env", "loggers", "metrics", "beans", "configprops", "mappings", "threaddump",
-    "heapdump", "prometheus", "sysmetrics", "request-metrics", "alert", "alerts",
+    "heapdump", "prometheus", "sysmetrics", "request-metrics", "config-monitor",
+    "alert", "alerts",
 })
 
 # Actuator 鉴权开关（由 configure_actuator 从配置读取）
@@ -53,7 +54,7 @@ _actuator_admin_roles = frozenset({"ADMIN", "ACTUATOR"})
 _OPTIONAL_ACTUATOR_ENDPOINTS = (
     "env", "loggers", "metrics", "beans", "configprops", "mappings",
     "threaddump", "heapdump", "prometheus", "sysmetrics", "request-metrics",
-    "alert", "alerts",
+    "alert", "alerts", "config-monitor",
 )
 _actuator_endpoint_enabled = {name: True for name in _OPTIONAL_ACTUATOR_ENDPOINTS}
 _actuator_configured = False
@@ -137,6 +138,12 @@ def _resolve_actuator_endpoint_flags(config: Any) -> Dict[str, bool]:
     if isinstance(request_metrics, Mapping):
         raw = request_metrics.get("enabled", False)
         flags["request-metrics"] = raw if isinstance(raw, bool) else str(raw).strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+    config_monitor = management.get("config-monitor", management.get("config_monitor", {}))
+    if isinstance(config_monitor, Mapping) and "enabled" in config_monitor:
+        raw = config_monitor.get("enabled")
+        flags["config-monitor"] = raw if isinstance(raw, bool) else str(raw).strip().lower() in {
             "1", "true", "yes", "on"
         }
     return flags
@@ -328,6 +335,7 @@ def get_endpoint_directory() -> dict:
         "prometheus": {"href": "/actuator/prometheus", "methods": ["GET"]},
         "sysmetrics": {"href": "/actuator/sysmetrics", "methods": ["GET"]},
         "request-metrics": {"href": "/actuator/request-metrics", "methods": ["GET"]},
+        "config-monitor": {"href": "/actuator/config-monitor", "methods": ["GET"]},
         "alert": {"href": "/actuator/alert", "methods": ["POST"]},
         "alerts": {"href": "/actuator/alerts", "methods": ["GET"]},
         "admin": {"href": "/actuator/admin", "methods": ["GET"]},
@@ -630,6 +638,7 @@ _heapdump_auth = _create_actuator_dependency("heapdump")
 _prometheus_auth = _create_actuator_dependency("prometheus")
 _sysmetrics_auth = _create_actuator_dependency("sysmetrics")
 _request_metrics_auth = _create_actuator_dependency("request-metrics")
+_config_monitor_auth = _create_actuator_dependency("config-monitor")
 _alert_auth = _create_actuator_dependency("alert")
 _alerts_auth = _create_actuator_dependency("alerts")
 
@@ -767,6 +776,33 @@ def request_metrics_endpoint(_: None = Depends(_request_metrics_auth)):
     """框架内置请求持久化监控；未开启时返回 disabled 状态。"""
     from springbootai.web.request_metrics import get_request_metrics
     return JSONResponse(content=get_request_metrics(), status_code=200)
+
+
+@actuator_router.get('/config-monitor')
+def config_monitor_endpoint(_: None = Depends(_config_monitor_auth)):
+    """配置刷新监控端点（默认关闭，开启后只返回脱敏历史）。"""
+    return JSONResponse(content=get_config_monitor_info(_get_context()), status_code=200)
+
+
+def get_config_monitor_info(context) -> Dict[str, Any]:
+    """返回配置监控状态与有限刷新历史。
+
+    监控默认关闭时只返回 ``enabled=false``，不暴露配置快照；启用后由
+    ``ConfigMonitor`` 统一负责脱敏和历史大小限制。
+    """
+    if context is None:
+        return {"enabled": False, "events": []}
+    try:
+        loader = getattr(context, "config_loader", None)
+        monitor = loader.get_config_monitor() if loader is not None else None
+        if monitor is None:
+            return {"enabled": False, "events": []}
+        return monitor.snapshot()
+    except Exception as exc:
+        logging.getLogger("Spring.Web.Actuator.ConfigMonitor").warning(
+            "读取配置监控失败: %s", exc
+        )
+        return {"enabled": False, "events": [], "error": "config monitor unavailable"}
 
 
 # ==================== /alert Alertmanager Webhook 接收端点 ====================
@@ -940,6 +976,7 @@ def _build_admin_dashboard_html() -> str:
         </div>
         __SYSTEM_METRICS_CARD__
         __THREADS_CARD__
+        __CONFIG_MONITOR_CARD__
         __REQUEST_METRICS_CARD__
         __LOGGERS_CARD__
         __PROMETHEUS_CARD__
@@ -950,6 +987,36 @@ def _build_admin_dashboard_html() -> str:
     const ACTUATOR_ENDPOINTS = __ACTUATOR_ENDPOINTS__;
     // 只有 management.admin.request-metrics.enabled=true 才启用。
     const REQUEST_METRICS_URL = __REQUEST_METRICS_URL__;
+
+    function loadConfigMonitor() {
+        if (!ACTUATOR_ENDPOINTS['config-monitor']) return;
+        fetchJSON('/actuator/config-monitor').then(function(d) {
+            var el = document.getElementById('config-monitor');
+            if (!el) return;
+            if (d.error) { el.innerHTML = '<span class="status-down">配置监控暂不可用</span>'; return; }
+            var events = Array.isArray(d.events) ? d.events.slice().reverse() : [];
+            var html = '<div class="metric-row"><span class="metric-label">状态</span>' +
+                '<span class="metric-value">' + (d.enabled ? '已开启' : '未开启') + '</span></div>';
+            html += '<div class="metric-row"><span class="metric-label">记录数</span>' +
+                '<span class="metric-value">' + events.length + ' / ' + (d.history_size || 0) + '</span></div>';
+            if (events.length) {
+                html += '<table><thead><tr><th>时间</th><th>来源</th><th>结果</th><th>变更键</th></tr></thead><tbody>';
+                events.slice(0, 10).forEach(function(item) {
+                    var keys = Array.isArray(item.changed_keys) ? item.changed_keys.join(', ') : '-';
+                    html += '<tr><td>' + escapeHtml(item.timestamp || '-') + '</td><td>' +
+                        escapeHtml(item.source || '-') + '</td><td><span class="badge ' +
+                        (item.success ? 'badge-up' : 'badge-down') + '">' +
+                        (item.success ? '成功' : '失败') + '</span></td><td>' +
+                        escapeHtml(keys || '无变更') + '</td></tr>';
+                });
+                html += '</tbody></table>';
+            }
+            el.innerHTML = html;
+        }).catch(function() {
+            var el = document.getElementById('config-monitor');
+            if (el) el.innerHTML = '<span class="status-down">配置监控加载失败</span>';
+        });
+    }
 
     function normalizeToken(token) {
         return (token || '').replace(/^Bearer\\s+/i, '').trim();
@@ -1364,7 +1431,7 @@ def _build_admin_dashboard_html() -> str:
     }
     function loadAll() {
         loadHealth(); loadInfo();
-        loadAlerts(); loadSystemMetrics(); loadThreads(); loadRequestMetrics();
+        loadAlerts(); loadSystemMetrics(); loadThreads(); loadConfigMonitor(); loadRequestMetrics();
         loadLoggers(); loadPrometheus(); loadBeans();
     }
     // Inline handlers are intentionally avoided for the token and refresh buttons.
@@ -1422,6 +1489,7 @@ def _build_admin_dashboard_html() -> str:
     alerts_card = card(endpoint_flags["alerts"], "告警通知", "alerts")
     system_metrics_card = card(endpoint_flags["sysmetrics"], "内存 & CPU", "metrics-system")
     threads_card = card(endpoint_flags["threaddump"], "线程概览", "threads-summary")
+    config_monitor_card = card(endpoint_flags["config-monitor"], "配置刷新监控", "config-monitor")
     loggers_card = card(endpoint_flags["loggers"], "日志级别管理（点击切换）", "loggers", full=True)
     beans_card = card(endpoint_flags["beans"], "Bean 列表", "beans", full=True)
     prometheus_state = (
@@ -1448,6 +1516,7 @@ def _build_admin_dashboard_html() -> str:
             .replace("__ALERTS_CARD__", alerts_card)
             .replace("__SYSTEM_METRICS_CARD__", system_metrics_card)
             .replace("__THREADS_CARD__", threads_card)
+            .replace("__CONFIG_MONITOR_CARD__", config_monitor_card)
             .replace("__LOGGERS_CARD__", loggers_card)
             .replace("__PROMETHEUS_CARD__", prometheus_card)
             .replace("__BEANS_CARD__", beans_card)

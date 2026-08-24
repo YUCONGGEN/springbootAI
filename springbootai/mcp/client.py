@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 from concurrent.futures import Future
 from contextlib import suppress
 from typing import Any, Dict, Iterable, Optional
+from urllib.parse import urlparse
 
 from springbootai.ai.tools import ToolExecutionPolicy, ToolRegistry
 from springbootai.mcp.config import MCPClientProperties, MCPConfigurationError
@@ -91,25 +93,49 @@ class MCPClientConnection:
         if self.properties.transport == "stdio":
             from mcp.client.stdio import StdioServerParameters, stdio_client
 
+            # The documented ``python -m example_mcp.*`` example runs in a
+            # child process, which does not inherit the source checkout path
+            # when the library is installed. Preserve the caller environment
+            # and add the repository examples path only when it exists.
+            child_env = os.environ.copy()
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)
+            )))
+            examples_dir = os.path.join(project_root, "examples")
+            python_path = child_env.get("PYTHONPATH", "")
+            paths = [item for item in python_path.split(os.pathsep) if item]
+            for candidate in (project_root, examples_dir):
+                if os.path.isdir(candidate) and candidate not in paths:
+                    paths.append(candidate)
+            if paths:
+                child_env["PYTHONPATH"] = os.pathsep.join(paths)
+            child_env.update(dict(self.properties.env))
             parameters = StdioServerParameters(
                 command=self.properties.command,
                 args=list(self.properties.args),
-                env=dict(self.properties.env) or None,
+                env=child_env,
                 cwd=self.properties.cwd or None,
             )
             return stdio_client(parameters)
-        if self.properties.headers:
-            import httpx
-            from mcp.client.streamable_http import streamable_http_client
+        # Always own the HTTP client so local MCP endpoints cannot be sent to a
+        # machine-wide proxy (a common Windows/Docker setup).  For non-loopback
+        # URLs, retain normal ``HTTP_PROXY``/``NO_PROXY`` behavior so enterprise
+        # deployments can still use their outbound proxy.  The SDK's implicit
+        # client otherwise ignores the caller's intent and may turn a localhost
+        # request into an opaque 502 from the proxy.
+        import httpx
+        from mcp.client.streamable_http import streamable_http_client
 
-            self._http_client = httpx.AsyncClient(
-                headers=dict(self.properties.headers),
-                timeout=self.properties.timeout_seconds,
-            )
-            return streamable_http_client(
-                self.properties.url, http_client=self._http_client
-            )
-        return self.properties.url
+        parsed = urlparse(self.properties.url)
+        loopback = (parsed.hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
+        self._http_client = httpx.AsyncClient(
+            headers=dict(self.properties.headers),
+            timeout=self.properties.timeout_seconds,
+            trust_env=not loopback,
+        )
+        return streamable_http_client(
+            self.properties.url, http_client=self._http_client
+        )
 
     async def connect(self) -> "MCPClientConnection":
         require_mcp_sdk()

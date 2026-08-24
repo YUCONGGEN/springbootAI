@@ -356,7 +356,7 @@ class SwaggerConfig:
             enabled=api_docs_enabled,
             title=_opt("title", "SpringBootAI Application"),
             description=_opt("description", ""),
-            version=_opt("version", "2.2.1"),
+            version=_opt("version", "2.3.8"),
             terms_of_service=_opt("terms-of-service", ""),
             contact_name=_opt("contact-name", "") or (contact.get("name", "") if isinstance(contact, dict) else ""),
             contact_email=_opt("contact-email", "") or (contact.get("email", "") if isinstance(contact, dict) else ""),

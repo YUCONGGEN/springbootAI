@@ -23,7 +23,7 @@ author = 'YuConggen'
 try:
     from springbootai import __version__ as version
 except ImportError:
-    version = '2.3.3'
+    version = '2.3.8'
 
 release = version
 

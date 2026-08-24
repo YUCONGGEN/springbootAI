@@ -1,6 +1,6 @@
 # SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.8
 
 ---
 
@@ -89,7 +89,17 @@ discovery:
   group: DEFAULT_GROUP             # 分组名称
   username: nacos                  # 用户名
   password: nacos                  # 密码
+  timeout: 3                       # 每个 SDK HTTP 请求的超时（秒），服务离线时快速降级
 ```
+
+`discovery` 是可选模块，默认 `enabled: false`。开启后仍不会无限等待：默认每个
+Nacos 请求最多等待 3 秒（支持 `NACOS_TIMEOUT`、`DISCOVERY_TIMEOUT` 或同名 Nacos
+配置覆盖，合法范围为大于 0 且不超过 60 秒）。认证失败、服务离线等错误会按
+`startup.fail_fast` 配置处理；关闭模块时框架不会创建 Nacos 客户端。
+
+Spring Cloud Config 同样是可选模块。配置中心的 timeout、重试次数、间隔和乘数会
+在框架边界内规范化（至少尝试一次，重试间隔最多 60 秒）；YAML 层级为空或类型错误
+时回退到安全默认值，不会因可选配置中心配置错误阻断应用启动。
 
 在启动类上加注解：
 
@@ -183,7 +193,12 @@ spring:
         namespace: ""
         fail-fast: true
         refresh-enabled: true
+        refresh-interval-seconds: 5
 ```
+
+`timeout-ms` 的有效范围为 1-120000（默认 5000），`refresh-interval-seconds`
+的有效范围为 1-3600（默认 5）。超过上限时框架自动收敛到安全上限，避免
+错误配置导致启动、热刷新或关闭流程长时间阻塞。
 
 Nacos YAML 覆盖本地同名项；环境变量和命令行参数优先级更高。例如可通过
 `MANAGEMENT_ADMIN_REQUEST_METRICS_ENABLED=true` 和

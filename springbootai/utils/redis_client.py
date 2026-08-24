@@ -51,15 +51,39 @@ class RedisClient:
         try:
             from redis import Redis
 
-            self._client = Redis(
-                host=self.host,
-                port=self.port,
-                db=self.db,
-                password=self.password,
-                decode_responses=True,
-                socket_timeout=self.timeout,
-                socket_connect_timeout=self.timeout
-            )
+            # redis-py 8 ships a default retry policy with ten connection
+            # attempts.  A synchronous health check during application
+            # startup would therefore block for tens of seconds when an
+            # optional Redis service is down (and can make the HTTP server
+            # appear hung).  Framework startup already decides whether this
+            # dependency is fail-fast; the probe itself must be one bounded
+            # attempt.  Keep the retry object version-compatible for older
+            # redis-py releases that do not expose it.
+            retry = None
+            try:
+                from redis.backoff import NoBackoff
+                from redis.retry import Retry
+                retry = Retry(NoBackoff(), retries=0)
+            except (ImportError, TypeError):
+                pass
+            client_kwargs = {
+                "host": self.host,
+                "port": self.port,
+                "db": self.db,
+                "password": self.password,
+                "decode_responses": True,
+                "socket_timeout": self.timeout,
+                "socket_connect_timeout": self.timeout,
+            }
+            if retry is not None:
+                client_kwargs["retry"] = retry
+            else:
+                # redis-py 6+ prefers an explicit Retry object and emits a
+                # deprecation warning for ``retry_on_timeout``.  Keep the
+                # legacy switch only for older releases where Retry is not
+                # available.
+                client_kwargs["retry_on_timeout"] = False
+            self._client = Redis(**client_kwargs)
             # 测试连接
             self._client.ping()
         except ImportError as exc:

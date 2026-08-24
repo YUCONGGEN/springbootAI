@@ -39,7 +39,7 @@ from springbootai.data.repository import (
     get_data_repository_entity,
 )
 
-__version__ = "2.3.7"
+__version__ = "2.3.8"
 
 __all__ = [
     # 分页/排序

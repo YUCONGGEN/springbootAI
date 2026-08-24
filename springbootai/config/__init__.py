@@ -10,6 +10,7 @@ from .config_loader import (
     get_config,
     get_config_value,
 )
+from .config_monitor import ConfigMonitor, resolve_config_monitor_config, diff_config_keys
 
 __all__ = [
     'ConfigLoader',
@@ -18,4 +19,7 @@ __all__ = [
     'set_global_config_loader',
     'get_config',
     'get_config_value',
+    'ConfigMonitor',
+    'resolve_config_monitor_config',
+    'diff_config_keys',
 ]

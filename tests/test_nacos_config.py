@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from springbootai.cloud import nacos_config
 from springbootai.config.config_loader import ConfigLoader
 
@@ -20,6 +22,28 @@ class _FakeNacosClient:
 class _FailingNacosClient:
     def get_config(self, data_id, group, timeout=None):
         raise RuntimeError("authentication required")
+
+
+def test_bootstrap_refresh_can_surface_transient_unavailability(monkeypatch):
+    """刷新期读取失败必须抛出，避免监听器丢失待处理版本。"""
+    properties = nacos_config.NacosConfigProperties(
+        enabled=True,
+        server_addr="unused",
+        data_id="app.yml",
+        timeout_ms=100,
+    )
+    client = nacos_config.NacosConfigClient(properties)
+    monkeypatch.setattr(client, "fetch", lambda: (_ for _ in ()).throw(
+        nacos_config.NacosConfigError("temporary outage")
+    ))
+    monkeypatch.setattr(nacos_config, "NacosConfigClient", lambda _: client)
+
+    with pytest.raises(nacos_config.NacosConfigError):
+        nacos_config.bootstrap_nacos_config(
+            {"nacos": {"config": {"enabled": True}}},
+            raise_on_unavailable=True,
+        )
+
 
 def test_nacos_yaml_is_loaded_and_change_listener_is_registered(monkeypatch):
     properties = nacos_config.NacosConfigProperties(
@@ -41,6 +65,17 @@ def test_nacos_yaml_is_loaded_and_change_listener_is_registered(monkeypatch):
         time.sleep(0.05)
     assert calls == ["changed"]
     client.close()
+
+
+def test_nacos_io_limits_prevent_unbounded_waits(monkeypatch):
+    """错误的超时/轮询周期不能把应用或关闭流程拖到无限久。"""
+    monkeypatch.setenv("NACOS_CONFIG_TIMEOUT_MS", "999999999")
+    monkeypatch.setenv("NACOS_CONFIG_REFRESH_INTERVAL_SECONDS", "999999999")
+    properties = nacos_config.NacosConfigProperties.from_sources({
+        "nacos": {"config": {"enabled": True}},
+    })
+    assert properties.timeout_ms == 120_000
+    assert properties.refresh_interval_seconds == 3600
 
 
 def test_nacos_client_reuses_authenticated_sdk_client(monkeypatch):

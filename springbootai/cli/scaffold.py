@@ -210,7 +210,7 @@ def _version() -> str:
         from springbootai import __version__
         return __version__
     except Exception:
-        return "2.3.0"
+        return "2.3.8"
 
 
 def _replace(template: str, **values: object) -> str:
@@ -705,6 +705,7 @@ discovery:
   group: "${NACOS_GROUP:DEFAULT_GROUP}"
   username: "${NACOS_USERNAME:nacos}"
   password: "${NACOS_PASSWORD:nacos}"
+  timeout: "${NACOS_TIMEOUT:3}"
   metadata: {}
 
 # RabbitMQ 默认关闭；开启后安装 pika。
@@ -715,6 +716,12 @@ rabbitmq:
   username: "${RABBITMQ_USERNAME:guest}"
   password: "${RABBITMQ_PASSWORD:guest}"
   virtual_host: "${RABBITMQ_VIRTUAL_HOST:/}"
+  connection_timeout: "${RABBITMQ_CONNECTION_TIMEOUT:5}"
+  socket_timeout: "${RABBITMQ_SOCKET_TIMEOUT:5}"
+  stack_timeout: "${RABBITMQ_STACK_TIMEOUT:5}"
+  connection_attempts: "${RABBITMQ_CONNECTION_ATTEMPTS:1}"
+  retry_delay: "${RABBITMQ_RETRY_DELAY:0}"
+  blocked_connection_timeout: "${RABBITMQ_BLOCKED_CONNECTION_TIMEOUT:300}"
   exchange: "${RABBITMQ_EXCHANGE:app.events}"
   queue: "${RABBITMQ_QUEUE:__PROJECT_NAME__.events}"
 

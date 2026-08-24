@@ -7,8 +7,13 @@ import sys
 import yaml
 import logging
 import re
+import threading
+import time
+from urllib.parse import quote_plus
 from copy import deepcopy
 from typing import Callable, Dict, Any, Optional
+
+from .config_monitor import ConfigMonitor, resolve_config_monitor_config
 
 logger = logging.getLogger("Spring.Config")
 
@@ -59,6 +64,48 @@ class ConfigLoader:
     _INNER_ENV_VAR_PATTERN = re.compile(r'\$\{([^${}]*)\}')
     _VALUE_EXPRESSION_PATTERN = re.compile(r'^\$\{([^}:]+)(?::(.*))?\}$')
     _MISSING = object()
+
+    # Only these process variables are configuration inputs.  Looking at the
+    # entire process environment would incorrectly label every reload as an
+    # environment-sourced change on CI/Windows, where many unrelated variables
+    # are always present.
+    _CONFIG_ENV_NAMES = frozenset({
+        'SPRING_PROFILES_ACTIVE', 'SPRING_APPLICATION_NAME', 'STARTUP_FAIL_FAST',
+        'REDIS_HOST', 'REDIS_PORT', 'REDIS_DB', 'REDIS_PASSWORD', 'REDIS_ENABLED',
+        'JWT_SECRET_KEY', 'JWT_ALGORITHM',
+        'DB_URL', 'DB_ECHO', 'DB_ENABLED', 'DB_DRIVER', 'DB_HOST', 'DB_PORT',
+        'DB_NAME', 'DB_USERNAME', 'DB_PASSWORD',
+        'NACOS_SERVER', 'NACOS_NAMESPACE', 'NACOS_GROUP', 'NACOS_USERNAME',
+        'NACOS_PASSWORD', 'DISCOVERY_SERVER_ADDR', 'DISCOVERY_NAMESPACE',
+        'DISCOVERY_GROUP', 'DISCOVERY_ENABLED', 'NACOS_TIMEOUT',
+        'NACOS_TIMEOUT_SECONDS', 'NACOS_CONNECT_TIMEOUT', 'NACOS_REQUEST_TIMEOUT',
+        'DISCOVERY_TIMEOUT', 'DISCOVERY_TIMEOUT_SECONDS', 'DISCOVERY_CONNECT_TIMEOUT',
+        'SEATA_SERVER', 'SEATA_SERVER_ADDR', 'SEATA_APP_ID',
+        'SEATA_APPLICATION_ID', 'SEATA_TX_GROUP', 'SEATA_TRANSACTION_GROUP',
+        'SEATA_MODE', 'SEATA_BRIDGE_URL', 'SEATA_BRIDGE_TOKEN',
+        'SEATA_BRIDGE_TIMEOUT_S', 'SEATA_ENABLED',
+        'RABBITMQ_HOST', 'RABBITMQ_PORT', 'RABBITMQ_USERNAME', 'RABBITMQ_PASSWORD',
+        'RABBITMQ_VHOST', 'RABBITMQ_VIRTUAL_HOST', 'RABBITMQ_ENABLED',
+        'RABBITMQ_TIMEOUT', 'RABBITMQ_TIMEOUT_SECONDS', 'RABBITMQ_CONNECTION_TIMEOUT',
+        'RABBITMQ_SOCKET_TIMEOUT', 'RABBITMQ_STACK_TIMEOUT',
+        'RABBITMQ_CONNECTION_ATTEMPTS', 'RABBITMQ_RETRY_DELAY', 'RABBITMQ_BLOCKED_CONNECTION_TIMEOUT',
+        'PROMETHEUS_NAMESPACE', 'PROMETHEUS_SUBSYSTEM', 'PROMETHEUS_PORT',
+        'PROMETHEUS_ENABLED', 'LOG_LEVEL', 'LOG_DIR', 'LOG_RETENTION', 'LOG_ROTATION',
+        'SERVER_PORT', 'SERVER_HOST', 'CORS_ALLOW_ORIGINS', 'CORS_ALLOW_CREDENTIALS',
+        'MANAGEMENT_CONFIG_MONITOR_ENABLED', 'MANAGEMENT_CONFIG_MONITOR_INCLUDE_VALUES',
+        'MANAGEMENT_CONFIG_MONITOR_HISTORY_SIZE', 'MANAGEMENT_CONFIG_MONITOR_REFRESH_EVENTS',
+        'MANAGEMENT_ADMIN_TITLE', 'MANAGEMENT_ADMIN_SUBTITLE',
+        'MANAGEMENT_ADMIN_REFRESH_INTERVAL_SECONDS', 'MANAGEMENT_ADMIN_PAGE_SIZE',
+        'MANAGEMENT_ADMIN_REQUEST_METRICS_ENABLED', 'MANAGEMENT_ADMIN_REQUEST_METRICS_TITLE',
+        'MANAGEMENT_ADMIN_REQUEST_METRICS_TABLE', 'MANAGEMENT_ADMIN_REQUEST_METRICS_INCLUDE_PATHS',
+        'MANAGEMENT_ADMIN_REQUEST_METRICS_EXCLUDE_PATHS',
+        'MANAGEMENT_ENDPOINTS_WEB_SECURITY_ENABLED', 'MANAGEMENT_ENDPOINTS_WEB_SECURITY_ROLES',
+        'NACOS_CONFIG_ENABLED', 'NACOS_CONFIG_SERVER_ADDR', 'NACOS_CONFIG_DATA_ID',
+        'NACOS_CONFIG_GROUP', 'NACOS_CONFIG_NAMESPACE', 'NACOS_CONFIG_USERNAME',
+        'NACOS_CONFIG_PASSWORD', 'NACOS_CONFIG_TIMEOUT_MS', 'NACOS_CONFIG_FAIL_FAST',
+        'NACOS_CONFIG_REFRESH_ENABLED', 'NACOS_CONFIG_REFRESH_INTERVAL_SECONDS',
+        'AI_ALLOW_FAKE',
+    })
 
     # Framework-owned sections are consumed as mappings during startup.  A
     # minimal YAML file may leave one as ``null`` (``database:``), while a
@@ -127,6 +174,15 @@ class ConfigLoader:
         else:
             self.config_path = config_path
         self._config: Dict[str, Any] = {}
+        # 配置刷新在 Nacos 后台线程中执行；读操作必须看到完整快照，不能读到
+        # ``_load_config`` 过程中的半成品。所有公开读取和 reload 都使用同一把锁。
+        self._config_lock = threading.RLock()
+        self._reload_in_progress = False
+        self._last_remote_config: Dict[str, Any] = {}
+        self._last_remote_identity = None
+        self._config_sources: list[str] = []
+        self._config_monitor = ConfigMonitor()
+        self._has_loaded = False
         self._nacos_config_client = None
         # Bootstrap 阶段可静默读取配置，先应用 logging.level，再输出框架日志。
         self._log_events = log_events
@@ -223,6 +279,7 @@ class ConfigLoader:
                     raise ConfigurationError(f"必需的环境变量 {env_name.strip()} 未设置")
                 return default_value
 
+            self._environment_placeholder_used = True
             return env_value
 
         # 迭代解析最内层占位符，支持嵌套 ${A:${B:default}}
@@ -283,7 +340,10 @@ class ConfigLoader:
 
     def _resolve_profile_path(self, profile: str) -> Optional[str]:
         """解析 ``application-{profile}.yml`` 路径，与主配置同目录。"""
-        if not profile or profile == 'default':
+        # ``default`` 也是一个有效 profile。若项目提供
+        # ``application-default.yml``，它应像 Spring Boot 一样参与默认
+        # 配置合并；没有该文件时自然回退到主 application.yml。
+        if not profile:
             return None
         config_dir = os.path.dirname(os.path.abspath(self.config_path))
         profile_file = f"application-{profile}.yml"
@@ -323,6 +383,10 @@ class ConfigLoader:
 
     def _load_config(self):
         """加载配置"""
+        started = time.perf_counter()
+        initial_load = not self._has_loaded
+        self._config_sources = []
+        self._environment_placeholder_used = False
         # Read .env before resolving YAML placeholders.  This keeps the
         # generated project's documented local setup working while preserving
         # explicitly supplied process environment variables.
@@ -335,6 +399,7 @@ class ConfigLoader:
                     self._config = yaml.safe_load(f) or {}
                 if not isinstance(self._config, dict):
                     raise ConfigurationError("配置文件根节点必须是对象")
+                self._config_sources.append("yaml")
                 self._log("info", f"Loaded config from {self.config_path}")
             except Exception as e:
                 self._log("error", f"Failed to load config from {self.config_path}: {e}")
@@ -354,6 +419,13 @@ class ConfigLoader:
         # 兼容 dict 格式的 profile.active（如 springbootai.profiles.active: {name: prod}）
         if isinstance(profile, dict):
             profile = profile.get('name') or profile.get('active') or 'default'
+        # Profile 文件必须在完整配置占位符解析前决定，但 active 本身也
+        # 经常写成 ``${SPRING_PROFILES_ACTIVE:default}``。先解析这一项，
+        # 否则框架会去查找字面文件名
+        # ``application-${SPRING_PROFILES_ACTIVE:default}.yml``，导致默认
+        # profile 文件静默不生效。
+        if isinstance(profile, str) and '${' in profile:
+            profile = self._resolve_env_var(profile)
         if profile:
             profile = str(profile).strip()
         profile_path = self._resolve_profile_path(profile) if profile else None
@@ -363,9 +435,14 @@ class ConfigLoader:
                     profile_config = yaml.safe_load(f) or {}
                 if isinstance(profile_config, dict):
                     self._config = self._deep_merge(self._config, profile_config)
+                    self._config_sources.append(f"profile:{profile}")
                     self._log("info", f"Loaded profile config from {profile_path} (profile={profile})")
             except Exception as e:
                 self._log("warning", f"Failed to load profile config {profile_path}: {e}")
+                active_profile = str(profile or '').strip().lower()
+                fail_fast_profile = active_profile in {'prod', 'production'} or _to_bool(os.getenv('STARTUP_FAIL_FAST'), False)
+                if fail_fast_profile:
+                    raise ConfigurationError(f"无法加载 profile 配置 {profile_path}") from e
 
         # A profile may replace a whole section with null/list/scalar.  Restore
         # the mapping contract before resolving placeholders and overrides.
@@ -381,12 +458,28 @@ class ConfigLoader:
 
         # 3. 从环境变量覆盖配置
         self._override_with_env()
+        if self._environment_placeholder_used or any(name in os.environ for name in self._CONFIG_ENV_NAMES):
+            # 不记录环境变量名/值，监控只展示配置来源类别。
+            self._config_sources.append("environment")
         # 4. 从命令行参数覆盖配置（优先级最高）
-        self._override_with_cli_args()
+        if self._override_with_cli_args():
+            self._config_sources.append("cli")
         # CLI may replace a complete section (for example ``--server=[]``).
         # Re-apply the mapping contract before validation and application use.
         self._normalize_section_mappings()
         self._validate_config()
+        monitor_options = resolve_config_monitor_config(self._config)
+        self._config_monitor.configure(monitor_options)
+        if initial_load:
+            try:
+                self._config_monitor.record(
+                    "load", previous=None, current=self._config,
+                    source="+".join(dict.fromkeys(self._config_sources)) or "defaults",
+                    success=True, duration_ms=(time.perf_counter() - started) * 1000,
+                )
+            except Exception:
+                logger.debug("配置初始加载监控记录失败", exc_info=True)
+        self._has_loaded = True
 
     def _load_nacos_bootstrap_config(self) -> None:
         """从 Nacos 拉取远程 YAML 并作为本地配置的覆盖层合并。"""
@@ -413,13 +506,44 @@ class ConfigLoader:
                 )
             return
 
+        # 配置源被关闭时及时停止旧监听器，避免热刷新线程继续使用上一份远程配置。
+        remote_identity = None
+        try:
+            bootstrap_properties = NacosConfigProperties.from_sources(self._config)
+            remote_identity = (
+                bootstrap_properties.server_addr, bootstrap_properties.data_id,
+                bootstrap_properties.group, bootstrap_properties.namespace,
+                bootstrap_properties.username,
+            )
+            if (
+                not bootstrap_properties.enabled
+                and self._nacos_config_client is not None
+                and not self._reload_in_progress
+            ):
+                self._nacos_config_client.close()
+                self._nacos_config_client = None
+                self._last_remote_config = {}
+                self._last_remote_identity = None
+        except Exception:
+            # 具体 fail-fast 语义由 bootstrap_nacos_config 处理；这里不让探测逻辑
+            # 覆盖真正的加载错误。
+            pass
+
         # reload() 会在监听回调内部执行。保留回调前的内容版本，避免本次
         # fetch() 在 Bean/Web 刷新尚未成功时提前提交版本，导致失败后不再重试。
         previous_client = self._nacos_config_client
         previous_content = getattr(previous_client, '_last_content', None)
         try:
+            # 启动时 fail_fast=false 允许可选 Nacos 暂时离线；热刷新时则
+            # 必须把读取失败抛给监听器，保留旧版本标记并在下一轮重试，
+            # 不能让“使用 last-good 配置”伪装成新配置刷新成功。
+            bootstrap_kwargs = {}
+            if self._reload_in_progress:
+                bootstrap_kwargs['raise_on_unavailable'] = True
             client, remote_config = bootstrap_nacos_config(
-                self._config, existing_client=self._nacos_config_client
+                self._config,
+                existing_client=self._nacos_config_client,
+                **bootstrap_kwargs,
             )
             self._nacos_config_client = client
             if client is previous_client and previous_client is not None:
@@ -430,8 +554,19 @@ class ConfigLoader:
                     pass
             if remote_config:
                 self._config = self._deep_merge(self._config, remote_config)
+                self._last_remote_config = deepcopy(remote_config)
+                self._last_remote_identity = remote_identity
+                self._config_sources.append("nacos")
                 self._normalize_section_mappings()
                 self._log("info", "Merged remote Nacos configuration")
+            elif (
+                client is not None and self._last_remote_config
+                and remote_identity == self._last_remote_identity
+            ):
+                # 网络抖动且 fail_fast=false 时保留最后一份成功远程配置，避免
+                # 数据库/JWT/端口等关键配置瞬间回退到本地默认值。
+                self._config = self._deep_merge(self._config, self._last_remote_config)
+                self._config_sources.append("nacos(last-good)")
         except ImportError:
             # 兼容极少数安装损坏/依赖导入失败场景；这里同样按配置决定
             # 是否 fail-fast，而不是无条件吞掉异常。
@@ -498,7 +633,7 @@ class ConfigLoader:
     def _safe_float(value: Any, default: float = 0.0) -> float:
         """安全转换浮点数，兼容 dict 格式的配置值。"""
         if isinstance(value, dict):
-            value = value.get('value') or value.get('timeout') or default
+            value = value.get('value') or value.get('timeout') or value.get('seconds') or default
         try:
             return float(value)
         except (ValueError, TypeError):
@@ -550,20 +685,13 @@ class ConfigLoader:
         raw_algorithm = os.getenv('JWT_ALGORITHM', jwt_config.get('algorithm', 'HS256'))
         jwt_config['algorithm'] = raw_algorithm if isinstance(raw_algorithm, str) else 'HS256'
 
-        # 数据库配置
+        # 数据库配置。先应用所有环境变量，再按最终 driver/database 计算 URL，
+        # 否则 DB_DRIVER/DB_NAME 会被旧 URL 覆盖，导致监控和业务连接到不同数据库。
         database_config = self._ensure_section('database')
         # ``database.database`` 是 PyMyBatis/SQLite 项目常用的文件路径，
         # ``database.url`` 是 SQLAlchemy 风格连接串。没有显式 URL 时不要
         # 强行写入 test.db，否则框架扩展（请求监控等）会与业务库分离。
-        configured_url = database_config.get('url')
-        if configured_url is None or (isinstance(configured_url, str) and not configured_url.strip()):
-            driver = str(database_config.get('driver', 'sqlite')).lower()
-            database_path = database_config.get('database')
-            if driver == 'sqlite' and database_path:
-                configured_url = 'sqlite:///' + str(database_path).replace('\\', '/')
-            else:
-                configured_url = 'sqlite:///./test.db'
-        database_config['url'] = os.getenv('DB_URL', configured_url)
+        explicit_url = os.getenv('DB_URL')
         database_config['echo'] = _to_bool(os.getenv('DB_ECHO', database_config.get('echo', False)), False)
         # database.enabled 默认 True（对齐 application.yml 占位符 ${DB_ENABLED:true}）
         database_config['enabled'] = _to_bool(os.getenv('DB_ENABLED', database_config.get('enabled', True)), True)
@@ -579,6 +707,41 @@ class ConfigLoader:
         database_config['username'] = raw_username if isinstance(raw_username, str) else ''
         raw_password = os.getenv('DB_PASSWORD', database_config.get('password', ''))
         database_config['password'] = raw_password if isinstance(raw_password, str) else ''
+        if explicit_url is not None and str(explicit_url).strip():
+            database_config['url'] = str(explicit_url).strip()
+        else:
+            configured_url = database_config.get('url')
+            driver = str(database_config.get('driver', 'sqlite')).lower()
+            database_path = database_config.get('database')
+            driver_or_name_overridden = (
+                os.getenv('DB_DRIVER') is not None or os.getenv('DB_NAME') is not None
+            )
+            if (
+                configured_url is None
+                or (isinstance(configured_url, str) and not configured_url.strip())
+                or driver_or_name_overridden
+            ):
+                if driver == 'sqlite' and database_path:
+                    configured_url = 'sqlite:///' + str(database_path).replace('\\', '/')
+                elif driver in {'mysql', 'mariadb'}:
+                    user = quote_plus(str(database_config.get('username', '')))
+                    password = quote_plus(str(database_config.get('password', '')))
+                    auth = f'{user}:{password}@' if user or password else ''
+                    configured_url = (
+                        f"mysql+pymysql://{auth}{database_config.get('host', 'localhost')}:"
+                        f"{database_config.get('port', 3306)}/{database_path or 'app'}"
+                    )
+                elif driver in {'postgres', 'postgresql', 'psycopg2'}:
+                    user = quote_plus(str(database_config.get('username', '')))
+                    password = quote_plus(str(database_config.get('password', '')))
+                    auth = f'{user}:{password}@' if user or password else ''
+                    configured_url = (
+                        f"postgresql+psycopg2://{auth}{database_config.get('host', 'localhost')}:"
+                        f"{database_config.get('port', 5432)}/{database_path or 'app'}"
+                    )
+                else:
+                    configured_url = 'sqlite:///./runtime/springbootai.db'
+            database_config['url'] = configured_url
 
         # 服务发现配置
         # 兼容占位符风格（NACOS_*）与显式覆盖风格（DISCOVERY_*）两套环境变量命名
@@ -594,6 +757,22 @@ class ConfigLoader:
             default=discovery_config.get('group', 'DEFAULT_GROUP'))
         discovery_config['username'] = os.getenv('NACOS_USERNAME', discovery_config.get('username', ''))
         discovery_config['password'] = os.getenv('NACOS_PASSWORD', discovery_config.get('password', ''))
+        # Nacos SDK 的请求超时必须是有限正数。支持旧/新环境变量别名，
+        # 以便在容器环境直接缩短可选服务不可用时的启动等待。
+        discovery_config['timeout'] = self._safe_float(
+            self._get_env_any(
+                'NACOS_TIMEOUT', 'NACOS_TIMEOUT_SECONDS',
+                'NACOS_CONNECT_TIMEOUT', 'NACOS_REQUEST_TIMEOUT',
+                'DISCOVERY_TIMEOUT', 'DISCOVERY_TIMEOUT_SECONDS',
+                'DISCOVERY_CONNECT_TIMEOUT',
+                default=discovery_config.get(
+                    'timeout', discovery_config.get(
+                        'timeout_seconds', discovery_config.get('connect_timeout', 3.0)
+                    )
+                ),
+            ),
+            3.0,
+        )
         discovery_config['enabled'] = _to_bool(os.getenv('DISCOVERY_ENABLED', discovery_config.get('enabled', False)), False)
 
         # Seata配置
@@ -630,6 +809,41 @@ class ConfigLoader:
         rabbitmq_config['virtual_host'] = self._get_env_any(
             'RABBITMQ_VHOST', 'RABBITMQ_VIRTUAL_HOST',
             default=rabbitmq_config.get('virtual_host', '/'))
+        # pika 的 socket/handshake 超时与连接重试次数分开配置；默认值均为
+        # 有限的小值，避免 RabbitMQ 未启动时阻塞应用数十秒。实际安全上限
+        # 在 RabbitMQClient 中再次校验，Nacos/环境/Nacos 热更新均适用。
+        rabbitmq_config['connection_timeout'] = self._safe_float(
+            self._get_env_any(
+                'RABBITMQ_CONNECTION_TIMEOUT', 'RABBITMQ_TIMEOUT',
+                'RABBITMQ_TIMEOUT_SECONDS',
+                default=rabbitmq_config.get(
+                    'connection_timeout', rabbitmq_config.get('timeout', 5.0)
+                ),
+            ),
+            5.0,
+        )
+        rabbitmq_config['socket_timeout'] = self._safe_float(
+            os.getenv('RABBITMQ_SOCKET_TIMEOUT', rabbitmq_config.get('socket_timeout', 5.0)),
+            5.0,
+        )
+        rabbitmq_config['stack_timeout'] = self._safe_float(
+            os.getenv('RABBITMQ_STACK_TIMEOUT', rabbitmq_config.get('stack_timeout', 5.0)),
+            5.0,
+        )
+        rabbitmq_config['connection_attempts'] = self._get_env_int(
+            'RABBITMQ_CONNECTION_ATTEMPTS',
+            rabbitmq_config.get('connection_attempts', 1),
+            1,
+        )
+        rabbitmq_config['blocked_connection_timeout'] = self._safe_float(
+            os.getenv('RABBITMQ_BLOCKED_CONNECTION_TIMEOUT',
+                      rabbitmq_config.get('blocked_connection_timeout', 300.0)),
+            300.0,
+        )
+        rabbitmq_config['retry_delay'] = self._safe_float(
+            os.getenv('RABBITMQ_RETRY_DELAY', rabbitmq_config.get('retry_delay', 0.0)),
+            0.0,
+        )
         rabbitmq_config['enabled'] = _to_bool(os.getenv('RABBITMQ_ENABLED', rabbitmq_config.get('enabled', False)), False)
 
         # Prometheus配置
@@ -700,6 +914,27 @@ class ConfigLoader:
         # 只读取 ApplicationContext.get_config()，因此无论值来自 YAML、Nacos 还是环境变量，
         # 运行期语义和优先级完全一致（环境变量最高）。
         management_config = self._ensure_section('management')
+        config_monitor_config = self._mapping(
+            management_config.get('config-monitor', management_config.get('config_monitor'))
+        )
+        management_config['config-monitor'] = config_monitor_config
+        for env_name, config_key in (
+            ('MANAGEMENT_CONFIG_MONITOR_ENABLED', 'enabled'),
+            ('MANAGEMENT_CONFIG_MONITOR_INCLUDE_VALUES', 'include-values'),
+            ('MANAGEMENT_CONFIG_MONITOR_HISTORY_SIZE', 'history-size'),
+            ('MANAGEMENT_CONFIG_MONITOR_REFRESH_EVENTS', 'refresh-events'),
+        ):
+            value = os.getenv(env_name)
+            if value is not None:
+                if config_key in {'enabled', 'include-values', 'refresh-events'}:
+                    value = _to_bool(value)
+                elif config_key == 'history-size':
+                    try:
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        self._log('warning', 'Ignoring invalid %s=%r', env_name, value)
+                        continue
+                config_monitor_config[config_key] = value
         admin_config = self._mapping(management_config.get('admin'))
         management_config['admin'] = admin_config
         for env_name, config_key in (
@@ -751,7 +986,7 @@ class ConfigLoader:
                 item.strip() for item in security_roles.split(',') if item.strip()
             ]
 
-    def _override_with_cli_args(self) -> None:
+    def _override_with_cli_args(self) -> bool:
         """从命令行参数覆盖配置（优先级最高，对齐 Spring Boot ``--key=value``）。
 
         支持两种形式：
@@ -763,6 +998,7 @@ class ConfigLoader:
         """
         args = sys.argv[1:]
         i = 0
+        applied = False
         while i < len(args):
             arg = args[i]
             if not arg.startswith('--'):
@@ -771,19 +1007,21 @@ class ConfigLoader:
             body = arg[2:]
             if '=' in body:
                 key, value = body.split('=', 1)
-                self._set_cli_override(key, value)
+                applied = self._set_cli_override(key, value) or applied
                 i += 1
             else:
                 # --key value 形式：仅当下一个 token 非参数时才取值
                 if i + 1 < len(args) and not args[i + 1].startswith('--'):
-                    self._set_cli_override(body, args[i + 1])
+                    applied = self._set_cli_override(body, args[i + 1]) or applied
                     i += 2
                 else:
                     i += 1
-
-    def _set_cli_override(self, dotted_key: str, raw_value: str) -> None:
+        return applied
+    def _set_cli_override(self, dotted_key: str, raw_value: str) -> bool:
         """将点分隔键写入 ``self._config``，值做 yaml 类型推断。"""
-        keys = dotted_key.split('.')
+        keys = [part.strip() for part in dotted_key.split('.') if part.strip()]
+        if not keys:
+            return False
         node = self._config
         for k in keys[:-1]:
             child = node.get(k)
@@ -793,7 +1031,14 @@ class ConfigLoader:
             node = child
         parsed = yaml.safe_load(raw_value)
         node[keys[-1]] = parsed
-        self._log("debug", f"CLI override: {dotted_key}={parsed!r}")
+        lowered = dotted_key.replace('_', '-').lower()
+        sensitive = any(token in lowered for token in (
+            'password', 'secret', 'token', 'credential', 'api-key',
+            'private-key', 'access-key', 'authorization',
+        ))
+        shown = '******' if sensitive else repr(parsed)
+        self._log("debug", "CLI override: %s=%s", dotted_key, shown)
+        return True
 
     def _validate_config(self) -> None:
         jwt_config = self._mapping(self._config.get('jwt'))
@@ -840,9 +1085,16 @@ class ConfigLoader:
         # 旧版本默认 AI_ALLOW_FAKE=true，缺失 api-key 时无声返回 FakeChatModel，
         # 业务可能启动成功并持续返回测试数据，而非明确失败。
         # 双重加固：
-        # (1) 强制 AI_ALLOW_FAKE=false，使 autoconfig 缺 key 时抛 ValueError；
+        # (1) 将未显式设置的 AI_ALLOW_FAKE 固定为 false，使后续 AI 自动配置
+        #     无论导入时序如何都不会静默降级为 FakeChatModel；
         # (2) 在此显式校验默认 provider 的 api-key 已配置，给出清晰错误。
-        os.environ['AI_ALLOW_FAKE'] = 'false'
+        # 显式设置为 true 仍然立即报错。这里使用 setdefault 而不是无条件覆盖，
+        # 既保留调用方对开发/测试环境的显式选择，也保证生产配置的安全默认值。
+        if _to_bool(os.getenv('AI_ALLOW_FAKE'), False):
+            raise ConfigurationError(
+                "生产环境不允许 AI_ALLOW_FAKE=true；请配置真实 AI provider 的 api-key"
+            )
+        os.environ.setdefault('AI_ALLOW_FAKE', 'false')
         ai_config = self._mapping(self._config.get('ai'))
         spring_config = self._mapping(self._config.get('spring'))
         spring_ai = self._mapping(spring_config.get('ai'))
@@ -885,7 +1137,12 @@ class ConfigLoader:
     
     def get_config(self) -> Dict[str, Any]:
         """获取完整配置"""
-        return deepcopy(self._config)
+        lock = getattr(self, "_config_lock", None)
+        if lock is None:
+            return deepcopy(getattr(self, "_config", {}))
+
+        with lock:
+            return deepcopy(self._config)
     
     def get_prefix_config(self, prefix: str) -> Dict[str, Any]:
         """
@@ -905,8 +1162,8 @@ class ConfigLoader:
 
         Both the concise Python form (``"server.port"``) and the familiar
         Spring form (``"${server.port:8080}"``) are accepted.  Property
-        lookup happens first, then an environment variable with the same name,
-        followed by the expression default.  A missing value returns the
+        Environment variables use the same high-priority rule as normal binding,
+        followed by the resolved configuration property and expression default.  A missing value returns the
         caller-provided *default* instead of leaking an annotation object into
         a constructor argument.
         """
@@ -921,14 +1178,21 @@ class ConfigLoader:
             key = expression.strip()
             expression_default = None
 
-        value = self.get(key, self._MISSING)
-        if value is not self._MISSING:
-            return value
-
-        env_value = os.getenv(key)
+        # Support dotted/kebab property names and their conventional uppercase
+        # underscore environment aliases (e.g. feature.timeout -> FEATURE_TIMEOUT).
+        env_names = [key, key.replace('.', '_').replace('-', '_').upper()]
+        env_value = next(
+            (os.getenv(name) for name in dict.fromkeys(env_names)
+             if os.getenv(name) is not None),
+            None,
+        )
         if env_value is not None:
             parsed = yaml.safe_load(env_value)
             return parsed if not isinstance(parsed, (dict, list)) else env_value
+
+        value = self.get(key, self._MISSING)
+        if value is not self._MISSING:
+            return value
 
         if expression_default is not None:
             parsed = yaml.safe_load(expression_default)
@@ -955,9 +1219,16 @@ class ConfigLoader:
         Returns:
             激活的配置文件名（不含.yml后缀）
         """
-        spring_config = self._mapping(self._config.get('spring'))
-        profiles_config = self._mapping(spring_config.get('profiles'))
-        active = profiles_config.get('active') or 'default'
+        lock = getattr(self, "_config_lock", None)
+        if lock is None:
+            spring_config = self._mapping(self._config.get('spring'))
+            profiles_config = self._mapping(spring_config.get('profiles'))
+            active = profiles_config.get('active') or 'default'
+        else:
+            with lock:
+                spring_config = self._mapping(self._config.get('spring'))
+                profiles_config = self._mapping(spring_config.get('profiles'))
+                active = profiles_config.get('active') or 'default'
         # 兼容 dict 格式（如 springbootai.profiles.active: {name: prod}）
         if isinstance(active, dict):
             active = active.get('name') or active.get('active') or 'default'
@@ -995,25 +1266,102 @@ class ConfigLoader:
         Returns:
             配置值
         """
-        keys = key.split('.')
-        value = self._config
+        lock = getattr(self, "_config_lock", None)
+        if lock is None:
+            value = getattr(self, "_config", {})
+            for k in key.split('.'):
+                value, found = self._lookup_key(value, k)
+                if not found:
+                    return default
+            return deepcopy(value)
 
-        for k in keys:
-            value, found = self._lookup_key(value, k)
-            if not found:
-                return default
+        with lock:
+            keys = key.split('.')
+            value = self._config
 
-        return value
+            for k in keys:
+                value, found = self._lookup_key(value, k)
+                if not found:
+                    return default
+
+            return deepcopy(value)
     
     def load_config(self):
         """加载配置（公共方法，供外部调用）"""
-        self._load_config()
+        with self._config_lock:
+            self._load_config()
+
+    def get_config_monitor(self) -> ConfigMonitor:
+        """返回配置监控实例；实例本身线程安全，可供 Actuator 查询。"""
+        return self._config_monitor
     
     def reload(self):
-        """重新加载配置"""
-        self._config = {}
-        self._load_config()
-        self._log("info", "Config reloaded")
+        """原子重新加载配置。
+
+        新快照完整加载并校验成功后才替换当前配置；Nacos 暂时不可用或 Bean
+        刷新失败时由上层回调抛出，下一轮监听仍会重试，业务继续使用旧快照。
+        """
+        with self._config_lock:
+            previous = deepcopy(self._config)
+            previous_remote = deepcopy(self._last_remote_config)
+            previous_remote_identity = self._last_remote_identity
+            previous_sources = list(self._config_sources)
+            previous_client = self._nacos_config_client
+            previous_content = getattr(previous_client, '_last_content', None)
+            started = time.perf_counter()
+            self._reload_in_progress = True
+            try:
+                self._config = {}
+                self._load_config()
+                current = deepcopy(self._config)
+            except Exception as exc:
+                # 恢复远程快照、配置来源和客户端版本，失败候选不能污染下一次重试。
+                candidate_client = self._nacos_config_client
+                self._config = previous
+                self._last_remote_config = previous_remote
+                self._last_remote_identity = previous_remote_identity
+                self._config_sources = previous_sources
+                self._nacos_config_client = previous_client
+                if candidate_client is not None and candidate_client is not previous_client:
+                    try:
+                        candidate_client.close()
+                    except Exception:
+                        logger.debug("关闭失败的 Nacos 配置客户端失败", exc_info=True)
+                if previous_client is not None:
+                    try:
+                        previous_client._last_content = previous_content
+                    except Exception:
+                        pass
+                duration_ms = (time.perf_counter() - started) * 1000
+                try:
+                    self._config_monitor.record_refresh(
+                        previous=previous, current=previous,
+                        source="reload", success=False,
+                        duration_ms=duration_ms, error=exc,
+                    )
+                except Exception:
+                    logger.debug("配置监控记录失败", exc_info=True)
+                self._reload_in_progress = False
+                raise
+            duration_ms = (time.perf_counter() - started) * 1000
+            try:
+                self._config_monitor.record_refresh(
+                    previous=previous, current=current,
+                    source="+".join(dict.fromkeys(self._config_sources)) or "reload",
+                    success=True, duration_ms=duration_ms,
+                )
+            except Exception:
+                logger.debug("配置监控记录失败", exc_info=True)
+            self._log("info", "Config reloaded")
+            if previous_client is not None and self._nacos_config_client is None:
+                try:
+                    previous_client.close()
+                except Exception:
+                    # 释放旧 Nacos 客户端属于清理动作，不能把已经成功提交的
+                    # 新配置变成一次失败刷新；客户端自身仍会在下一次重载时
+                    # 被替换，记录日志供运维排查。
+                    logger.warning("关闭旧 Nacos 配置客户端失败", exc_info=True)
+            self._reload_in_progress = False
 
 
 # 创建全局配置加载器实例
