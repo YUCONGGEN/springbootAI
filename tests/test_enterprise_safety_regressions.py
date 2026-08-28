@@ -105,8 +105,7 @@ def test_distributed_lock_business_exception_is_not_retried_locally(monkeypatch)
     assert calls == 1
 
 
-@pytest.mark.asyncio
-async def test_async_distributed_lock_is_held_until_await_completes(monkeypatch):
+def test_async_distributed_lock_is_held_until_await_completes(monkeypatch):
     from springbootai.aop import comprehensive_aop as module
     state = {"held": False}
     monkeypatch.setattr(module.redis_client, "get_client", lambda: object())
@@ -129,7 +128,7 @@ async def test_async_distributed_lock_is_held_until_await_completes(monkeypatch)
         assert state["held"] is True
         return item_id
 
-    assert await business(7) == 7
+    assert asyncio.run(business(7)) == 7
     assert state["held"] is False
 
 
