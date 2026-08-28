@@ -708,10 +708,11 @@ class TestFunctionCallingClosure:
                 )
 
         model = AlwaysToolModel()
-        resp = model.call([Message.user("x")], tool_registry=registry)
-        # 不超过 MAX_TOOL_ITERATIONS + 1 次调用
-        assert model.calls <= ChatModel.MAX_TOOL_ITERATIONS + 1
-        assert resp.metadata.get("tool_iterations") == ChatModel.MAX_TOOL_ITERATIONS
+        from springbootai.ai import ToolLoopLimitExceededError
+        with pytest.raises(ToolLoopLimitExceededError, match="tool loop"):
+            model.call([Message.user("x")], tool_registry=registry)
+        # 初始调用 + 5 次工具续写；不会返回无法完成的悬空 tool_call。
+        assert model.calls == ChatModel.MAX_TOOL_ITERATIONS + 1
 
 
 class TestEmbeddingAutoconfigAndRedisVectorStore:
@@ -975,9 +976,7 @@ class TestStreamingAndAsync:
         """ChatModel.acall 异步调用返回 ChatResponse"""
         import asyncio
         model = FakeChatModel(prefix="AI:")
-        resp = asyncio.get_event_loop().run_until_complete(
-            model.acall([Message.user("async")])
-        )
+        resp = asyncio.run(model.acall([Message.user("async")]))
         assert resp.content() == "AI: async"
 
     def test_async_astream_yields_chunks(self):
@@ -991,7 +990,7 @@ class TestStreamingAndAsync:
                 result.append(chunk.content())
             return result
 
-        chunks = asyncio.get_event_loop().run_until_complete(collect())
+        chunks = asyncio.run(collect())
         assert "".join(chunks) == "AI: go"
 
 

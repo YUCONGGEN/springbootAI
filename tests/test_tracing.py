@@ -1,6 +1,5 @@
 """Tests for springbootai.tracing module (LocalSpan fallback when SkyWalking is unavailable)."""
 import time
-import pytest
 
 from springbootai.tracing.skywalking import (
     SkyWalkingTracer,
@@ -112,12 +111,10 @@ class TestSkyWalkingTracer:
         skywalking_tracer.extract_carrier({"sw-header": "dummy"})
 
     def test_init_skywalking_is_safe_to_call(self):
-        """init_skywalking should not raise even when singleton already exists."""
-        # SkyWalkingTracer is a singleton that initializes once at module load.
-        # Calling init_skywalking afterwards must not crash (it may no-op due to
-        # the singleton pattern, which is the expected behavior for a
-        # late/redundant initialization call).
+        """Explicit initialization must apply config to the singleton."""
         init_skywalking({"service_name": "new-svc", "collector_address": "col:11800"})
+        assert skywalking_tracer.service_name == "new-svc"
+        assert skywalking_tracer.collector_address == "col:11800"
 
     def test_local_span_tag_with_tuple_and_object(self):
         """tag() should accept both object-style and tuple-style tags in one span."""

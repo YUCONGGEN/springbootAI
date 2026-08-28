@@ -55,7 +55,7 @@ jobs:
       run: |
         echo "Running bandit security scan (only high severity issues will block)..."
         bandit -r springbootai/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ \
-          -lll -f json -o bandit-report.json || true
+          -lll -f json -o bandit-report.json
         echo "Bandit scan completed"
 
     - name: Check for hardcoded secrets

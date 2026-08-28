@@ -34,10 +34,25 @@ import logging
 import threading
 import time
 import uuid
-from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional
 
+from springbootai.logging.context import redact_sensitive
+
 logger = logging.getLogger("Spring.Cloud.Bus")
+
+
+def _safe_log_field(value: Any, limit: int = 160) -> str:
+    """Return a bounded, single-line and credential-redacted log field."""
+    try:
+        text = redact_sensitive(value)
+    except Exception:
+        text = f"<unprintable:{type(value).__name__}>"
+    text = (
+        text.replace("\u0085", "\\u0085")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+    return text if len(text) <= limit else text[:limit] + "..."
 
 
 class BusEvent:
@@ -185,8 +200,10 @@ class EventBus:
         self._service_name = config.get('spring', {}).get('application', {}).get('name', 'application')
         self._configured = True
         logger.info(
-            f"EventBus configured: backend={self._backend}, "
-            f"destination={self._destination}, service={self._service_name}"
+            "EventBus configured backend=%s destination=%s service=%s",
+            _safe_log_field(self._backend),
+            _safe_log_field(self._destination),
+            _safe_log_field(self._service_name),
         )
 
     @property
@@ -202,7 +219,10 @@ class EventBus:
         """
         with self._subscription_lock:
             self._subscriptions.append(BusSubscription(event_type, callback))
-        logger.debug(f"Subscribed to event type: {event_type}")
+        logger.debug(
+            "Subscribed to bus event event_type=%s",
+            _safe_log_field(event_type),
+        )
 
     def unsubscribe(self, callback: Callable[[BusEvent], None]) -> None:
         """取消订阅。
@@ -226,7 +246,16 @@ class EventBus:
             event.origin_service = self._service_name
 
         self._published_count += 1
-        logger.info(f"Publishing event: {event}")
+        # Never log ``event.data``: refresh/custom events routinely contain
+        # configuration values, credentials or user-controlled text.
+        logger.info(
+            "Publishing bus event event_type=%s event_id=%s origin=%s "
+            "destination=%s",
+            _safe_log_field(event.type),
+            _safe_log_field(event.id),
+            _safe_log_field(event.origin_service),
+            _safe_log_field(event.destination_service),
+        )
 
         if self._backend == 'local':
             self._deliver_local(event)
@@ -235,7 +264,10 @@ class EventBus:
         elif self._backend == 'kafka':
             self._deliver_kafka(event)
         else:
-            logger.warning(f"Unknown bus backend: {self._backend}, falling back to local")
+            logger.warning(
+                "Unknown bus backend backend=%s; falling back to local",
+                _safe_log_field(self._backend),
+            )
             self._deliver_local(event)
 
         return event.id
@@ -255,9 +287,15 @@ class EventBus:
             try:
                 sub.callback(event)
                 self._delivered_count += 1
-            except Exception as e:
+            except Exception as exc:
                 self._failed_count += 1
-                logger.error(f"Event delivery failed for type={event.type}: {e}")
+                logger.error(
+                    "Bus event delivery failed event_type=%s event_id=%s "
+                    "error_type=%s",
+                    _safe_log_field(event.type),
+                    _safe_log_field(event.id),
+                    _safe_log_field(type(exc).__name__),
+                )
 
     def _deliver_rabbitmq(self, event: BusEvent) -> None:
         """通过 RabbitMQ 广播事件。"""
@@ -270,8 +308,15 @@ class EventBus:
         except ImportError:
             logger.warning("RabbitMQ not installed, falling back to local delivery")
             self._deliver_local(event)
-        except Exception as e:
-            logger.error(f"RabbitMQ delivery failed: {e}, falling back to local")
+        except Exception as exc:
+            logger.error(
+                "RabbitMQ bus delivery failed event_type=%s event_id=%s "
+                "destination=%s error_type=%s; falling back to local",
+                _safe_log_field(event.type),
+                _safe_log_field(event.id),
+                _safe_log_field(self._destination),
+                _safe_log_field(type(exc).__name__),
+            )
             self._deliver_local(event)
 
     def _deliver_kafka(self, event: BusEvent) -> None:
@@ -284,8 +329,15 @@ class EventBus:
         except ImportError:
             logger.warning("Kafka not installed, falling back to local delivery")
             self._deliver_local(event)
-        except Exception as e:
-            logger.error(f"Kafka delivery failed: {e}, falling back to local")
+        except Exception as exc:
+            logger.error(
+                "Kafka bus delivery failed event_type=%s event_id=%s "
+                "destination=%s error_type=%s; falling back to local",
+                _safe_log_field(event.type),
+                _safe_log_field(event.id),
+                _safe_log_field(self._destination),
+                _safe_log_field(type(exc).__name__),
+            )
             self._deliver_local(event)
 
     def publish_refresh(self, destination: str = '*') -> str:

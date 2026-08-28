@@ -7,6 +7,7 @@ except ImportError:
     nacos_discovery_client = None
 from springbootai.cloud.load_balancer import LoadBalancer, load_balancer
 from springbootai.cloud.feign import (
+    FeignRequestError,
     FeignClientProxy,
     FeignClientFactory,
     create_feign_client,
@@ -88,7 +89,8 @@ __all__ = [
     # 负载均衡
     'LoadBalancer', 'load_balancer',
     # Feign
-    'FeignClientProxy', 'FeignClientFactory', 'create_feign_client', 'create_declared_feign_client',
+    'FeignRequestError', 'FeignClientProxy', 'FeignClientFactory',
+    'create_feign_client', 'create_declared_feign_client',
     # 分布式事务
     'seata_manager', 'init_seata', 'SeataTransactionManager', 'BranchStatus',
     'SQLiteTransactionStore', 'SeataBridgeClient', 'SeataBridgeError',
@@ -98,6 +100,7 @@ __all__ = [
     'SystemRule', 'HotParamRule', 'BlockException', 'sentinel_protect',
     # 链路追踪
     'Tracer', 'get_tracer', 'trace_span', 'SpanKind', 'SpanStatus',
+    '_build_traceparent', '_parse_traceparent',
     # 网关
     'GatewayRouter', 'Route', 'GatewayFilter',
     'AuthenticationFilter', 'RateLimitFilter', 'TracingFilter', 'LoggingFilter', 'get_gateway',

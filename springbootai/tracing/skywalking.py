@@ -6,7 +6,9 @@ import logging
 import threading
 import time
 import uuid
-from typing import Dict
+from typing import Any, Dict
+
+from springbootai.logging.context import safe_log_field, sanitize_url
 
 logger = logging.getLogger("Spring.Tracing.SkyWalking")
 
@@ -47,8 +49,15 @@ class SkyWalkingTracer:
         self._initialized = False
         self._local_context = threading.local()
         
-        # 如果SkyWalking可用，尝试初始化
-        if _skywalking_available:
+        # Agent startup is explicit via ``init_skywalking``. Starting a
+        # telemetry process at module import used default values before the
+        # application configuration was available and made late config a no-op.
+
+    def configure(self, service_name: str, collector_address: str) -> None:
+        self.service_name = str(service_name or "spring-python-app")
+        self.collector_address = str(
+            collector_address or "127.0.0.1:11800")
+        if _skywalking_available and not self._initialized:
             self._init_skywalking()
     
     def _init_skywalking(self):
@@ -63,13 +72,25 @@ class SkyWalkingTracer:
             agent.start()
             
             self._initialized = True
-            logger.info(f"[SkyWalking] Agent started, service: {self.service_name}, collector: {self.collector_address}")
-        except Exception as e:
-            logger.warning(f"[SkyWalking] Failed to initialize: {e}. Falling back to local tracing.")
+            collector = (
+                sanitize_url(self.collector_address)
+                if "://" in self.collector_address
+                else safe_log_field(self.collector_address)
+            )
+            logger.info(
+                "[SkyWalking] Agent started service=%s collector=%s",
+                safe_log_field(self.service_name), collector,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[SkyWalking] Initialization failed error_type=%s; "
+                "falling back to local tracing",
+                type(exc).__name__,
+            )
             self._initialized = False
     
     def create_span(self, operation_name: str, span_type: str = "Local", 
-                    peer: str = "") -> 'Span':
+                    peer: str = "") -> Any:
         """
         创建Span
         
@@ -89,13 +110,16 @@ class SkyWalkingTracer:
                 if peer:
                     span.tag(tag.Tag(key="peer", val=peer))
                 return span
-            except Exception as e:
-                logger.warning(f"[SkyWalking] Failed to create span: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "[SkyWalking] Create span failed operation=%s error_type=%s",
+                    safe_log_field(operation_name), type(exc).__name__,
+                )
         
         # 回退到本地Span
         return LocalSpan(operation_name, span_type, peer)
     
-    def create_exit_span(self, operation_name: str, peer: str) -> 'Span':
+    def create_exit_span(self, operation_name: str, peer: str) -> Any:
         """
         创建Exit Span（调用外部服务）
         
@@ -110,8 +134,12 @@ class SkyWalkingTracer:
             try:
                 span = context.create_exit_span(operation_name, peer, Carrier())
                 return span
-            except Exception as e:
-                logger.warning(f"[SkyWalking] Failed to create exit span: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "[SkyWalking] Create exit span failed operation=%s "
+                    "error_type=%s",
+                    safe_log_field(operation_name), type(exc).__name__,
+                )
         
         # 回退到本地Span
         return LocalSpan(operation_name, "Remote", peer)
@@ -123,8 +151,11 @@ class SkyWalkingTracer:
                 active_span = context.get_active_span()
                 if active_span:
                     return str(active_span.trace_id)
-            except Exception as e:
-                logger.warning(f"[SkyWalking] Failed to get trace ID: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "[SkyWalking] Get trace ID failed error_type=%s",
+                    type(exc).__name__,
+                )
         
         # 回退到本地Trace ID
         return getattr(self._local_context, 'trace_id', "")
@@ -149,8 +180,11 @@ class SkyWalkingTracer:
                 context.inject(carrier)
                 for item in carrier:
                     headers[item.key] = item.val
-            except Exception as e:
-                logger.warning(f"[SkyWalking] Failed to inject carrier: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "[SkyWalking] Inject carrier failed error_type=%s",
+                    type(exc).__name__,
+                )
         
         return headers
     
@@ -168,8 +202,11 @@ class SkyWalkingTracer:
                     if item.key in headers:
                         item.val = headers[item.key]
                 context.extract(carrier)
-            except Exception as e:
-                logger.warning(f"[SkyWalking] Failed to extract carrier: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "[SkyWalking] Extract carrier failed error_type=%s",
+                    type(exc).__name__,
+                )
 
 
 class LocalSpan:
@@ -184,7 +221,11 @@ class LocalSpan:
         self.tags = {}
         self.trace_id = str(uuid.uuid4())[:16]
         
-        logger.info(f"[LocalTrace] Start span={operation_name}, trace_id={self.trace_id}, type={span_type}")
+        logger.info(
+            "[LocalTrace] Start span=%s trace_id=%s type=%s",
+            safe_log_field(operation_name), safe_log_field(self.trace_id),
+            safe_log_field(span_type),
+        )
     
     def tag(self, tag_obj):
         """添加标签"""
@@ -198,8 +239,9 @@ class LocalSpan:
         self.end_time = time.time()
         duration = (self.end_time - self.start_time) * 1000
         logger.info(
-            f"[LocalTrace] End span={self.operation_name}, trace_id={self.trace_id}, "
-            f"duration={duration:.2f}ms, type={self.span_type}"
+            "[LocalTrace] End span=%s trace_id=%s duration_ms=%.2f type=%s",
+            safe_log_field(self.operation_name), safe_log_field(self.trace_id),
+            duration, safe_log_field(self.span_type),
         )
     
     def __enter__(self):
@@ -208,7 +250,10 @@ class LocalSpan:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.finish()
         if exc_val:
-            logger.error(f"[LocalTrace] Error span={self.operation_name}, error={exc_val}")
+            logger.error(
+                "[LocalTrace] Span failed span=%s error_type=%s",
+                safe_log_field(self.operation_name), type(exc_val).__name__,
+            )
 
 
 # 创建全局SkyWalking追踪器实例
@@ -222,8 +267,8 @@ def init_skywalking(config: dict) -> None:
     参数：
         config: 配置字典，包含service_name, collector_address等
     """
-    global skywalking_tracer
-    skywalking_tracer = SkyWalkingTracer(
-        service_name=config.get('service_name', 'spring-python-app'),
-        collector_address=config.get('collector_address', '127.0.0.1:11800')
+    root = config if isinstance(config, dict) else {}
+    skywalking_tracer.configure(
+        service_name=root.get('service_name', 'spring-python-app'),
+        collector_address=root.get('collector_address', '127.0.0.1:11800'),
     )

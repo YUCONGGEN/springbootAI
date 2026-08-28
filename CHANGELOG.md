@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.3.9] - 2026-08-28
+
+- 加固 OpenAI 兼容接口与 Ollama 的同步/异步流式协议：校验终止帧、错误信封和畸形响应，限制事件与响应大小，并完善超时、有限重试、重定向拒绝及 SDK 重试边界。
+- 修复 AI 异步流阻塞事件循环、请求参数覆盖受保护字段、输出 Token 上限绕过、工具调用闭环和多租户 Memory/RAG 隔离等问题。
+- 加固 Feign、Gateway、Config Center、Admin 与 Discovery：正确释放响应、执行路由谓词和过滤器、过滤逐跳头、传播请求 ID，并增加路径、响应大小、故障回退与生命周期保护。
+- 新增统一日志脱敏和日志注入防护，覆盖异常链、Bearer/Basic/Cookie、云事件、Nacos、Seata 与 SkyWalking，避免敏感负载进入日志或健康响应。
+- 修复原子脚手架写入、TextReader 文件边界、DevTools 停止/重启语义、SkyWalking 显式初始化和 Banner 版本读取错误。
+- 新增企业加固回归测试；完整测试结果为 3170 passed、11 skipped、0 failed，Bandit 中高危扫描为 0。
+
 ## [2.3.8] - 2026-08-24
 
 - 修复配置加载的原子性与数据库 URL 优先级：请求监控不再误落到根目录 `test.db`，SQLite 运行目录会自动创建，显式 URL/驱动/数据库名称按统一优先级生效。

@@ -1,7 +1,7 @@
 # SpringBootAI LangChain 模块使用指南 —— 小白也能看懂
 
 > 把 [LangChain](https://github.com/langchain-ai/langchain) 全套能力（Chains / Agents / Memory / Retrievers / VectorStores / Parsers / Loaders）封装为 Spring 风格 Bean，配合 30+ 第三方模型提供商（OpenAI / Anthropic / Ollama / DeepSeek / ZhipuAI / Tongyi …）开箱即用。
-> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.3.2
+> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.3.9
 
 ---
 

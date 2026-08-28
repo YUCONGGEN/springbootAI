@@ -14,6 +14,14 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("Spring.AI")
 
 
+class TokenBudgetExceededError(RuntimeError):
+    """Raised when a single model/tool conversation exceeds its token budget."""
+
+
+class ToolLoopLimitExceededError(RuntimeError):
+    """Raised when a model continues requesting tools past the configured limit."""
+
+
 # ==================== 消息与响应 ====================
 
 class MessageType:
@@ -88,6 +96,7 @@ class ChatModel(ABC):
     """
 
     MAX_TOOL_ITERATIONS = 5
+    MAX_TOTAL_TOKENS = 100_000
 
     @abstractmethod
     def _raw_call(self, messages: List[Message],
@@ -99,22 +108,60 @@ class ChatModel(ABC):
 
     def call(self, messages: List[Message],
              tool_registry=None,
-             options: Optional[Dict[str, Any]] = None) -> ChatResponse:
+             options: Optional[Dict[str, Any]] = None,
+             context: Optional[Dict[str, Any]] = None) -> ChatResponse:
         """同步调用 - 含函数调用闭环"""
         import json as _json
         from springbootai.ai.observability import ai_metrics
 
         working = list(messages)
+        provider_options = dict(options or {})
+        try:
+            token_budget = int(provider_options.pop(
+                "max_total_tokens", getattr(self, "max_total_tokens",
+                                             self.MAX_TOTAL_TOKENS)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_total_tokens must be an integer") from exc
+        if token_budget <= 0:
+            raise ValueError("max_total_tokens must be greater than zero")
+        try:
+            max_tool_iterations = int(provider_options.pop(
+                "max_tool_iterations", getattr(
+                    self, "max_tool_iterations", self.MAX_TOOL_ITERATIONS)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_tool_iterations must be an integer") from exc
+        if max_tool_iterations < 0 or max_tool_iterations > 100:
+            raise ValueError("max_tool_iterations must be in [0, 100]")
+
+        cumulative_tokens = 0
         resp = None
-        for iteration in range(self.MAX_TOOL_ITERATIONS + 1):
-            resp = self._raw_call(working, tool_registry, options)
+        for iteration in range(max_tool_iterations + 1):
+            resp = self._raw_call(
+                working, tool_registry, provider_options or None)
             resp.metadata = resp.metadata or {}
             resp.metadata["tool_iterations"] = iteration
+            usage = resp.metadata.get("usage") or {}
+            total = usage.get("total_tokens")
+            if total is None:
+                total = (usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0) + (
+                    usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+            try:
+                cumulative_tokens += max(0, int(total or 0))
+            except (TypeError, ValueError):
+                logger.debug("Provider returned non-numeric token usage: %r", total)
+            resp.metadata["cumulative_tokens"] = cumulative_tokens
+            resp.metadata["token_budget"] = token_budget
+            if cumulative_tokens > token_budget:
+                raise TokenBudgetExceededError(
+                    f"AI request exceeded token budget ({cumulative_tokens}>{token_budget})")
             tool_calls = resp.metadata.get("tool_calls")
 
             # 无工具调用 → 返回最终回复
             if not tool_calls or not _is_tool_registry(tool_registry):
                 return resp
+            if iteration >= max_tool_iterations:
+                raise ToolLoopLimitExceededError(
+                    f"AI tool loop exceeded {max_tool_iterations} iterations")
 
             # 有工具调用 → 追加 assistant 消息 + 执行工具 + 回填
             working.append(resp.output)
@@ -125,7 +172,10 @@ class ChatModel(ABC):
                 try:
                     args = (_json.loads(args_raw) if isinstance(args_raw, str)
                             else args_raw)
-                    result = tool_registry.execute(name, args)
+                    # Request-scoped identity and authorization data must reach
+                    # the registry policy. Do not ask tools to infer identity
+                    # from mutable globals or model-controlled arguments.
+                    result = tool_registry.execute(name, args, context=context)
                     ai_metrics.record_tool_call(name, "success")
                 except Exception as exc:
                     # 安全：异常消息脱敏后返回，防止泄露连接字符串、路径、凭据等敏感信息
@@ -143,8 +193,8 @@ class ChatModel(ABC):
                     metadata={"tool_call_id": tc.get("id", "")},
                 ))
 
-        # 超过最大轮数
-        return resp
+        raise ToolLoopLimitExceededError(
+            f"AI tool loop exceeded {max_tool_iterations} iterations")
 
     def stream(self, messages: List[Message],
                tool_registry=None,
@@ -155,17 +205,63 @@ class ChatModel(ABC):
     async def astream(self, messages: List[Message],
                       tool_registry=None,
                       options: Optional[Dict[str, Any]] = None):
-        """异步流式生成器，默认降级为同步 stream"""
-        for chunk in self.stream(messages, tool_registry=tool_registry,
-                                 options=options):
-            yield chunk
+        """在工作线程中按需拉取同步流。
+
+        每次只调用一次 ``next``，因此消费端天然提供背压；
+        ``asyncio.to_thread`` 同时复制当前 ContextVar，保证请求 ID
+        等请求级上下文在 Provider 线程中可见。
+        """
+        import asyncio
+
+        iterator = iter(self.stream(
+            messages, tool_registry=tool_registry, options=options))
+        exhausted = object()
+
+        def pull_next():
+            try:
+                return next(iterator)
+            except StopIteration:
+                # StopIteration 不能直接穿过 asyncio Future。
+                return exhausted
+
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.to_thread(pull_next)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Provider/SDK 异常常夹带 URL、凭据或响应体。
+                    # 异步边界只暴露稳定类型，详情由服务端日志记录。
+                    logger.warning(
+                        "异步流式生产者异常 error_type=%s",
+                        type(exc).__name__,
+                    )
+                    raise RuntimeError(
+                        f"stream error: {type(exc).__name__}"
+                    ) from None
+                if chunk is exhausted:
+                    break
+                yield chunk
+        finally:
+            # 消费者 break/aclose 时立即尝试关闭底层生成器，
+            # 从而退出 requests Response 上下文。若此时工作线程
+            # 正阻塞在 socket read，generator.close 可能拒绝并由读超时兜底。
+            closer = getattr(iterator, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except (RuntimeError, ValueError):
+                    pass
 
     async def acall(self, messages: List[Message],
                     tool_registry=None,
-                    options: Optional[Dict[str, Any]] = None) -> ChatResponse:
+                    options: Optional[Dict[str, Any]] = None,
+                    context: Optional[Dict[str, Any]] = None) -> ChatResponse:
         """异步调用，默认降级为同步 call（子类可覆盖实现真异步）"""
         import asyncio
-        return await asyncio.to_thread(self.call, messages, tool_registry, options)
+        return await asyncio.to_thread(
+            self.call, messages, tool_registry, options, context)
 
 
 class EmbeddingModel(ABC):
@@ -221,6 +317,7 @@ class PromptSpec:
         self._tool_registry = chat_client.default_tool_registry
         self._pending_tools: List[Any] = []
         self._context: Dict[str, Any] = {}
+        self._options: Dict[str, Any] = {}
 
     def system(self, text: str) -> "PromptSpec":
         self._messages.append(Message.system(text))
@@ -254,36 +351,41 @@ class PromptSpec:
         self._context[key] = value
         return self
 
+    def option(self, key: str, value: Any) -> "PromptSpec":
+        """Set a request-scoped provider/framework option."""
+        self._options[key] = value
+        return self
+
     def _resolve_registry(self):
         """合并默认 registry 与本次 pending 工具"""
-        from springbootai.ai.tools import ToolRegistry
+        from springbootai.ai.tools import CompositeToolRegistry, ToolRegistry
         registry = self._tool_registry
         if self._pending_tools:
-            if registry is None:
-                registry = ToolRegistry()
-            else:
-                registry = ToolRegistry()  # 不污染默认 registry
-                if self._tool_registry is not None:
-                    for name in self._tool_registry.names():
-                        td = self._tool_registry.get(name)
-                        registry.register(name, td.func, td.description)
+            request_registry = ToolRegistry()
             for i, func in enumerate(self._pending_tools):
                 name = getattr(func, "__name__", f"tool_{i}")
                 desc = (func.__doc__ or "").strip().split("\n")[0]
-                registry.register(name, func, description=desc)
+                request_registry.register(name, func, description=desc)
+            if registry is None:
+                registry = request_registry
+            else:
+                # Preserve the default registry's authorization, approval,
+                # dangerous-tool and timeout policies. Re-registering its
+                # callables into a fresh registry would silently discard them.
+                registry = CompositeToolRegistry(registry, request_registry)
         return registry
 
     def call(self) -> ChatResponse:
         return self._client._execute(
             self._messages, self._advisors,
-            self._resolve_registry(), self._context
+            self._resolve_registry(), self._context, self._options,
         )
 
     def stream(self):
         """流式调用生成器"""
         yield from self._client._execute_stream(
             self._messages, self._advisors,
-            self._resolve_registry(), self._context
+            self._resolve_registry(), self._context, self._options,
         )
 
     def content(self) -> str:
@@ -328,11 +430,13 @@ class ChatClient:
         return spec
 
     def _execute(self, messages: List[Message], advisors: List[Advisor],
-                 tool_registry, context: Dict[str, Any]) -> ChatResponse:
+                 tool_registry, context: Dict[str, Any],
+                 options: Optional[Dict[str, Any]] = None) -> ChatResponse:
         # 请求阶段：按 order 升序应用 advisor
         request = AdvisorRequest(
             messages=list(messages), chat_model=self.chat_model,
             tool_registry=tool_registry, context=dict(context),
+            options=dict(options or {}) or None,
         )
         for advisor in sorted(advisors, key=lambda a: a.order):
             request = advisor.advise_request(request)
@@ -340,7 +444,7 @@ class ChatClient:
         # 模型调用（携带 tool_registry 以启用函数调用闭环）
         response = self.chat_model.call(
             request.messages, tool_registry=request.tool_registry,
-            options=request.options
+            options=request.options, context=request.context,
         )
 
         # 响应阶段：按 order 降序应用 advisor
@@ -349,7 +453,8 @@ class ChatClient:
         return response
 
     def _execute_stream(self, messages: List[Message], advisors: List[Advisor],
-                        tool_registry, context: Dict[str, Any]):
+                        tool_registry, context: Dict[str, Any],
+                        options: Optional[Dict[str, Any]] = None):
         # 流式：advisor 先做请求预处理，逐块 yield；全部消费完后再统一回调
         # advise_response（例如 MessageChatMemoryAdvisor 保存会话记忆）。
         # 修复：之前流式模式从不调用 advise_response，导致"流式 + 记忆"时对话
@@ -357,16 +462,35 @@ class ChatClient:
         request = AdvisorRequest(
             messages=list(messages), chat_model=self.chat_model,
             tool_registry=tool_registry, context=dict(context),
+            options=dict(options or {}) or None,
         )
         for advisor in sorted(advisors, key=lambda a: a.order):
             request = advisor.advise_request(request)
 
         chunks: List[ChatResponse] = []
-        for chunk in self.chat_model.stream(
-                request.messages, tool_registry=request.tool_registry,
-                options=request.options):
+        has_tools = (
+            request.tool_registry is not None
+            and hasattr(request.tool_registry, "names")
+            and bool(request.tool_registry.names())
+        )
+        if has_tools:
+            # Provider streaming protocols assemble tool-call arguments across
+            # deltas and differ substantially. Use the fully validated sync
+            # tool loop instead of silently dropping tools in stream mode.
+            chunk = self.chat_model.call(
+                request.messages,
+                tool_registry=request.tool_registry,
+                options=request.options,
+                context=request.context,
+            )
             chunks.append(chunk)
             yield chunk
+        else:
+            for chunk in self.chat_model.stream(
+                    request.messages, tool_registry=request.tool_registry,
+                    options=request.options):
+                chunks.append(chunk)
+                yield chunk
 
         # 聚合全部流式块，回调响应阶段 advisor（触发记忆保存/日志/审计等副作用）
         if chunks:

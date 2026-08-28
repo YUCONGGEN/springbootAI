@@ -32,6 +32,9 @@ from springbootai.annotations.core import (
     ResponseStatus,
 )
 from springbootai.web.result import Result
+from springbootai.logging.context import (
+    get_request_id, normalize_request_id, reset_request_id, set_request_id,
+)
 import os
 import inspect
 import re
@@ -122,6 +125,9 @@ class WebApplicationContext:
         self._register_interceptors()
         self._register_exception_handlers()
         self._register_cors_middleware()
+        # Starlette 后添加的 middleware 位于外层；请求上下文必须包住 CORS，
+        # 才能让预检/拒绝响应同样获得关联 ID。
+        self._register_request_context_middleware()
         self._register_static_files()
         self._register_health_endpoints()
         self._register_shutdown_handlers()
@@ -131,6 +137,42 @@ class WebApplicationContext:
         # 通配路由会先匹配 /actuator/* 等路径并返回 404。
         # 将通配路由移到路由表末尾，确保 API 与 Actuator 端点优先匹配。
         self._move_wildcard_static_route_to_end()
+
+    def _register_request_context_middleware(self) -> None:
+        """Attach a validated correlation ID to logs and every HTTP response."""
+        if getattr(self, '_request_context_registered', False):
+            return
+        try:
+            config = self.application_context.get_config()
+        except (AttributeError, TypeError):
+            config = {}
+        server = config.get("server", {}) if isinstance(config, dict) else {}
+        request_id_config = (
+            server.get("request-id", server.get("request_id", {}))
+            if isinstance(server, dict) else {}
+        )
+        if not isinstance(request_id_config, dict):
+            request_id_config = {}
+        header_name = str(request_id_config.get("header", "X-Request-ID")).strip()
+        if not header_name or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", header_name):
+            self._logger.warning(
+                "Invalid server.request-id.header; using X-Request-ID")
+            header_name = "X-Request-ID"
+        self.request_id_header = header_name
+
+        @self.fastapi_app.middleware("http")
+        async def request_context_middleware(request: Request, call_next):
+            supplied = request.headers.get(header_name)
+            request_id = normalize_request_id(supplied)
+            token = set_request_id(request_id)
+            request.state.request_id = request_id
+            try:
+                response = await call_next(request)
+                response.headers[header_name] = request_id
+                return response
+            finally:
+                reset_request_id(token)
+        self._request_context_registered = True
 
     def _move_wildcard_static_route_to_end(self) -> None:
         """将 ``/{full_path:path}`` 通配路由移到路由表末尾。
@@ -513,15 +555,16 @@ class WebApplicationContext:
                 ))
             elif info['kind'] == 'query':
                 alias = info['http_name'] if info['http_name'] != info['name'] else None
+                query_annotation = Optional.__getitem__(info['annotation'])
                 if info['required'] and info['default'] is None:
                     endpoint_params.append(inspect.Parameter(
                         info['name'], inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                        default=FastQuery(..., alias=alias), annotation=Optional[info['annotation']],
+                        default=FastQuery(..., alias=alias), annotation=query_annotation,
                     ))
                 else:
                     endpoint_params.append(inspect.Parameter(
                         info['name'], inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                        default=FastQuery(info['default'], alias=alias), annotation=Optional[info['annotation']],
+                        default=FastQuery(info['default'], alias=alias), annotation=query_annotation,
                     ))
             elif info['kind'] == 'body':
                 endpoint_params.append(inspect.Parameter(
@@ -640,18 +683,30 @@ class WebApplicationContext:
                     security_response = self._security_failure_response(e)
                     if security_response is not None:
                         self._logger.warning(
-                            "Request rejected with HTTP %s: %s",
+                            "Request rejected method=%s path=%s status=%s "
+                            "error_type=%s request_id=%s",
+                            request.method,
+                            request.url.path,
                             security_response.status_code,
-                            e,
+                            type(e).__name__,
+                            get_request_id(),
                         )
                         return security_response
 
-                    # 记录详细错误日志
-                    import traceback
-                    self._logger.error(f"Request processing error: {str(e)}")
-                    self._logger.error(traceback.format_exc())
-                    
                     handler = self._find_exception_handler(e)
+                    if isinstance(e, (ValueError, TypeError)):
+                        self._logger.warning(
+                            "Bad request method=%s path=%s error_type=%s request_id=%s",
+                            request.method, request.url.path,
+                            type(e).__name__, get_request_id(),
+                        )
+                    else:
+                        self._logger.exception(
+                            "Request processing failed method=%s path=%s "
+                            "error_type=%s request_id=%s",
+                            request.method, request.url.path,
+                            type(e).__name__, get_request_id(),
+                        )
                     if handler is not None:
                         try:
                             handler_result = handler(e)
@@ -933,10 +988,11 @@ class WebApplicationContext:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=404, detail="Not Found")
             
-            print(f"静态文件服务已注册: {self._static_dir}")
+            self._logger.info("Static file service registered: %s", self._static_dir_abs)
         else:
             if self._static_dir:
-                print(f"警告: 静态文件目录不存在: {self._static_dir}")
+                self._logger.warning(
+                    "Static file directory does not exist: %s", self._static_dir)
 
     def get_app(self) -> FastAPI:
         return self.fastapi_app

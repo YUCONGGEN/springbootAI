@@ -7,6 +7,7 @@
   "properties": [
     {"name": "server.port", "type": "java.lang.Integer", "description": "HTTP 服务端口", "defaultValue": 8000},
     {"name": "server.host", "type": "java.lang.String", "description": "HTTP 服务绑定地址", "defaultValue": "0.0.0.0"},
+    {"name": "server.request-id.header", "type": "java.lang.String", "description": "请求关联 ID 的请求/响应头名称", "defaultValue": "X-Request-ID"},
     {"name": "server.cors.allow-origins", "type": "java.util.List<java.lang.String>", "description": "CORS 允许的源列表"},
     {"name": "server.cors.allow-credentials", "type": "java.lang.Boolean", "description": "CORS 是否允许携带凭证", "defaultValue": false},
     {"name": "server.csrf.enabled", "type": "java.lang.Boolean", "description": "是否启用 CSRF 防护（Bearer Token 认证无需开启）", "defaultValue": false},
@@ -45,9 +46,11 @@
 
     {"name": "spring.cloud.nacos.discovery.server-addr", "type": "java.lang.String", "description": "Nacos 服务发现地址"},
     {"name": "spring.cloud.config.timeout", "type": "java.lang.Integer", "description": "Spring Cloud Config HTTP 请求超时（毫秒，默认 5000）", "defaultValue": 5000},
+    {"name": "spring.cloud.config.max-response-size", "type": "java.lang.Integer", "description": "Spring Cloud Config 响应与本地配置文件大小上限（字节）", "defaultValue": 5242880},
     {"name": "spring.cloud.config.retry.max-attempts", "type": "java.lang.Integer", "description": "Spring Cloud Config 最大请求尝试次数（默认 6，至少 1）", "defaultValue": 6},
     {"name": "spring.cloud.config.retry.initial-interval", "type": "java.lang.Integer", "description": "Spring Cloud Config 初始重试间隔（毫秒，最大 60000）", "defaultValue": 1000},
     {"name": "spring.cloud.config.retry.multiplier", "type": "java.lang.Float", "description": "Spring Cloud Config 重试退避乘数（范围 1-10）", "defaultValue": 1.1},
+    {"name": "logging.diagnose", "type": "java.lang.Boolean", "description": "是否在异常日志中输出帧局部变量；生产环境应保持关闭", "defaultValue": false},
     {"name": "discovery.timeout", "type": "java.lang.Float", "description": "Nacos 服务发现请求超时（秒，范围 (0,60]，默认 3）", "defaultValue": 3},
     {"name": "rabbitmq.connection-timeout", "type": "java.lang.Float", "description": "RabbitMQ 建立连接超时（秒，默认 5）", "defaultValue": 5},
     {"name": "rabbitmq.socket-timeout", "type": "java.lang.Float", "description": "RabbitMQ TCP socket 超时（秒，默认 5）", "defaultValue": 5},
@@ -69,7 +72,13 @@
     {"name": "management.admin.request-metrics.exclude-paths", "type": "java.util.List<java.lang.String>", "description": "额外排除的路径；框架始终排除 /actuator/**、接口文档和 favicon", "defaultValue": []},
     {"name": "management.admin.request-metrics.table", "type": "java.lang.String", "description": "请求持久化监控使用的数据表名；非法名称回退为 springbootai_request_metrics", "defaultValue": "springbootai_request_metrics"},
 
-    {"name": "spring.ai.provider", "type": "java.lang.String", "description": "AI 模型提供商 (openai/deepseek/ollama/zhipu/fake)"},
+    {"name": "spring.ai.default-provider", "type": "java.lang.String", "description": "AI 模型提供商 (openai/deepseek/moonshot/zhipu/ollama)", "defaultValue": "openai"},
+    {"name": "spring.ai.max-retries", "type": "java.lang.Integer", "description": "模型调用最大总尝试次数；0 表示不重试", "defaultValue": 3},
+    {"name": "spring.ai.retry-delay-ms", "type": "java.lang.Integer", "description": "模型重试间隔（毫秒）", "defaultValue": 500},
+    {"name": "spring.ai.request-timeout-seconds", "type": "java.lang.Integer", "description": "单次模型请求超时（秒）", "defaultValue": 60},
+    {"name": "spring.ai.max-output-tokens", "type": "java.lang.Integer", "description": "单次模型最大输出 Token", "defaultValue": 4096},
+    {"name": "spring.ai.max-total-tokens", "type": "java.lang.Integer", "description": "单个模型/工具闭环累计 Token 上限", "defaultValue": 100000},
+    {"name": "spring.ai.max-tool-iterations", "type": "java.lang.Integer", "description": "单个请求最多工具调用轮数", "defaultValue": 5},
     {"name": "spring.ai.api-key", "type": "java.lang.String", "description": "AI API Key"},
     {"name": "spring.ai.allow-fake", "type": "java.lang.Boolean", "description": "无 API Key 时是否降级 FakeChatModel", "defaultValue": false}
   ]

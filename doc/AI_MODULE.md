@@ -1,7 +1,7 @@
 # SpringBootAI AI 模块使用指南 —— 小白也能看懂
 
 > 让你的 Python 程序能和 ChatGPT、DeepSeek 等大模型聊天、回答问题、调用你的函数、读你的文档来回答。
-> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.3.2
+> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.3.9
 
 ---
 
@@ -166,7 +166,7 @@ print(client.prompt().user("你好").call().content())
 - ❌ 把真实 Key 写进代码/文档提交到公开仓库 → ✅ 用环境变量注入
 - ❌ 问完就忘、无法多轮 → ✅ 需要加 Memory（记忆）
 - ❌ 问"我自己的资料"模型说不知道 → ✅ 要用 RAG，先把资料切碎入库再问
-- ❌ 没配 Key 就以为是真模型在回答 → ✅ 没配 Key 会静默降级成 `FakeChatModel`，线上环境务必设 `AI_ALLOW_FAKE=false` 防止误用假数据
+- ❌ 没配 Key 就以为会自动使用假模型 → ✅ 默认直接报错；仅开发/测试显式设 `AI_ALLOW_FAKE=true`
 - ❌ 以为 RAG 是「把文档上传给模型」→ ✅ RAG 是「先检索相关片段，再把片段和问题一起发给模型」，文档不会上传到模型服务器
 - ❌ 以为 Memory 有无限容量 → ✅ 默认最多存 20 条消息（可配置），超出会丢弃最早的消息
 
@@ -202,7 +202,7 @@ print(client.prompt().user("你好").call().content())
 # 输出: （真实模型的回复，比如"你好！请问有什么可以帮你的？"）
 ```
 
-只需在 `application.yml` 或环境变量配置 `OPENAI_API_KEY` 即可启用真实模型；未配置时降级 `FakeChatModel`（开发/测试友好）。
+只需在 `application.yml` 或环境变量配置 `OPENAI_API_KEY` 即可启用真实模型；未配置时默认直接报错。开发/测试如需假模型，应显式设置 `AI_ALLOW_FAKE=true`。
 
 ### 新手常见错误
 
@@ -210,7 +210,7 @@ print(client.prompt().user("你好").call().content())
 |------------|------------|------|
 | 每次对话都重新 `ChatClientBuilder(...).build()` | 一次 build，反复使用 | `build()` 很轻量但没必要重复创建 |
 | `.call()` 和 `.content()` 分不清 | `.call()` 返回对象，`.content()` 返回文本 | 想要文本就直接用 `.content()` |
-| 不传 API Key 以为用了真模型 | 配好 Key 或设 `AI_ALLOW_FAKE=false` 会报错提醒 | 没配 Key 会静默降级成假模型 |
+| 不传 API Key | 配好 Key；仅开发测试设 `AI_ALLOW_FAKE=true` | 默认报错，不会静默返回假数据 |
 
 ---
 
@@ -230,6 +230,10 @@ spring:
     default-provider: ${AI_PROVIDER:openai}   # openai | ollama | deepseek | moonshot | zhipu
     max-retries: ${AI_MAX_RETRIES:3}
     retry-delay-ms: ${AI_RETRY_DELAY_MS:500}
+    request-timeout-seconds: ${AI_REQUEST_TIMEOUT_SECONDS:60}
+    max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:4096}
+    max-total-tokens: ${AI_MAX_TOTAL_TOKENS:100000}
+    max-tool-iterations: ${AI_MAX_TOOL_ITERATIONS:5}
     openai:
       api-key: ${OPENAI_API_KEY:}
       base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}  # 兼容 Azure
@@ -296,7 +300,11 @@ assert props.circuit_breaker.enabled is False
 | default-provider | AI_PROVIDER | openai | 换模型厂商 |
 | max-retries | AI_MAX_RETRIES | 3 | 网络出错重试几次 |
 | retry-delay-ms | AI_RETRY_DELAY_MS | 500 | 每次重试间隔（毫秒） |
-| openai.api-key | OPENAI_API_KEY | （空，降级 Fake） | OpenAI 的钥匙 |
+| request-timeout-seconds | AI_REQUEST_TIMEOUT_SECONDS | 60 | 单次模型请求超时（秒） |
+| max-output-tokens | AI_MAX_OUTPUT_TOKENS | 4096 | 单次回复最大 Token |
+| max-total-tokens | AI_MAX_TOTAL_TOKENS | 100000 | 一次模型/工具闭环累计 Token 上限 |
+| max-tool-iterations | AI_MAX_TOOL_ITERATIONS | 5 | 工具调用闭环轮数上限 |
+| openai.api-key | OPENAI_API_KEY | （空；默认报错） | OpenAI 的钥匙 |
 | openai.base-url | OPENAI_BASE_URL | https://api.openai.com/v1 | 换代理/中转地址 |
 | openai.chat.model | OPENAI_CHAT_MODEL | gpt-4o-mini | 换模型版本 |
 | openai.chat.temperature | OPENAI_TEMPERATURE | 0.7 | 控制回复的随机性（0=死板，1=天马行空） |
@@ -557,7 +565,7 @@ assert registry.execute("add", {"a": 1, "b": 2}) == 3
 
 ### 一句话总结
 
-`configure_ai()` 读取 `springbootai.ai.*` 配置，构建并注册 ChatModel/EmbeddingModel/ChatMemory/VectorStore/ChatClient Bean 到 BeanRegistry（含熔断器注入）。未配置 api-key 时自动降级为 FakeChatModel/FakeEmbeddingModel。
+`configure_ai()` 读取 `springbootai.ai.*` 配置，构建并注册 ChatModel/EmbeddingModel/ChatMemory/VectorStore/ChatClient Bean 到 BeanRegistry（含熔断器注入）。未配置 api-key 时默认失败；只有显式设置 `AI_ALLOW_FAKE=true` 才降级为 FakeChatModel/FakeEmbeddingModel。
 
 ```python
 from springbootai.ai import configure_ai
@@ -643,11 +651,11 @@ print(client.prompt().user("调用工具查天气").call().content())
 - **重试**：第一次占线，自动等 500ms 再打，最多打 3 次
 - **熔断**：连续 5 次都打不通，就暂时不打了一一过 30 秒再试试看
 
-`resilient_call()` 复用框架 `springbootai.retry.retry_decorator.retry` 对 `TransientError`（429/5xx/超时/连接错误）自动重试；`AICircuitBreaker` 复用 `springbootai.aop.comprehensive_aop` 的 CLOSED/OPEN/HALF_OPEN 状态机，失败达阈值熔断、`recovery-timeout` 后半开放行探测，保护下游 LLM API。Redis 可用时跨实例共享熔断状态，不可用时降级本地内存。Provider 的 HTTP 调用默认经 `resilient_call` 包装，配置即可调（见配置中 `max-retries`、`circuit-breaker` 段）。
+`resilient_call()` 复用框架 `springbootai.retry.retry_decorator.retry` 对 `TransientError`（429/5xx/超时/连接错误）自动重试；`AICircuitBreaker` 复用 `springbootai.aop.comprehensive_aop` 的 CLOSED/OPEN/HALF_OPEN 状态机，失败达阈值熔断、`recovery-timeout` 后半开放行探测，保护下游 LLM API。Redis 可用时跨实例共享熔断状态，不可用时降级本地内存。HTTP、LangChain Chat 和 LangChain Embedding 路径统一应用该策略。流式响应只允许在尚未输出内容时重试；一旦输出过部分内容，中断会抛 `ProviderStreamError`，避免重复文本。
 
 **线上安全开关**：`AI_ALLOW_FAKE` 环境变量控制 api_key 缺失时的行为。
-- `true`（默认）：api_key 缺失时静默降级 `FakeChatModel`，适合开发/测试
-- `false`：api_key 缺失时抛 `ValueError`，防止线上环境配错返回假数据
+- `true`：api_key 缺失时降级 `FakeChatModel`，仅适合开发/测试
+- `false`（默认）：api_key 缺失时抛 `ValueError`，防止线上环境配错返回假数据
 
 ```bash
 # 线上环境务必设置：
@@ -963,7 +971,7 @@ print(resp.content())
 
 **Q1：没有 API Key 能跑吗？**
 
-A：能！设 `AI_ALLOW_FAKE=true`（默认），框架会自动用 `FakeChatModel`（你说啥它学你说啥），整个流程都能跑通，不花钱、不联网。
+A：能，但必须显式设置 `AI_ALLOW_FAKE=true`。默认值是 `false`，避免生产环境漏配 Key 后静默返回假数据。
 
 **Q2：为什么我的程序突然不说话了（一直卡住）？**
 
@@ -1003,31 +1011,13 @@ A：按 `order` 值从小到大执行。比如 Memory Advisor 设 `order=1`，RA
 
 ---
 
-## 改进记录
+## 企业加固记录（2.3.9）
 
-### API Key 明文存储在 Provider 实例属性 — 中 ⏳ 待处理 (v2.3.0)
-
-**位置**：`springbootai/ai/providers.py` OpenAIChatModel.__init__
-
-**现象**：`self.api_key = api_key` 明文存储。若实例被序列化、打印 repr、或意外进入异常堆栈，密钥会泄漏。
-
-**改进方案**：使用 `self._api_key`（下划线前缀），实现 `__repr__` 屏蔽密钥。
-
-### 流式响应异常时 response 对象未关闭 — 中 ⏳ 待处理 (v2.3.0)
-
-**位置**：`springbootai/ai/providers.py` stream 方法
-
-**现象**：流式调用使用 `requests.post(..., stream=True)`，迭代过程中抛出异常时底层 socket 可能未正确关闭，导致连接泄漏。
-
-**改进方案**：使用 `try/finally` 确保 `response.close()`。
-
-### 工具调用循环缺少总 token 上限保护 — 中 ⏳ 待处理 (v2.3.0)
-
-**位置**：`springbootai/ai/providers.py` MAX_TOOL_ITERATIONS
-
-**现象**：`MAX_TOOL_ITERATIONS = 5` 限制了往返轮数，但未限制累计 token 数。每轮工具调用返回超大结果时，5 轮可能消耗数万 token。
-
-**改进方案**：增加配置项 `max_total_tokens`（默认 100000），每轮调用前估算累计 token，超限则终止循环。
+- Memory 的 namespace 改为请求级参数，同一 `conversation_id` 在不同租户间不会串读；Redis 键中的外部 ID 会编码并限制长度。
+- RAG 根据 `tenant_id`（无租户时可按 `user_id`）执行 metadata 过滤；底层向量库不支持过滤时拒绝降级为无过滤查询。
+- 工具授权器收到请求级身份上下文；正超时只允许用于接受 `cancellation_token` 的协作式工具，超时返回后不会遗留后台副作用。
+- LangChain Function Calling 保留 assistant tool calls 与 `tool_call_id`，绑定工具时不再修改共享模型实例。
+- `max-output-tokens`、`max-total-tokens`、`max-tool-iterations` 与请求超时均已接入自动配置；超限会抛明确异常。
 
 ## 声明式 AI 注解（2.3.4）
 

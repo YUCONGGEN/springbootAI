@@ -149,13 +149,13 @@ class RequestMetricsStore:
         error_count = 1 if status >= 500 else 0
         with self._lock, self.engine.begin() as conn:
             result = conn.execute(text(
-                f"UPDATE {self.table} SET request_count=request_count+1, "
+                f"UPDATE {self.table} SET request_count=request_count+1, "  # nosec B608 -- table is regex-whitelisted
                 "error_count=error_count+:errors, total_ms=total_ms+:elapsed, "
                 "last_status=:status, last_request_at=CURRENT_TIMESTAMP WHERE path=:path"
             ), {"errors": error_count, "elapsed": elapsed_ms, "status": status, "path": path})
             if result.rowcount == 0:
                 conn.execute(text(
-                    f"INSERT INTO {self.table} "
+                    f"INSERT INTO {self.table} "  # nosec B608 -- table is regex-whitelisted
                     "(path, request_count, error_count, total_ms, last_status) "
                     "VALUES (:path, 1, :errors, :elapsed, :status)"
                 ), {"path": path, "errors": error_count, "elapsed": elapsed_ms, "status": status})
@@ -163,7 +163,7 @@ class RequestMetricsStore:
     def snapshot(self) -> list[Dict[str, Any]]:
         with self.engine.connect() as conn:
             rows = conn.execute(text(
-                f"SELECT path, request_count, error_count, total_ms, last_status "
+                f"SELECT path, request_count, error_count, total_ms, last_status "  # nosec B608 -- table is regex-whitelisted
                 f"FROM {self.table} ORDER BY request_count DESC"
             )).mappings().all()
         return [dict(row) for row in rows]
@@ -185,7 +185,7 @@ class RequestMetricsStore:
             return 0
         with self._lock, self.engine.begin() as conn:
             conn.execute(
-                text(f"DELETE FROM {self.table} WHERE path = :path"),
+                text(f"DELETE FROM {self.table} WHERE path = :path"),  # nosec B608 -- table is regex-whitelisted
                 [{"path": path} for path in discarded],
             )
         return len(discarded)

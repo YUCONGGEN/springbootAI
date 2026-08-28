@@ -6,6 +6,9 @@ server:
   # HTTP 服务监听地址。0.0.0.0 表示容器内监听所有网卡，浏览器访问仍使用 localhost。
   port: ${SERVER_PORT:8080}
   host: ${SERVER_HOST:0.0.0.0}
+  request-id:
+    # 接受合法的调用方关联 ID；缺失或非法时自动生成，并写回响应头及日志。
+    header: ${REQUEST_ID_HEADER:X-Request-ID}
   thread_pool:
     # 同步 Controller、同步数据库/Feign 调用会在线程池中执行；队列有界是为了过载时快速返回 503。
     max_workers: ${SYNC_MAX_WORKERS:40}
@@ -23,6 +26,10 @@ spring:
     default-provider: ${AI_PROVIDER:openai}   # openai | ollama
     max-retries: ${AI_MAX_RETRIES:3}
     retry-delay-ms: ${AI_RETRY_DELAY_MS:500}
+    request-timeout-seconds: ${AI_REQUEST_TIMEOUT_SECONDS:60}
+    max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:4096}
+    max-total-tokens: ${AI_MAX_TOTAL_TOKENS:100000}
+    max-tool-iterations: ${AI_MAX_TOOL_ITERATIONS:5}
     openai:
       api-key: ${OPENAI_API_KEY:}
       base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
@@ -281,6 +288,8 @@ logging:
   log_dir: ${LOG_DIR:logs}
   retention: ${LOG_RETENTION:30 days}
   rotation: ${LOG_ROTATION:100 MB}
+  # 生产默认不输出异常帧的局部变量，避免令牌、密码等进入日志。
+  diagnose: ${LOG_DIAGNOSE:false}
 
 # 配置来源/热刷新监控（默认关闭；可由 YAML、环境变量或 Nacos 开启）
 management:

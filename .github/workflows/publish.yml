@@ -87,7 +87,7 @@ jobs:
             --deselect tests/test_ai_module.py::TestObservability::test_autoconfig_creates_circuit_breaker_for_provider \
             --deselect tests/test_ai_module.py::TestAIPropertiesBinding::test_configure_ai_uses_typed_props_for_openai_circuit_breaker \
             --deselect tests/test_langchain_module.py::TestAutoConfig::test_configure_langchain_disabled
-          bandit -r springbootai/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ -lll -q || true
+          bandit -r springbootai/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ -lll -q
           pip-audit -r requirements-lock.txt --timeout 60 --progress-spinner off
           pip-audit -r requirements-ai.txt --timeout 60 --progress-spinner off
           pip-audit -r requirements-langgraph.txt --timeout 60 --progress-spinner off

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import keyword
+import os
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -25,6 +27,26 @@ _MODULE_DESCRIPTIONS = {
     "cloud": "Nacos/Cloud 配置骨架（默认不连接外部服务）",
     "redis": "Redis 客户端配置骨架（默认关闭）",
 }
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Durably replace one generated file without exposing partial content."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        finally:
+            raise
 
 
 @dataclass
@@ -210,7 +232,7 @@ def _version() -> str:
         from springbootai import __version__
         return __version__
     except Exception:
-        return "2.3.8"
+        return "2.3.9"
 
 
 def _replace(template: str, **values: object) -> str:
@@ -538,6 +560,8 @@ server:
   host: "${SERVER_HOST:0.0.0.0}"         # 容器中通常使用 0.0.0.0
   debug: false
   shutdown: graceful
+  request-id:
+    header: "${REQUEST_ID_HEADER:X-Request-ID}"
   compression:
     enabled: false
     min_response_size: 1024
@@ -573,6 +597,10 @@ spring:
     default_provider: "${AI_PROVIDER:openai}"       # openai/ollama/deepseek/moonshot/zhipu
     max_retries: "${AI_MAX_RETRIES:3}"
     retry_delay_ms: "${AI_RETRY_DELAY_MS:500}"
+    request_timeout_seconds: "${AI_REQUEST_TIMEOUT_SECONDS:60}"
+    max_output_tokens: "${AI_MAX_OUTPUT_TOKENS:4096}"
+    max_total_tokens: "${AI_MAX_TOTAL_TOKENS:100000}"
+    max_tool_iterations: "${AI_MAX_TOOL_ITERATIONS:5}"
     openai:
       api_key: "${OPENAI_API_KEY:}"
       base_url: "${OPENAI_BASE_URL:https://api.openai.com/v1}"
@@ -609,6 +637,8 @@ spring:
       enabled: false
       uri: "${SPRING_CONFIG_URI:http://localhost:8888}"
       profile: "${SPRING_PROFILES_ACTIVE:default}"
+      timeout: "${SPRING_CONFIG_TIMEOUT:5000}"
+      max-response-size: "${SPRING_CONFIG_MAX_RESPONSE_SIZE:5242880}"
     bus:
       enabled: false
       destination: springCloudBus
@@ -738,7 +768,7 @@ logging:
   log_dir: "${LOG_DIR:logs}"
   retention: "${LOG_RETENTION:30 days}"
   rotation: "${LOG_ROTATION:100 MB}"
-  format: "{{time}} | {{level}} | {{name}} | {{message}}"
+  diagnose: "${LOG_DIAGNOSE:false}"
 
 # 其他常用配置保留在这里，后续启用对应模块时无需重新查文档。
 cache:
@@ -1203,8 +1233,7 @@ def _write_project(options: ProjectOptions) -> Path:
             "application.yml 的 enabled 和地址，再重启应用。\n"
         )
     for path, content in files.items():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8", newline="\n")
+        _atomic_write_text(path, content)
     return project_dir
 
 

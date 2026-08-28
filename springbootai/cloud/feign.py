@@ -6,12 +6,30 @@ import requests
 import logging
 import json
 import inspect
+import threading
 from dataclasses import asdict, is_dataclass
 from typing import Dict, Any, Optional, Type
+from urllib.parse import quote, urlsplit
+from urllib3.util.retry import Retry
 from starlette.concurrency import run_in_threadpool
 from springbootai.cloud.load_balancer import LoadBalancer
+from springbootai.logging.context import outbound_request_id, sanitize_url
 
 logger = logging.getLogger("Spring.Cloud.Feign")
+
+
+class FeignRequestError(RuntimeError):
+    """Stable, credential-safe error raised by declared HTTP clients."""
+
+    def __init__(self, method: str, url: str, reason: str,
+                 status_code: Optional[int] = None):
+        self.method = method
+        self.url = sanitize_url(url)
+        self.reason = reason
+        self.status_code = status_code
+        status = f" status={status_code}" if status_code is not None else ""
+        super().__init__(
+            f"Feign request failed: {method} {self.url}{status} ({reason})")
 
 
 class FeignClientProxy:
@@ -27,37 +45,100 @@ class FeignClientProxy:
         timeout: float = 30,
         pool_connections: int = 20,
         pool_maxsize: int = 100,
+        max_retries: int = 2,
+        retry_backoff: float = 0.2,
+        connect_timeout: Optional[float] = None,
+        read_timeout: Optional[float] = None,
+        max_response_size: int = 10 * 1024 * 1024,
     ):
         self.service_name = service_name
         self.path = path
         self.url = url
         self.fallback = fallback
         self.fallback_factory = fallback_factory
-        self.timeout = timeout
+        self.timeout = self._positive_timeout(timeout, "timeout")
+        self.connect_timeout = (
+            self._positive_timeout(connect_timeout, "connect_timeout")
+            if connect_timeout is not None else None)
+        self.read_timeout = (
+            self._positive_timeout(read_timeout, "read_timeout")
+            if read_timeout is not None else None)
+        self.max_response_size = max(0, int(max_response_size))
+        self.max_retries = max(0, min(int(max_retries), 10))
+        self._closed = False
         self._load_balancer = LoadBalancer()
         self._session = requests.Session()
+        retry_policy = Retry(
+            total=self.max_retries,
+            connect=self.max_retries,
+            read=self.max_retries,
+            status=self.max_retries,
+            backoff_factor=max(0.0, float(retry_backoff)),
+            status_forcelist=(429, 502, 503, 504),
+            allowed_methods=frozenset(
+                {"HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE"}),
+            respect_retry_after_header=True,
+            raise_on_status=False,
+        )
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=max(1, int(pool_connections)),
             pool_maxsize=max(1, int(pool_maxsize)),
-            max_retries=0,
+            max_retries=retry_policy,
             pool_block=True,
         )
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
 
     def close(self) -> None:
-        self._session.close()
+        if not self._closed:
+            self._session.close()
+            self._closed = True
 
     def __enter__(self) -> "FeignClientProxy":
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
+
+    @staticmethod
+    def _positive_timeout(value: Any, name: str) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Feign {name} must be a positive number") from exc
+        if parsed <= 0:
+            raise ValueError(f"Feign {name} must be greater than zero")
+        return parsed
+
+    def _effective_timeout(self, override: Optional[float] = None):
+        if override is not None:
+            return self._positive_timeout(override, "timeout")
+        if self.connect_timeout is None and self.read_timeout is None:
+            return self.timeout
+        return (
+            self.connect_timeout or self.timeout,
+            self.read_timeout or self.timeout,
+        )
+
+    @staticmethod
+    def _validate_base_url(value: str) -> str:
+        try:
+            parsed = urlsplit(str(value))
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("Feign base URL is invalid") from exc
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Feign base URL must use http or https and include a host")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("Feign base URL must not contain embedded credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("Feign base URL must not contain a query or fragment")
+        return str(value).rstrip("/")
     
     def _get_base_url(self) -> str:
         """获取基础URL"""
         if self.url:
-            return self.url
+            return self._validate_base_url(self.url)
         
         # 使用负载均衡获取服务实例
         instances = self._load_balancer.get_instances(self.service_name)
@@ -65,13 +146,54 @@ class FeignClientProxy:
             raise Exception(f"No instances available for service: {self.service_name}")
         
         instance = self._load_balancer.select_instance(instances)
-        return f"http://{instance['ip']}:{instance['port']}"
+        return self._validate_base_url(
+            f"http://{instance['ip']}:{instance['port']}")
     
     def _build_url(self, endpoint: str) -> str:
         """构建完整URL"""
         base_url = self._get_base_url()
         full_path = self.path.rstrip('/') + '/' + endpoint.lstrip('/')
         return f"{base_url.rstrip('/')}/{full_path.lstrip('/')}"
+
+    def _decode_response(self, response, method: str, url: str) -> Any:
+        headers = getattr(response, "headers", {}) or {}
+        declared_size = headers.get("Content-Length", headers.get("content-length"))
+        if self.max_response_size > 0 and declared_size:
+            try:
+                if int(declared_size) > self.max_response_size:
+                    raise FeignRequestError(
+                        method, url, "response_too_large")
+            except ValueError:
+                pass
+        iterator = getattr(response, "iter_content", None)
+        if callable(iterator):
+            chunks = []
+            byte_size = 0
+            for chunk in iterator(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                byte_size += len(chunk)
+                if (self.max_response_size > 0
+                        and byte_size > self.max_response_size):
+                    raise FeignRequestError(
+                        method, url, "response_too_large")
+                chunks.append(chunk)
+            content = b"".join(chunks)
+        else:
+            content = getattr(response, "content", b"")
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            if (self.max_response_size > 0
+                    and len(content) > self.max_response_size):
+                raise FeignRequestError(
+                    method, url, "response_too_large")
+        if not content:
+            return None
+        try:
+            return json.loads(content)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            encoding = getattr(response, "encoding", None) or "utf-8"
+            return content.decode(encoding, errors="replace")
 
     @staticmethod
     def _jsonable(value: Any) -> Any:
@@ -84,15 +206,21 @@ class FeignClientProxy:
         return value
 
     def _call_fallback(self, fallback_method: Optional[str], error: Exception, args, kwargs):
-        if not self.fallback:
+        if not self.fallback and not self.fallback_factory:
             raise error
-        try:
-            if self.fallback_factory:
-                factory = self.fallback_factory()
-                fallback_instance = factory.create(error) if hasattr(factory, 'create') else factory(error)
+        if self.fallback_factory:
+            factory = (
+                self.fallback_factory()
+                if isinstance(self.fallback_factory, type)
+                else self.fallback_factory
+            )
+            if hasattr(factory, 'create') and callable(factory.create):
+                fallback_instance = factory.create(error)
+            elif callable(factory):
+                fallback_instance = factory(error)
             else:
-                fallback_instance = self.fallback()
-        except TypeError:
+                raise TypeError("Feign fallback_factory must be callable or define create()")
+        else:
             fallback_instance = self.fallback()
         method = getattr(fallback_instance, fallback_method or '', None)
         if not callable(method):
@@ -114,11 +242,26 @@ class FeignClientProxy:
         call_kwargs: Optional[dict] = None,
     ) -> Any:
         """Execute a declared Feign request and invoke its fallback if needed."""
+        if self._closed:
+            raise RuntimeError("Feign client is closed")
+        method = str(method).upper()
+        if method not in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}:
+            raise ValueError(f"Unsupported Feign HTTP method: {method}")
         url = self._build_url(endpoint)
         call_kwargs = call_kwargs or {}
 
         # 自动注入分布式事务XID头
         req_headers = dict(headers) if headers else {}
+        supplied_request_id = next((
+            value for key, value in req_headers.items()
+            if key.lower() == "x-request-id"
+        ), None)
+        request_id = outbound_request_id(supplied_request_id)
+        req_headers = {
+            key: value for key, value in req_headers.items()
+            if key.lower() != "x-request-id"
+        }
+        req_headers["X-Request-ID"] = request_id
         try:
             from springbootai.cloud.seata import seata_manager
             xid = seata_manager.get_current_tx_id()
@@ -136,32 +279,58 @@ class FeignClientProxy:
         except Exception:
             pass
 
+        response = None
         try:
             response = self._session.request(
-                method.upper(),
+                method,
                 url,
                 params=params,
                 json=self._jsonable(json_data) if json_data is not None else None,
                 data=data,
                 headers=req_headers,
-                timeout=self.timeout if timeout is None else timeout,
+                timeout=self._effective_timeout(timeout),
+                stream=True,
+                allow_redirects=False,
             )
+            status_code = getattr(response, "status_code", 200)
+            if isinstance(status_code, int) and 300 <= status_code < 400:
+                raise FeignRequestError(
+                    method, url, "redirect_not_allowed",
+                    status_code=status_code,
+                )
             response.raise_for_status()
-            if not response.content:
-                return None
-            try:
-                return response.json()
-            except (ValueError, json.JSONDecodeError):
-                return response.text
+            return self._decode_response(response, method, url)
         except Exception as error:
-            logger.error("Feign %s request failed: %s, error: %s", method, url, error)
-            return self._call_fallback(fallback_method, error, call_args, call_kwargs)
+            if isinstance(error, FeignRequestError):
+                public_error = error
+            else:
+                status_code = getattr(
+                    getattr(error, "response", None), "status_code", None)
+                public_error = FeignRequestError(
+                    method, url, type(error).__name__, status_code=status_code)
+            logger.warning(
+                "Feign request failed method=%s target=%s error_type=%s "
+                "status=%s request_id=%s",
+                method, sanitize_url(url), type(error).__name__,
+                public_error.status_code, request_id,
+            )
+            closer = getattr(response, "close", None)
+            if callable(closer):
+                closer()
+                response = None
+            return self._call_fallback(
+                fallback_method, public_error, call_args, call_kwargs)
+        finally:
+            closer = getattr(response, "close", None)
+            if callable(closer):
+                closer()
 
     async def arequest(self, method: str, endpoint: str, **kwargs) -> Any:
         """Execute the synchronous requests client without blocking the ASGI loop."""
         return await run_in_threadpool(self.request, method, endpoint, **kwargs)
     
-    def get(self, endpoint: str, params: Dict[str, Any] = None, headers: Dict[str, str] = None) -> Any:
+    def get(self, endpoint: str, params: Dict[str, Any] = None,
+            headers: Dict[str, str] = None) -> Any:
         """
         发送GET请求
         
@@ -173,29 +342,11 @@ class FeignClientProxy:
         Returns:
             响应数据
         """
-        url = self._build_url(endpoint)
-        
-        try:
-            response = self._session.get(
-                url, params=params, headers=headers, timeout=self.timeout
-            )
-            response.raise_for_status()
-            
-            try:
-                return response.json()
-            except json.JSONDecodeError:
-                return response.text
-        except Exception as e:
-            logger.error(f"Feign GET request failed: {url}, error: {e}")
-            
-            # 尝试降级处理
-            if self.fallback:
-                fallback_instance = self.fallback()
-                method = getattr(fallback_instance, endpoint.replace('/', '_'), None)
-                if method and callable(method):
-                    return method(params=params, headers=headers)
-            
-            raise
+        return self.request(
+            "GET", endpoint, params=params, headers=headers,
+            fallback_method=endpoint.replace('/', '_'),
+            call_kwargs={"params": params, "headers": headers},
+        )
     
     def post(self, endpoint: str, data: Dict[str, Any] = None, json_data: Dict[str, Any] = None, 
              headers: Dict[str, str] = None) -> Any:
@@ -211,28 +362,13 @@ class FeignClientProxy:
         Returns:
             响应数据
         """
-        url = self._build_url(endpoint)
-        
-        try:
-            response = self._session.post(
-                url, data=data, json=json_data, headers=headers, timeout=self.timeout
-            )
-            response.raise_for_status()
-            
-            try:
-                return response.json()
-            except json.JSONDecodeError:
-                return response.text
-        except Exception as e:
-            logger.error(f"Feign POST request failed: {url}, error: {e}")
-            
-            if self.fallback:
-                fallback_instance = self.fallback()
-                method = getattr(fallback_instance, endpoint.replace('/', '_'), None)
-                if method and callable(method):
-                    return method(data=data, json_data=json_data, headers=headers)
-            
-            raise
+        return self.request(
+            "POST", endpoint, data=data, json_data=json_data, headers=headers,
+            fallback_method=endpoint.replace('/', '_'),
+            call_kwargs={
+                "data": data, "json_data": json_data, "headers": headers,
+            },
+        )
     
     def put(self, endpoint: str, data: Dict[str, Any] = None, json_data: Dict[str, Any] = None,
             headers: Dict[str, str] = None) -> Any:
@@ -248,28 +384,13 @@ class FeignClientProxy:
         Returns:
             响应数据
         """
-        url = self._build_url(endpoint)
-        
-        try:
-            response = self._session.put(
-                url, data=data, json=json_data, headers=headers, timeout=self.timeout
-            )
-            response.raise_for_status()
-            
-            try:
-                return response.json()
-            except json.JSONDecodeError:
-                return response.text
-        except Exception as e:
-            logger.error(f"Feign PUT request failed: {url}, error: {e}")
-            
-            if self.fallback:
-                fallback_instance = self.fallback()
-                method = getattr(fallback_instance, endpoint.replace('/', '_'), None)
-                if method and callable(method):
-                    return method(data=data, json_data=json_data, headers=headers)
-            
-            raise
+        return self.request(
+            "PUT", endpoint, data=data, json_data=json_data, headers=headers,
+            fallback_method=endpoint.replace('/', '_'),
+            call_kwargs={
+                "data": data, "json_data": json_data, "headers": headers,
+            },
+        )
     
     def delete(self, endpoint: str, params: Dict[str, Any] = None, headers: Dict[str, str] = None) -> Any:
         """
@@ -283,34 +404,18 @@ class FeignClientProxy:
         Returns:
             响应数据
         """
-        url = self._build_url(endpoint)
-        
-        try:
-            response = self._session.delete(
-                url, params=params, headers=headers, timeout=self.timeout
-            )
-            response.raise_for_status()
-            
-            try:
-                return response.json()
-            except json.JSONDecodeError:
-                return response.text
-        except Exception as e:
-            logger.error(f"Feign DELETE request failed: {url}, error: {e}")
-            
-            if self.fallback:
-                fallback_instance = self.fallback()
-                method = getattr(fallback_instance, endpoint.replace('/', '_'), None)
-                if method and callable(method):
-                    return method(params=params, headers=headers)
-            
-            raise
+        return self.request(
+            "DELETE", endpoint, params=params, headers=headers,
+            fallback_method=endpoint.replace('/', '_'),
+            call_kwargs={"params": params, "headers": headers},
+        )
 
 
 class FeignClientFactory:
     """Feign客户端工厂"""
     
     _clients: Dict[str, FeignClientProxy] = {}
+    _lock = threading.RLock()
     
     @classmethod
     def get_client(cls, service_name: str) -> FeignClientProxy:
@@ -323,10 +428,10 @@ class FeignClientFactory:
         Returns:
             Feign客户端代理
         """
-        if service_name not in cls._clients:
-            cls._clients[service_name] = FeignClientProxy(service_name)
-        
-        return cls._clients[service_name]
+        with cls._lock:
+            if service_name not in cls._clients:
+                cls._clients[service_name] = FeignClientProxy(service_name)
+            return cls._clients[service_name]
     
     @classmethod
     def register_client(cls, service_name: str, client: FeignClientProxy):
@@ -337,19 +442,25 @@ class FeignClientFactory:
             service_name: 服务名称
             client: Feign客户端代理
         """
-        cls._clients[service_name] = client
+        with cls._lock:
+            previous = cls._clients.get(service_name)
+            cls._clients[service_name] = client
+        if previous is not None and previous is not client:
+            previous.close()
 
     @classmethod
     def close_all(cls) -> None:
-        for client in cls._clients.values():
+        with cls._lock:
+            clients = list(cls._clients.values())
+            cls._clients.clear()
+        for client in clients:
             client.close()
-        cls._clients.clear()
 
 
 def create_feign_client(service_name: str, path: str = "", url: str = "", 
                         fallback: Type = None,
                         fallback_factory: Type = None,
-                        timeout: float = 30) -> FeignClientProxy:
+                        timeout: float = 30, **client_options) -> FeignClientProxy:
     """
     创建Feign客户端
     
@@ -362,7 +473,10 @@ def create_feign_client(service_name: str, path: str = "", url: str = "",
     Returns:
         Feign客户端代理
     """
-    return FeignClientProxy(service_name, path, url, fallback, fallback_factory, timeout)
+    return FeignClientProxy(
+        service_name, path, url, fallback, fallback_factory, timeout,
+        **client_options,
+    )
 
 
 def create_declared_feign_client(client_class: Type, annotation: Any) -> Any:
@@ -401,8 +515,8 @@ def create_declared_feign_client(client_class: Type, annotation: Any) -> Any:
 
         def make_call(name, endpoint, verb, original, params):
             def call(self, *args, **kwargs):
-                bound = inspect.signature(original).bind_partial(None, *args, **kwargs)
-                bound.apply_defaults()
+                bound = inspect.signature(original).bind(None, *args, **kwargs)
+                explicitly_bound = set(bound.arguments)
                 values = dict(bound.arguments)
                 values.pop('self', None)
                 path_values = {}
@@ -410,18 +524,43 @@ def create_declared_feign_client(client_class: Type, annotation: Any) -> Any:
                 body = None
                 headers = {}
                 for parameter in params:
-                    value = values.get(parameter.name)
                     marker = parameter.default
+                    supplied = parameter.name in explicitly_bound
+                    value = values.get(parameter.name)
+                    if not supplied and isinstance(marker, (RequestParam, RequestHeader)):
+                        if marker.required and marker.default is None:
+                            raise TypeError(
+                                f"Missing required Feign argument: {parameter.name}")
+                        value = marker.default
+                    elif not supplied and isinstance(marker, RequestBody):
+                        if marker.required:
+                            raise TypeError(
+                                f"Missing required Feign argument: {parameter.name}")
+                        value = None
+                    elif not supplied and isinstance(marker, PathVariable):
+                        raise TypeError(
+                            f"Missing required Feign path argument: {parameter.name}")
+                    elif not supplied and marker is not inspect.Parameter.empty:
+                        value = marker
                     if isinstance(marker, PathVariable) or '{' + parameter.name + '}' in endpoint:
-                        path_values[marker.name if isinstance(marker, PathVariable) and marker.name else parameter.name] = value
+                        path_name = (
+                            marker.name if isinstance(marker, PathVariable) and marker.name
+                            else parameter.name
+                        )
+                        if value is None:
+                            raise ValueError(f"Feign 路径参数不能为空: {path_name}")
+                        path_values[path_name] = quote(str(value), safe="")
                     elif isinstance(marker, RequestHeader):
-                        headers[marker.name or parameter.name.replace('_', '-')] = value
+                        if value is not None:
+                            headers[marker.name or parameter.name.replace('_', '-')] = str(value)
                     elif isinstance(marker, RequestBody):
                         body = value
                     elif isinstance(marker, RequestParam):
-                        query[marker.name or parameter.name] = value
+                        if value is not None:
+                            query[marker.name or parameter.name] = value
                     elif verb in {'GET', 'DELETE'}:
-                        query[parameter.name] = value
+                        if value is not None:
+                            query[parameter.name] = value
                     elif body is None:
                         body = value
                     else:

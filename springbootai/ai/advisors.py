@@ -1,7 +1,9 @@
 """
 Advisor 实现 - QuestionAnswerAdvisor（RAG）与 MessageChatMemoryAdvisor（会话记忆）。
 """
-from typing import Any, Dict, List
+import inspect
+from urllib.parse import quote
+from typing import Any, Dict, List, Optional, Sequence
 
 from springbootai.ai.core import (
     Advisor, AdvisorRequest, ChatResponse, Message, MessageType,
@@ -25,10 +27,30 @@ class MessageChatMemoryAdvisor(Advisor):
 
     @staticmethod
     def _build_namespace(context: dict) -> str:
-        tenant = str(context.get("tenant_id", "")).strip()
-        user = str(context.get("user_id", "")).strip()
+        tenant = quote(str(context.get("tenant_id", "")).strip()[:128], safe="-_.~")
+        user = quote(str(context.get("user_id", "")).strip()[:128], safe="-_.~")
         parts = [p for p in (tenant, user) if p]
         return ":".join(parts) if parts else ""
+
+    @staticmethod
+    def _call_memory(method, *args, namespace: str, **kwargs):
+        """Call new namespaced memory APIs without silently weakening old backends."""
+        try:
+            parameters = inspect.signature(method).parameters.values()
+            supports_namespace = any(
+                p.name == "namespace" or p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in parameters
+            )
+        except (TypeError, ValueError):
+            supports_namespace = False
+        if namespace and not supports_namespace:
+            raise RuntimeError(
+                "ChatMemory backend does not support request-scoped namespaces; "
+                "refusing a potentially cross-tenant memory access"
+            )
+        if supports_namespace:
+            kwargs["namespace"] = namespace
+        return method(*args, **kwargs)
 
     def __init__(self, memory: ChatMemory, max_messages: int = 20):
         self.memory = memory
@@ -44,12 +66,15 @@ class MessageChatMemoryAdvisor(Advisor):
                 "跳过历史注入。请在上游设置 request.context['conversation_id']。")
             return request
 
-        # 如果 memory 支持 namespace 则注入用户/租户上下文
+        # Namespace is passed per operation. Never mutate a shared memory bean:
+        # concurrent requests may belong to different tenants.
         ns = self._build_namespace(request.context)
-        if ns and hasattr(self.memory, "_namespace"):
-            self.memory._namespace = ns
+        request.context["memory_namespace"] = ns
 
-        history = self.memory.get(str(conv_id), last_n=self.max_messages)
+        history = self._call_memory(
+            self.memory.get, str(conv_id), last_n=self.max_messages,
+            namespace=ns,
+        )
         # 历史 + 本次输入合并
         request.messages = history + request.messages
         return request
@@ -59,14 +84,18 @@ class MessageChatMemoryAdvisor(Advisor):
         conv_id = request.context.get("conversation_id")
         if not conv_id:
             return response
+        ns = str(request.context.get("memory_namespace") or
+                 self._build_namespace(request.context))
         # 保存用户输入（最后一条 user 消息）
         for msg in reversed(request.messages):
             if msg.type == MessageType.USER:
-                self.memory.add(conv_id, msg)
+                self._call_memory(
+                    self.memory.add, str(conv_id), msg, namespace=ns)
                 break
         # 保存模型回复
         if response.output:
-            self.memory.add(conv_id, response.output)
+            self._call_memory(
+                self.memory.add, str(conv_id), response.output, namespace=ns)
         return response
 
 
@@ -89,12 +118,16 @@ class QuestionAnswerAdvisor(Advisor):
                  prompt_template: str = "",
                  top_k: int = 4,
                  embedding_model=None,
-                 harden_injection: bool = True):
+                 harden_injection: bool = True,
+                 filter_metadata: Optional[Dict[str, Any]] = None,
+                 filter_context_keys: Sequence[str] = ("tenant_id",)):
         self.vector_store = vector_store
         self.prompt_template = prompt_template or self.DEFAULT_PROMPT_TEMPLATE
         self.top_k = top_k
         self.embedding_model = embedding_model
         self.harden_injection = harden_injection
+        self.filter_metadata = dict(filter_metadata or {})
+        self.filter_context_keys = tuple(filter_context_keys)
 
     def advise_request(self, request: AdvisorRequest) -> AdvisorRequest:
         # 取最后一条用户消息作为查询
@@ -110,9 +143,21 @@ class QuestionAnswerAdvisor(Advisor):
         emb = None
         if self.embedding_model:
             emb = self.embedding_model.embed_one(query)
+        filters = dict(self.filter_metadata)
+        for key in self.filter_context_keys:
+            value = request.context.get(key)
+            if value is not None and str(value).strip():
+                filters[key] = str(value).strip()
+        # When no tenant exists, a verified user identity can still isolate a
+        # personal knowledge base. Tenant scope takes precedence by default so
+        # shared tenant documents do not require a redundant user_id field.
+        if not filters and request.context.get("user_id"):
+            filters["user_id"] = str(request.context["user_id"]).strip()
+
         search_req = SearchRequest(
             query=query, embedding=emb, top_k=self.top_k,
             similarity_threshold=0.1,
+            filter_metadata=filters or None,
         )
         docs = self.vector_store.similarity_search(search_req)
         if not docs:

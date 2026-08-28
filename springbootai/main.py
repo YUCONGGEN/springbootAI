@@ -17,7 +17,6 @@ from springbootai.annotations.enterprise import (
     EnableDevTools,
     EnableConfigServer,
     EnableBus,
-    EnableBatchProcessing,
     EnableDataRest,
 )
 from springbootai.annotations.data import RepositoryRestResource
@@ -46,7 +45,9 @@ class SpringApplication:
         self.web_context: Optional[WebApplicationContext] = None
         self.logger = SpringLogger()
         self._discovery_registered = False
+        self._discovery_registration = None
         self._admin_client = None
+        self._devtools_watcher = None
         self._background_started = False
 
     @staticmethod
@@ -54,8 +55,18 @@ class SpringApplication:
         """Return a config section as a dictionary for defensive reads."""
         return value if isinstance(value, dict) else {}
 
+    @staticmethod
+    def _application_name(config: object):
+        """Resolve the application name using the same keys for all lifecycle phases."""
+        root = SpringApplication._section(config)
+        spring = SpringApplication._section(root.get('spring'))
+        spring_application = SpringApplication._section(spring.get('application'))
+        root_application = SpringApplication._section(root.get('application'))
+        return spring_application.get('name') or root_application.get('name')
+
     def _cleanup_after_start_failure(self) -> None:
         """Release context-owned resources when web startup aborts."""
+        self._stop_devtools_watcher()
         context = self.application_context
         if context is None:
             return
@@ -200,6 +211,91 @@ class SpringApplication:
                 return item
         return None
 
+    def _on_devtools_change(self) -> None:
+        """Handle the debounced watcher notification without faking a reload.
+
+        In-process replacement of an initialized IoC/ASGI application is not a
+        safe restart boundary.  Development process reload remains the
+        responsibility of Uvicorn ``--reload`` or another supervisor.
+        """
+        self.logger.info(
+            "DevTools detected settled file changes; process restart is "
+            "delegated to the external reloader"
+        )
+
+    def _stop_devtools_watcher(self) -> None:
+        """Stop the application-owned watcher and any pending debounce timer."""
+        watcher = self._devtools_watcher
+        self._devtools_watcher = None
+        if watcher is None:
+            return
+        try:
+            watcher.stop()
+        except Exception:
+            self.logger.warning("DevTools watcher shutdown failed")
+
+    def _init_devtools(self, config: dict, spring_config: dict,
+                       fail_fast: bool) -> None:
+        """Configure the application-owned DevTools file watcher."""
+        devtools_config = self._section(
+            self._section(spring_config.get('devtools')).get('restart')
+        )
+        devtools_annotation = self._find_annotation(EnableDevTools)
+        devtools_enabled = (
+            devtools_config.get('enabled', False)
+            or devtools_annotation is not None
+        )
+        if not devtools_enabled:
+            return
+
+        try:
+            if devtools_annotation:
+                # Copy every mapping on the path.  Annotation overrides must
+                # not mutate the live configuration snapshot returned by the
+                # application context.
+                merged_config = dict(config)
+                merged_spring = dict(self._section(merged_config.get('spring')))
+                merged_devtools = dict(
+                    self._section(merged_spring.get('devtools')))
+                dt_merged = dict(
+                    self._section(merged_devtools.get('restart')))
+                merged_config['spring'] = merged_spring
+                merged_spring['devtools'] = merged_devtools
+                merged_devtools['restart'] = dt_merged
+
+                dt_merged['enabled'] = True
+                if devtools_annotation.watch_dirs:
+                    dt_merged['watch-dirs'] = list(
+                        devtools_annotation.watch_dirs)
+                dt_merged['poll-interval'] = devtools_annotation.poll_interval
+                if devtools_annotation.exclude_dirs is not None:
+                    dt_merged['exclude'] = list(
+                        devtools_annotation.exclude_dirs)
+                config_for_devtools = merged_config
+            else:
+                config_for_devtools = config
+
+            from springbootai.devtools import create_devtools_watcher
+            watcher = create_devtools_watcher(
+                config_for_devtools,
+                # RestartTrigger has always exposed a zero-argument callback.
+                # This callback intentionally reports readiness to an external
+                # reloader instead of claiming an unsafe in-process restart.
+                restart_callback=self._on_devtools_change,
+            )
+            if watcher is not None:
+                previous = self._devtools_watcher
+                self._devtools_watcher = watcher
+                if previous is not None and previous is not watcher:
+                    previous.stop()
+                self.logger.info(
+                    "DevTools file watching enabled; use an external process "
+                    "reloader for automatic restart"
+                )
+        except Exception as exc:
+            self._handle_init_error(
+                'DevTools', devtools_config, exc, fail_fast)
+
     def _register_repository_rest_resources(self, base_path: str) -> None:
         """扫描 IoC 容器中标记了 @RepositoryRestResource 的 Bean，
         自动注册 CRUD REST 端点。
@@ -275,11 +371,27 @@ class SpringApplication:
             config.update(resolved)
             self.application_context._config = resolved
         except Exception as e:
-            self.logger.debug(f"Secret resolution skipped: {e}")
+            self.logger.debug(
+                f"Secret resolution skipped error_type={type(e).__name__}")
 
         # 初始化日志（init_logging 内部已通过 strict 校验抛 LoggingConfigError，
         # 由 run() 专门捕获，此处不再包裹 try/except）
         init_logging(self._section(config.get('logging')))
+
+        # 初始化 SkyWalking。旧实现在模块导入时使用默认值启动，
+        # 导致 application.yml 中的实际服务名和 collector 配置永远不生效。
+        skywalking_config = self._section(config.get('skywalking'))
+        skywalking_enabled = str(
+            skywalking_config.get('enabled', False)
+        ).strip().lower() in {'1', 'true', 'yes', 'on'}
+        if skywalking_enabled:
+            try:
+                from springbootai.tracing.skywalking import init_skywalking
+                init_skywalking(skywalking_config)
+                self.logger.info("SkyWalking tracing initialized")
+            except Exception as exc:
+                self._handle_init_error(
+                    'SkyWalking', skywalking_config, exc, fail_fast)
 
         # 初始化Redis（延迟导入）
         redis_config = self._section(config.get('redis'))
@@ -474,36 +586,9 @@ class SpringApplication:
             except Exception as e:
                 self._handle_init_error('Prometheus', prometheus_config, e, fail_fast)
 
-        # 初始化DevTools热重载（仅开发环境）
-        # 支持两种启用方式：配置文件 springbootai.devtools.restart.enabled=true 或 @EnableDevTools 注解
-        devtools_config = self._section(self._section(spring_config.get('devtools')).get('restart'))
-        devtools_annotation = self._find_annotation(EnableDevTools)
-        devtools_enabled = devtools_config.get('enabled', False) or devtools_annotation is not None
-        if devtools_enabled:
-            try:
-                if devtools_annotation:
-                    merged_config = dict(config)
-                    dt_merged = merged_config.setdefault('spring', {}).setdefault('devtools', {}).setdefault('restart', {})
-                    dt_merged['enabled'] = True
-                    if devtools_annotation.watch_dirs:
-                        dt_merged['watch_dirs'] = devtools_annotation.watch_dirs
-                    dt_merged['poll_interval'] = devtools_annotation.poll_interval
-                    if devtools_annotation.exclude_dirs:
-                        dt_merged['exclude_dirs'] = devtools_annotation.exclude_dirs
-                    config_for_devtools = merged_config
-                else:
-                    config_for_devtools = config
-                from springbootai.devtools import create_devtools_watcher
-                watcher = create_devtools_watcher(
-                    config_for_devtools,
-                    restart_callback=lambda changed: self.logger.info(
-                        f"DevTools detected file changes: {changed}"
-                    ),
-                )
-                if watcher is not None:
-                    self.logger.info("DevTools hot reload enabled")
-            except Exception as e:
-                self._handle_init_error('DevTools', devtools_config, e, fail_fast)
+        # DevTools 只负责文件监听和去抖通知；进程重启由 Uvicorn
+        # ``--reload`` 或外部进程管理器负责。
+        self._init_devtools(config, spring_config, fail_fast)
 
         # 初始化Spring Data REST（扫描 @RepositoryRestResource 标记的 Repository）
         # 支持两种启用方式：配置文件 springbootai.data.rest.enabled=true 或 @EnableDataRest 注解
@@ -628,6 +713,12 @@ class SpringApplication:
             instance_id = self._admin_client.register()
             self.logger.info(f"Registered with Spring Boot Admin ({instance_id or 'accepted'})")
         except Exception as exc:
+            if self._admin_client is not None:
+                try:
+                    self._admin_client.close()
+                except Exception:
+                    self.logger.debug(
+                        "Spring Boot Admin cleanup after registration failure failed")
             self._admin_client = None
             self._handle_init_error('Spring Boot Admin', {'enabled': True}, exc, fail_fast)
 
@@ -636,8 +727,15 @@ class SpringApplication:
             try:
                 self._admin_client.deregister()
             except Exception as exc:
-                self.logger.warning(f"Spring Boot Admin deregistration failed: {exc}")
+                self.logger.warning(
+                    "Spring Boot Admin deregistration failed "
+                    f"error_type={type(exc).__name__}"
+                )
             finally:
+                try:
+                    self._admin_client.close()
+                except Exception:
+                    self.logger.debug("Spring Boot Admin client close failed")
                 self._admin_client = None
     def _configure_web_lifecycle(self) -> None:
         app = self.web_context.fastapi_app
@@ -725,7 +823,9 @@ class SpringApplication:
                 try:
                     controller.register(self.web_context.fastapi_app)
                 except Exception as e:
-                    self.logger.warning(f"Failed to register REST controller: {e}")
+                    self.logger.warning(
+                        "Failed to register REST controller "
+                        f"error_type={type(e).__name__}")
             self._pending_rest_controllers = []
 
         # 注册优雅退出信号处理
@@ -751,6 +851,10 @@ class SpringApplication:
 
     async def _on_app_shutdown(self):
         """ASGI应用关闭事件回调"""
+        # FileWatcher is owned by this application instance.  Stop it before
+        # tearing down shared clients so no delayed callback runs after the
+        # ASGI lifecycle has ended.
+        await asyncio.to_thread(self._stop_devtools_watcher)
         try:
             from springbootai.cloud.seata import seata_manager
             seata_manager.stop_recovery_worker()
@@ -781,12 +885,9 @@ class SpringApplication:
         discovery_config = self._section(config.get('discovery'))
         if not enabled and not discovery_config.get('enabled', False):
             return
-        spring_config = self._section(config.get('spring'))
-        application_config = self._section(spring_config.get('application'))
-        root_application_config = self._section(config.get('application'))
-        service_name = application_config.get('name') or root_application_config.get('name')
+        service_name = self._application_name(config)
         if not service_name:
-            self.logger.warning("Discovery enabled but springbootai.application.name is missing")
+            self.logger.warning("Discovery enabled but spring.application.name is missing")
             return
         try:
             from springbootai.cloud import discovery
@@ -797,33 +898,49 @@ class SpringApplication:
                     ip = socket.gethostbyname(socket.gethostname())
                 except OSError:
                     pass
+            registration_port = int(port)
             if discovery.nacos_client.register_service(
                 service_name,
                 ip,
-                int(port),
+                registration_port,
                 metadata=discovery_config.get('metadata', {}),
             ):
                 self._discovery_registered = True
+                self._discovery_registration = (
+                    service_name, ip, registration_port)
         except Exception as exc:
-            self.logger.warning(f"Service discovery registration failed: {exc}")
+            self.logger.warning(
+                "Service discovery registration failed "
+                f"error_type={type(exc).__name__}")
 
     def _deregister_discovery_service(self) -> None:
         if not self._discovery_registered or self.application_context is None:
             return
         try:
             from springbootai.cloud import discovery
-            service_name = self.application_context.get_value('springbootai.application.name')
+            registration = self._discovery_registration
+            if registration is not None:
+                service_name, ip, port = registration
+            else:
+                # Backward-compatible fallback for applications registered
+                # before this process started tracking the exact tuple.
+                config = self.application_context.get_config()
+                service_name = self._application_name(config)
+                ip = discovery.nacos_client._ip
+                port = discovery.nacos_client._port
             if service_name:
                 discovery.nacos_client.deregister_service(
                     service_name,
-                    discovery.nacos_client._ip,
-                    discovery.nacos_client._port,
+                    ip,
+                    port,
                 )
         except Exception as exc:
-            self.logger.warning(f"Service discovery deregistration failed: {exc}")
+            self.logger.warning(
+                "Service discovery deregistration failed "
+                f"error_type={type(exc).__name__}")
         finally:
             self._discovery_registered = False
-        self._admin_client = None
+            self._discovery_registration = None
 
 
 def run(main_class: Type, **kwargs) -> None:

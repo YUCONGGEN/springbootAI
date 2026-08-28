@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 
+class DocumentTooLargeError(ValueError):
+    """Raised before an ETL document can consume unbounded process memory."""
+
+
 def _has_langchain_splitters() -> bool:
     """探测是否安装了 langchain-text-splitters（切片器专属轻量包）。"""
     try:
@@ -56,23 +60,56 @@ class DocumentReader(ABC):
 class TextReader(DocumentReader):
     """纯文本/Markdown 文件读取器"""
 
-    def __init__(self, source: str = "", encoding: str = "utf-8"):
+    DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+
+    def __init__(self, source: str | os.PathLike = "",
+                 encoding: str = "utf-8",
+                 max_bytes: int = DEFAULT_MAX_BYTES,
+                 strict_path: bool = False):
         self.source = source
         self.encoding = encoding
+        try:
+            self.max_bytes = int(max_bytes)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("TextReader max_bytes must be a non-negative integer") from exc
+        if self.max_bytes < 0:
+            raise ValueError("TextReader max_bytes must not be negative")
+        self.strict_path = bool(strict_path)
+
+    @classmethod
+    def from_file(cls, path: str | os.PathLike, **kwargs) -> "TextReader":
+        """Create a reader that fails clearly when the expected file is absent."""
+        return cls(path, strict_path=True, **kwargs)
+
+    def _check_size(self, size: int, source: str) -> None:
+        if self.max_bytes > 0 and size > self.max_bytes:
+            raise DocumentTooLargeError(
+                f"Document exceeds max_bytes={self.max_bytes}: {source}")
 
     def read(self) -> List[TextDocument]:
         if not self.source:
             return []
+        source = os.fspath(self.source)
         # 从文件路径读取
-        if os.path.isfile(self.source):
-            with open(self.source, "r", encoding=self.encoding) as f:
-                return [TextDocument(content=f.read(),
-                                     metadata={"source": self.source})]
+        if os.path.isfile(source):
+            self._check_size(os.path.getsize(source), source)
+            with open(source, "rb") as file_handle:
+                read_size = self.max_bytes + 1 if self.max_bytes > 0 else -1
+                raw = file_handle.read(read_size)
+            self._check_size(len(raw), source)
+            content = raw.decode(self.encoding)
+            return [TextDocument(
+                content=content, metadata={"source": source},
+            )]
+        if self.strict_path:
+            raise FileNotFoundError(f"Document file does not exist: {source}")
         # 直接作为文本内容
-        return [TextDocument(content=self.source, metadata={"source": "inline"})]
+        self._check_size(len(source.encode(self.encoding)), "inline")
+        return [TextDocument(content=source, metadata={"source": "inline"})]
 
     def read_text(self, content: str, source: str = "inline") -> TextDocument:
         """直接读取文本字符串"""
+        self._check_size(len(content.encode(self.encoding)), source)
         return TextDocument(content=content, metadata={"source": source})
 
 
@@ -91,10 +128,25 @@ class TokenTextSplitter(TextSplitter):
     """
 
     def __init__(self, chunk_size: int = 800, chunk_overlap: int = 200,
-                 min_chunk_size: int = 100):
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.min_chunk_size = min_chunk_size
+                 min_chunk_size: int | None = None):
+        self.chunk_size = int(chunk_size)
+        self.chunk_overlap = int(chunk_overlap)
+        if self.chunk_size <= 0:
+            raise ValueError("TokenTextSplitter chunk_size must be greater than zero")
+        if not 0 <= self.chunk_overlap < self.chunk_size:
+            raise ValueError(
+                "TokenTextSplitter chunk_overlap must be >= 0 and < chunk_size")
+        # The historical default was 100.  For explicitly small chunk sizes,
+        # treating that implicit default as an invalid user value broke normal
+        # usage, so derive a bounded default while still rejecting an explicit
+        # impossible minimum.
+        self.min_chunk_size = (
+            min(100, self.chunk_size)
+            if min_chunk_size is None else int(min_chunk_size)
+        )
+        if not 0 <= self.min_chunk_size <= self.chunk_size:
+            raise ValueError(
+                "TokenTextSplitter min_chunk_size must be between 0 and chunk_size")
 
     def split(self, documents: List[TextDocument]) -> List[TextDocument]:
         # LangChain 优先：递归字符切片（自动按 \n\n/\n/空格/标点逐级切分，语义更佳）
@@ -145,8 +197,17 @@ class CharacterTextSplitter(TextSplitter):
     def __init__(self, separator: str = "\n\n", chunk_size: int = 1000,
                  chunk_overlap: int = 200):
         self.separator = separator
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        self.chunk_size = int(chunk_size)
+        self.chunk_overlap = int(chunk_overlap)
+        if self.chunk_size <= 0:
+            raise ValueError(
+                "CharacterTextSplitter chunk_size must be greater than zero")
+        if self.chunk_overlap < 0:
+            raise ValueError(
+                "CharacterTextSplitter chunk_overlap must not be negative")
+        # Preserve the historical convenience where callers only reduced
+        # chunk_size and relied on the default overlap being clamped.
+        self.chunk_overlap = min(self.chunk_overlap, self.chunk_size - 1)
 
     def split(self, documents: List[TextDocument]) -> List[TextDocument]:
         # LangChain 优先：字符分隔切片

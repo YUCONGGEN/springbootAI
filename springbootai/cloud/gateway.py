@@ -20,16 +20,24 @@ Usage (Starlette/FastAPI-based):
 
 import time
 import logging
+import math
 import threading
 import re
 import random
 import inspect
+from collections import deque
+from collections.abc import Mapping
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 import httpx
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
+from springbootai.logging.context import (
+    get_request_id, outbound_request_id, request_context, sanitize_url,
+)
 
 logger = logging.getLogger("Spring.Cloud.Gateway")
 
@@ -43,7 +51,7 @@ class Route:
     uri: str = ""                # 直接目标URI（优先级高于service_id）
     strip_prefix: bool = False   # 是否去除前缀
     prefix: str = ""             # 添加前缀
-    filters: List[str] = field(default_factory=list)
+    filters: List['GatewayFilter'] = field(default_factory=list)
     predicates: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
@@ -78,11 +86,17 @@ class AuthenticationFilter(GatewayFilter):
     """认证过滤器：检查JWT/Token"""
     def __init__(self, token_header: str = "Authorization", exclude_paths: List[str] = None):
         self.token_header = token_header
-        self.exclude_paths = exclude_paths or ["/login", "/health", "/actuator"]
+        self.exclude_paths = (
+            ["/login", "/health", "/actuator"]
+            if exclude_paths is None else list(exclude_paths)
+        )
 
     def pre_filter(self, ctx: FilterContext) -> bool:
         for ep in self.exclude_paths:
-            if ctx.request_path.startswith(ep):
+            normalized = str(ep).rstrip('/') or '/'
+            if (ctx.request_path == normalized
+                    or normalized != '/'
+                    and ctx.request_path.startswith(normalized + '/')):
                 return True
         token = next(
             (value for key, value in ctx.request_headers.items()
@@ -117,22 +131,59 @@ class TracingFilter(GatewayFilter):
 class RateLimitFilter(GatewayFilter):
     """网关限流过滤器（使用Sentinel引擎）"""
     def __init__(self, default_qps: float = 500.0):
-        self.default_qps = default_qps
+        self.default_qps = float(default_qps)
+        if self.default_qps <= 0:
+            raise ValueError("Gateway default_qps must be greater than zero")
+        self._lock = threading.Lock()
+        self._requests: Dict[str, deque] = {}
+
+    def _allow_local(self, resource: str) -> bool:
+        """Apply the advertised default QPS even without Sentinel rules."""
+        now = time.monotonic()
+        cutoff = now - 1.0
+        with self._lock:
+            window = self._requests.setdefault(resource, deque())
+            while window and window[0] <= cutoff:
+                window.popleft()
+            if len(window) >= self.default_qps:
+                return False
+            window.append(now)
+        return True
 
     def pre_filter(self, ctx: FilterContext) -> bool:
+        resource = f"gateway:{ctx.route.id}:{ctx.request_method}"
+        if not self._allow_local(resource):
+            ctx.response_status = 429
+            ctx.response_headers["X-Gateway-Error"] = "Rate Limited"
+            return False
         try:
-            from springbootai.cloud.sentinel import sentinel_engine
-            resource = f"gateway:{ctx.route.id}:{ctx.request_method}"
+            from springbootai.cloud.sentinel import BlockException, sentinel_engine
             try:
-                sentinel_engine.entry(resource, args=(), kwargs={})
-                # 简化：不维持entry对象，仅做QPS检查
-            except Exception:
+                entry = sentinel_engine.entry(resource, args=(), kwargs={})
+                ctx.attributes[f"sentinel:{id(self)}"] = entry
+            except BlockException:
                 ctx.response_status = 429
                 ctx.response_headers["X-Gateway-Error"] = "Rate Limited"
                 return False
         except ImportError:
             pass
+        except Exception as exc:
+            # Sentinel instrumentation failure must not masquerade as a client
+            # rate-limit violation.  The local limiter still protects the route.
+            logger.warning(
+                "[Gateway] Sentinel check failed error_type=%s request_id=%s",
+                type(exc).__name__, get_request_id(),
+            )
         return True
+
+    def post_filter(self, ctx: FilterContext):
+        entry = ctx.attributes.pop(f"sentinel:{id(self)}", None)
+        if entry is None:
+            return
+        if ctx.response_status >= 500:
+            entry.error()
+        else:
+            entry.success()
 
 
 class LoggingFilter(GatewayFilter):
@@ -150,11 +201,23 @@ class LoggingFilter(GatewayFilter):
 
 class LoadBalancerStrategy:
     """负载均衡策略"""
+    _round_robin_lock = threading.Lock()
+    _round_robin_counters: Dict[tuple, int] = {}
+
     @staticmethod
     def round_robin(instances: List[dict]) -> Optional[dict]:
         if not instances:
             return None
-        idx = int(time.time() * 1000) % len(instances)
+        pool_key = tuple(
+            (str(item.get('ip', '')), str(item.get('host', '')),
+             str(item.get('port', '')))
+            for item in instances
+        )
+        with LoadBalancerStrategy._round_robin_lock:
+            idx = (LoadBalancerStrategy._round_robin_counters.get(pool_key, 0)
+                   % len(instances))
+            LoadBalancerStrategy._round_robin_counters[pool_key] = (
+                idx + 1) % len(instances)
         return instances[idx]
 
     @staticmethod
@@ -167,8 +230,16 @@ class LoadBalancerStrategy:
     def weighted(instances: List[dict]) -> Optional[dict]:
         if not instances:
             return None
-        weights = [inst.get('weight', 1) for inst in instances]
+        weights = []
+        for instance in instances:
+            try:
+                weight = float(instance.get('weight', 1))
+            except (TypeError, ValueError, OverflowError):
+                weight = 0.0
+            weights.append(weight if math.isfinite(weight) and weight > 0 else 0.0)
         total = sum(weights)
+        if total <= 0:
+            return LoadBalancerStrategy.round_robin(instances)
         r = random.uniform(0, total)
         upto = 0
         for inst, w in zip(instances, weights):
@@ -193,12 +264,26 @@ class GatewayRouter:
 
     _HOP_BY_HOP_HEADERS = {
         'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
-        'te', 'trailer', 'transfer-encoding', 'upgrade',
+        'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade',
     }
+
+    @staticmethod
+    def _connection_header_tokens(headers) -> set[str]:
+        """Return additional hop-by-hop names nominated by Connection."""
+        try:
+            value = headers.get('connection', '')
+        except (AttributeError, TypeError):
+            return set()
+        return {
+            token.strip().lower() for token in str(value).split(',')
+            if token.strip()
+        }
 
     def __init__(self, discovery_client=None, default_filters: List[GatewayFilter] = None,
                  timeout: float = 10.0, max_body_size: int = 10 * 1024 * 1024,
                  max_response_size: int = 50 * 1024 * 1024,
+                 max_connections: int = 100,
+                 max_keepalive_connections: int = 20,
                  transport: Optional[httpx.AsyncBaseTransport] = None):
         self.discovery = discovery_client
         self.routes: List[Route] = []
@@ -209,14 +294,62 @@ class GatewayRouter:
         self._rr_counters: Dict[str, int] = {}
         self._rr_lock = threading.Lock()
         self._path_pattern_cache: Dict[str, re.Pattern] = {}
-        self.timeout = float(timeout)
-        self.max_body_size = int(max_body_size)
+        self.timeout = self._positive_number(timeout, "timeout")
+        self.max_body_size = self._non_negative_size(
+            max_body_size, "max_body_size")
         # 上游响应大小上限（字节）：防止大文件下载/并发请求整体载入内存耗尽 worker。
         # 旧版本直接 upstream.content 整体载入，无大小限制。0 表示禁用限制（不推荐）。
-        self.max_response_size = int(max_response_size)
+        self.max_response_size = self._non_negative_size(
+            max_response_size, "max_response_size")
+        self.max_connections = max(1, int(max_connections))
+        self.max_keepalive_connections = min(
+            self.max_connections, max(0, int(max_keepalive_connections)))
         self._transport = transport
         self._client: Optional[httpx.AsyncClient] = None
         self._client_lock = threading.Lock()
+
+    @staticmethod
+    def _positive_number(value: Any, name: str) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Gateway {name} must be a positive number") from exc
+        if parsed <= 0:
+            raise ValueError(f"Gateway {name} must be greater than zero")
+        return parsed
+
+    @staticmethod
+    def _non_negative_size(value: Any, name: str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Gateway {name} must be a non-negative integer") from exc
+        if parsed < 0:
+            raise ValueError(f"Gateway {name} must not be negative")
+        return parsed
+
+    @staticmethod
+    def _validate_uri(value: str) -> str:
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Gateway upstream URI is invalid") from exc
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError(
+                "Gateway upstream URI must use http or https and include a host")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError(
+                "Gateway upstream URI must not contain embedded credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError(
+                "Gateway upstream URI must not contain a query or fragment")
+        if any(character.isspace() or ord(character) < 32
+               for character in parsed.hostname):
+            raise ValueError("Gateway upstream URI host is invalid")
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("Gateway upstream URI port is invalid")
+        return value.rstrip('/')
 
     def install(self, app, path: str = "/{path:path}",
                 methods: Optional[List[str]] = None) -> "GatewayRouter":
@@ -252,6 +385,10 @@ class GatewayRouter:
             if self._client is None:
                 self._client = httpx.AsyncClient(
                     timeout=httpx.Timeout(self.timeout),
+                    limits=httpx.Limits(
+                        max_connections=self.max_connections,
+                        max_keepalive_connections=self.max_keepalive_connections,
+                    ),
                     follow_redirects=False,
                     transport=self._transport,
                 )
@@ -269,9 +406,23 @@ class GatewayRouter:
 
     def route(self, path: str, service_id: str = "", uri: str = "",
               strip_prefix: bool = False, prefix: str = "",
-              route_id: str = "", filters: List[str] = None,
+              route_id: str = "", filters: List[GatewayFilter] = None,
               **predicates) -> Route:
         """添加路由"""
+        if not path or not str(path).startswith('/'):
+            raise ValueError("Gateway route path must start with '/'")
+        if not service_id and not uri:
+            raise ValueError("Gateway route requires service_id or uri")
+        route_filters = list(filters or [])
+        invalid_filters = [
+            item for item in route_filters
+            if not isinstance(item, GatewayFilter)
+        ]
+        if invalid_filters:
+            raise TypeError(
+                "Gateway route filters must be GatewayFilter instances")
+        normalized_predicates = self._normalize_predicates(predicates)
+        uri = self._validate_uri(uri) if uri else ""
         rid = route_id or f"route_{len(self.routes) + 1}"
         r = Route(
             id=rid,
@@ -280,20 +431,82 @@ class GatewayRouter:
             uri=uri,
             strip_prefix=strip_prefix,
             prefix=prefix,
-            filters=filters or [],
-            predicates=predicates,
+            filters=route_filters,
+            predicates=normalized_predicates,
         )
         self.routes.append(r)
         self._path_pattern_cache[path] = self._compile_pattern(path)
-        logger.info(f"[Gateway] Route added: {path} -> {service_id or uri}")
+        target = service_id or sanitize_url(uri)
+        logger.info("[Gateway] Route added: %s -> %s", path, target)
         return r
+
+    @staticmethod
+    def _normalize_predicates(predicates: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate the small, explicit route-predicate surface.
+
+        Silently storing unknown predicates made deployments appear protected
+        while every request still matched.  Supported keys intentionally map
+        to request data without executing user expressions.
+        """
+        normalized: Dict[str, Any] = {}
+        for raw_key, raw_value in predicates.items():
+            key = str(raw_key).strip().lower().replace('-', '_')
+            if key in {"method", "methods"}:
+                values = ([raw_value] if isinstance(raw_value, str)
+                          else list(raw_value or []))
+                methods = {
+                    str(value).strip().upper() for value in values if str(value).strip()
+                }
+                if not methods:
+                    raise ValueError("Gateway method predicate must not be empty")
+                normalized["methods"] = methods
+            elif key in {"header", "headers"}:
+                if not isinstance(raw_value, Mapping):
+                    raise TypeError("Gateway headers predicate must be a mapping")
+                normalized["headers"] = {
+                    str(name).lower(): str(value)
+                    for name, value in raw_value.items()
+                }
+            elif key in {"query", "queries", "query_params"}:
+                if not isinstance(raw_value, Mapping):
+                    raise TypeError("Gateway query predicate must be a mapping")
+                normalized["query"] = {
+                    str(name): str(value) for name, value in raw_value.items()
+                }
+            else:
+                raise ValueError(f"Unsupported Gateway route predicate: {raw_key}")
+        return normalized
 
     def _compile_pattern(self, pattern: str) -> re.Pattern:
         """编译路径通配符为正则表达式"""
         regex = re.escape(pattern).replace(r'\*\*', '.*').replace(r'\*', '[^/]*')
         return re.compile(f'^{regex}$')
 
-    def match_route(self, request_path: str) -> Optional[Route]:
+    @staticmethod
+    def _predicates_match(route: Route, method: Optional[str],
+                          headers: Optional[Mapping[str, str]],
+                          query: Optional[Mapping[str, str]]) -> bool:
+        predicates = route.predicates
+        if not predicates:
+            return True
+        if method is not None and "methods" in predicates:
+            if method.upper() not in predicates["methods"]:
+                return False
+        if headers is not None and "headers" in predicates:
+            lowered = {str(key).lower(): str(value)
+                       for key, value in headers.items()}
+            if any(lowered.get(key) != value
+                   for key, value in predicates["headers"].items()):
+                return False
+        if query is not None and "query" in predicates:
+            if any(str(query.get(key, "")) != value
+                   for key, value in predicates["query"].items()):
+                return False
+        return True
+
+    def match_route(self, request_path: str, method: Optional[str] = None,
+                    headers: Optional[Mapping[str, str]] = None,
+                    query: Optional[Mapping[str, str]] = None) -> Optional[Route]:
         """匹配路由"""
         for r in self.routes:
             if not r.enabled:
@@ -302,22 +515,39 @@ class GatewayRouter:
             if pat is None:
                 pat = self._compile_pattern(r.path)
                 self._path_pattern_cache[r.path] = pat
-            if pat.match(request_path):
+            if pat.match(request_path) and self._predicates_match(
+                    r, method, headers, query):
                 return r
         return None
 
     def _resolve_uri(self, route: Route) -> Optional[str]:
         """解析目标服务URI"""
         if route.uri:
-            return route.uri.rstrip('/')
+            return self._validate_uri(route.uri)
         if route.service_id and self.discovery:
             instances = self._get_instances(route.service_id)
             if instances:
-                inst = LoadBalancerStrategy.round_robin(instances)
-                host = inst.get('ip') or inst.get('host', '127.0.0.1')
-                port = inst.get('port', 80)
-                scheme = inst.get('scheme', 'http')
-                return f"{scheme}://{host}:{port}"
+                valid_instances = []
+                for inst in instances:
+                    host = inst.get('ip') or inst.get('host', '127.0.0.1')
+                    port = inst.get('port', 80)
+                    scheme = inst.get('scheme', 'http')
+                    try:
+                        uri = self._validate_uri(f"{scheme}://{host}:{port}")
+                    except ValueError:
+                        logger.warning(
+                            "[Gateway] Ignoring invalid discovery instance service=%s",
+                            route.service_id,
+                        )
+                        continue
+                    valid_instances.append(uri)
+                if not valid_instances:
+                    return None
+                with self._rr_lock:
+                    index = self._rr_counters.get(route.service_id, 0)
+                    self._rr_counters[route.service_id] = (
+                        index + 1) % len(valid_instances)
+                return valid_instances[index % len(valid_instances)]
         return None
 
     def _get_instances(self, service_id: str) -> List[dict]:
@@ -325,10 +555,31 @@ class GatewayRouter:
         try:
             instances = self.discovery.get_instances(service_id)
             if instances:
-                return instances if isinstance(instances, list) else [instances]
-        except Exception as e:
-            logger.warning(f"[Gateway] Failed to discover {service_id}: {e}")
+                candidates = instances if isinstance(instances, list) else [instances]
+                return [
+                    dict(instance) for instance in candidates
+                    if isinstance(instance, Mapping)
+                    and self._instance_flag(instance.get('healthy', True))
+                    and self._instance_flag(instance.get('enabled', True))
+                ]
+        except Exception as exc:
+            logger.warning(
+                "[Gateway] Discovery failed service=%s error_type=%s request_id=%s",
+                service_id, type(exc).__name__, get_request_id(),
+            )
         return []
+
+    @staticmethod
+    def _instance_flag(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, (int, float)):
+            return value != 0
+        return str(value).strip().lower() not in {
+            "", "0", "false", "no", "off", "disabled", "down",
+        }
 
     def rewrite_path(self, route: Route, request_path: str) -> str:
         """路径重写"""
@@ -344,22 +595,56 @@ class GatewayRouter:
 
     async def _run_filter(self, flt: GatewayFilter, method: str,
                           ctx: FilterContext) -> Any:
-        result = getattr(flt, method)(ctx)
+        callback = getattr(flt, method)
+        if inspect.iscoroutinefunction(callback):
+            return await callback(ctx)
+        result = await run_in_threadpool(callback, ctx)
         if inspect.isawaitable(result):
             return await result
         return result
 
     async def handle_asgi(self, request: Request) -> Response:
+        """Bind a correlation ID around standalone as well as installed use."""
+        request_id = outbound_request_id(request.headers.get('x-request-id'))
+        with request_context(request_id):
+            response = await self._handle_asgi(request)
+        response.headers.setdefault('X-Request-ID', request_id)
+        return response
+
+    async def _run_post_filters(self, filters: List[GatewayFilter],
+                                ctx: FilterContext, status_code: int) -> None:
+        ctx.response_status = status_code
+        for flt in filters:
+            try:
+                await self._run_filter(flt, 'post_filter', ctx)
+            except Exception as exc:
+                logger.warning(
+                    "[Gateway] Post filter failed filter=%s error_type=%s "
+                    "request_id=%s",
+                    type(flt).__name__, type(exc).__name__, get_request_id(),
+                )
+
+    async def _error_response(self, ctx: FilterContext,
+                              filters: List[GatewayFilter], payload: Dict[str, Any],
+                              status_code: int,
+                              headers: Optional[Dict[str, str]] = None) -> Response:
+        if headers:
+            ctx.response_headers.update(headers)
+        await self._run_post_filters(filters, ctx, status_code)
+        return JSONResponse(
+            payload, status_code=status_code, headers=ctx.response_headers)
+
+    async def _handle_asgi(self, request: Request) -> Response:
         """转发一个 Starlette/FastAPI 请求。"""
         path = request.url.path
         method = request.method
-        route = self.match_route(path)
-        if route is None:
-            return JSONResponse({"error": "No route matched", "path": path}, status_code=404)
-
         headers = dict(request.headers)
         query_items = list(request.query_params.multi_items())
         query_dict = dict(query_items)
+        route = self.match_route(
+            path, method=method, headers=headers, query=query_dict)
+        if route is None:
+            return JSONResponse({"error": "No route matched", "path": path}, status_code=404)
 
         ctx = FilterContext(
             route=route,
@@ -369,20 +654,24 @@ class GatewayRouter:
             request_query=query_dict,
         )
 
+        active_filters = [*self.filters, *route.filters]
+        executed_filters: List[GatewayFilter] = []
         # 执行前置过滤器
-        for flt in self.filters:
+        for flt in active_filters:
+            executed_filters.append(flt)
             if not await self._run_filter(flt, 'pre_filter', ctx):
-                return JSONResponse(
+                return await self._error_response(
+                    ctx, executed_filters,
                     {"error": "Gateway filter blocked", "details": ctx.response_headers},
-                    status_code=ctx.response_status or 403,
-                    headers=ctx.response_headers,
+                    ctx.response_status or 403,
                 )
 
-        target_uri = self._resolve_uri(route)
+        target_uri = await run_in_threadpool(self._resolve_uri, route)
         if not target_uri:
-            return JSONResponse(
+            return await self._error_response(
+                ctx, executed_filters,
                 {"error": "Service unavailable", "service": route.service_id},
-                status_code=503,
+                503,
             )
 
         forward_path = self.rewrite_path(route, path)
@@ -392,26 +681,53 @@ class GatewayRouter:
         if self.max_body_size > 0 and content_length:
             try:
                 if int(content_length) > self.max_body_size:
-                    return JSONResponse({"error": "Request body too large"}, status_code=413)
+                    return await self._error_response(
+                        ctx, executed_filters,
+                        {"error": "Request body too large"}, 413)
             except ValueError:
                 pass
 
-        if self.max_body_size > 0:
-            chunks = []
-            body_size = 0
-            async for chunk in request.stream():
-                body_size += len(chunk)
-                if body_size > self.max_body_size:
-                    return JSONResponse({"error": "Request body too large"}, status_code=413)
-                chunks.append(chunk)
-            body = b''.join(chunks)
-        else:
-            body = await request.body()
+        try:
+            if self.max_body_size > 0:
+                chunks = []
+                body_size = 0
+                async for chunk in request.stream():
+                    body_size += len(chunk)
+                    if body_size > self.max_body_size:
+                        return await self._error_response(
+                            ctx, executed_filters,
+                            {"error": "Request body too large"}, 413)
+                    chunks.append(chunk)
+                body = b''.join(chunks)
+            else:
+                body = await request.body()
+        except ClientDisconnect:
+            logger.info(
+                "[Gateway] Client disconnected route=%s request_id=%s",
+                route.id, get_request_id(),
+            )
+            return await self._error_response(
+                ctx, executed_filters, {"error": "Client disconnected"}, 400)
 
+        request_hop_headers = (
+            self._HOP_BY_HOP_HEADERS
+            | self._connection_header_tokens(ctx.request_headers)
+            | {'host', 'content-length'}
+        )
         request_headers = {
             key: value for key, value in ctx.request_headers.items()
-            if key.lower() not in self._HOP_BY_HOP_HEADERS | {'host', 'content-length'}
+            if key.lower() not in request_hop_headers
         }
+        supplied_request_id = next((
+            value for key, value in request_headers.items()
+            if key.lower() == 'x-request-id'
+        ), None)
+        request_id = outbound_request_id(supplied_request_id)
+        request_headers = {
+            key: value for key, value in request_headers.items()
+            if key.lower() != 'x-request-id'
+        }
+        request_headers['X-Request-ID'] = request_id
         try:
             target_url = target_uri + forward_path
             # 使用 stream=True 避免上游响应整体载入内存：
@@ -427,19 +743,16 @@ class GatewayRouter:
             upstream = await self._get_client().send(req, stream=True)
 
             try:
-                ctx.response_status = upstream.status_code
+                response_hop_headers = (
+                    self._HOP_BY_HOP_HEADERS
+                    | self._connection_header_tokens(upstream.headers)
+                    | {'content-length', 'set-cookie'}
+                )
                 response_headers = {
                     key: value for key, value in upstream.headers.items()
-                    if key.lower() not in self._HOP_BY_HOP_HEADERS | {'content-length'}
+                    if key.lower() not in response_hop_headers
                 }
                 ctx.response_headers.update(response_headers)
-
-                # 执行后置过滤器
-                for flt in self.filters:
-                    try:
-                        await self._run_filter(flt, 'post_filter', ctx)
-                    except Exception:
-                        logger.exception("[Gateway] post filter failed")
 
                 # 响应大小限制：
                 # (1) 先检查 Content-Length 头（快速路径，无需读取响应体即可拒绝）
@@ -453,10 +766,11 @@ class GatewayRouter:
                                     "[Gateway] Upstream response Content-Length %s exceeds limit %d",
                                     content_length, self.max_response_size,
                                 )
-                                return JSONResponse(
+                                return await self._error_response(
+                                    ctx, executed_filters,
                                     {"error": "Upstream response too large",
                                      "limit_bytes": self.max_response_size},
-                                    status_code=502,
+                                    502,
                                 )
                         except ValueError:
                             pass
@@ -471,10 +785,11 @@ class GatewayRouter:
                                 "[Gateway] Upstream response %d bytes exceeds limit %d",
                                 len(response_body), self.max_response_size,
                             )
-                            return JSONResponse(
+                            return await self._error_response(
+                                ctx, executed_filters,
                                 {"error": "Upstream response too large",
                                  "limit_bytes": self.max_response_size},
-                                status_code=502,
+                                502,
                             )
                     else:
                         chunks = []
@@ -492,33 +807,56 @@ class GatewayRouter:
                             chunks.append(chunk)
 
                         if too_large:
-                            return JSONResponse(
+                            return await self._error_response(
+                                ctx, executed_filters,
                                 {"error": "Upstream response too large",
                                  "limit_bytes": self.max_response_size},
-                                status_code=502,
+                                502,
                             )
                         response_body = b''.join(chunks)
                 else:
                     # 无限制：直接读取完整响应（向后兼容，不推荐在生产使用）
                     response_body = await upstream.aread()
 
-                return Response(
+                await self._run_post_filters(
+                    executed_filters, ctx, upstream.status_code)
+                response = Response(
                     content=response_body,
                     status_code=upstream.status_code,
                     headers=ctx.response_headers,
                 )
+                for cookie in upstream.headers.get_list('set-cookie'):
+                    response.headers.append('set-cookie', cookie)
+                return response
             finally:
                 # stream=True 模式下必须显式关闭响应，否则连接不会归还连接池
                 await upstream.aclose()
+        except ClientDisconnect:
+            logger.info(
+                "[Gateway] Client disconnected route=%s request_id=%s",
+                route.id, get_request_id(),
+            )
+            return await self._error_response(
+                ctx, executed_filters, {"error": "Client disconnected"}, 400)
         except httpx.TimeoutException as exc:
-            logger.warning(f"[Gateway] Upstream timeout: {exc}")
-            return JSONResponse({"error": "Gateway timeout"}, status_code=504)
+            logger.warning(
+                "[Gateway] Upstream timeout route=%s error_type=%s request_id=%s",
+                route.id, type(exc).__name__, get_request_id(),
+            )
+            return await self._error_response(
+                ctx, executed_filters, {"error": "Gateway timeout"}, 504)
         except httpx.HTTPError as exc:
-            logger.warning(f"[Gateway] Upstream request failed: {exc}")
-            return JSONResponse({"error": "Bad gateway"}, status_code=502)
+            logger.warning(
+                "[Gateway] Upstream request failed route=%s error_type=%s "
+                "request_id=%s",
+                route.id, type(exc).__name__, get_request_id(),
+            )
+            return await self._error_response(
+                ctx, executed_filters, {"error": "Bad gateway"}, 502)
         except Exception:
             logger.exception("[Gateway] Proxy error")
-            return JSONResponse({"error": "Gateway internal error"}, status_code=500)
+            return await self._error_response(
+                ctx, executed_filters, {"error": "Gateway internal error"}, 500)
 
     def get_routes(self) -> List[Dict]:
         """获取所有路由信息"""

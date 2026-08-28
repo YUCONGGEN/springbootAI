@@ -1,6 +1,6 @@
 # SpringBootAI 消息队列模块指南
 
-> SpringBootAI 2.3.8
+> SpringBootAI 2.3.9
 
 ---
 

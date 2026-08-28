@@ -2,26 +2,38 @@
 会话记忆 - 支持 InMemory 与 Redis 两种存储，为多轮对话提供历史消息管理。
 """
 import json
+import hashlib
+import threading
 from abc import ABC, abstractmethod
 from typing import List
+from urllib.parse import quote
 
 from springbootai.ai.core import Message
+
+
+def _key_part(value: str, *, max_length: int = 256) -> str:
+    """Encode untrusted IDs into bounded, delimiter-safe storage key parts."""
+    raw = str(value)
+    if len(raw) > max_length:
+        raw = f"sha256-{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
+    return quote(raw, safe="-_.~")
 
 
 class ChatMemory(ABC):
     """会话记忆抽象"""
 
     @abstractmethod
-    def add(self, conversation_id: str, message: Message) -> None:
+    def add(self, conversation_id: str, message: Message, *,
+            namespace: str = "") -> None:
         """追加一条消息到会话"""
 
     @abstractmethod
     def get(self, conversation_id: str,
-            last_n: int = 20) -> List[Message]:
+            last_n: int = 20, *, namespace: str = "") -> List[Message]:
         """获取会话历史（最近 last_n 条）"""
 
     @abstractmethod
-    def clear(self, conversation_id: str) -> None:
+    def clear(self, conversation_id: str, *, namespace: str = "") -> None:
         """清空指定会话"""
 
 
@@ -29,23 +41,33 @@ class InMemoryChatMemory(ChatMemory):
     """内存会话记忆 - 开发/测试用"""
 
     def __init__(self, max_messages: int = 20):
-        self._store: dict = {}
+        self._store: dict[tuple[str, str], list[Message]] = {}
         self._max = max_messages
+        self._lock = threading.RLock()
 
-    def add(self, conversation_id: str, message: Message) -> None:
-        bucket = self._store.setdefault(conversation_id, [])
-        bucket.append(message)
-        # 滑动窗口：保留最近 max_messages 条
-        if len(bucket) > self._max:
-            self._store[conversation_id] = bucket[-self._max:]
+    @staticmethod
+    def _key(conversation_id: str, namespace: str = "") -> tuple[str, str]:
+        return (_key_part(namespace or "global"), _key_part(conversation_id))
+
+    def add(self, conversation_id: str, message: Message, *,
+            namespace: str = "") -> None:
+        key = self._key(conversation_id, namespace)
+        with self._lock:
+            bucket = self._store.setdefault(key, [])
+            bucket.append(message)
+            # 滑动窗口：保留最近 max_messages 条
+            if len(bucket) > self._max:
+                self._store[key] = bucket[-self._max:]
 
     def get(self, conversation_id: str,
-            last_n: int = 20) -> List[Message]:
-        bucket = self._store.get(conversation_id, [])
-        return list(bucket[-last_n:])
+            last_n: int = 20, *, namespace: str = "") -> List[Message]:
+        with self._lock:
+            bucket = self._store.get(self._key(conversation_id, namespace), [])
+            return list(bucket[-last_n:])
 
-    def clear(self, conversation_id: str) -> None:
-        self._store.pop(conversation_id, None)
+    def clear(self, conversation_id: str, *, namespace: str = "") -> None:
+        with self._lock:
+            self._store.pop(self._key(conversation_id, namespace), None)
 
 
 class RedisChatMemory(ChatMemory):
@@ -67,17 +89,18 @@ class RedisChatMemory(ChatMemory):
         self._ttl = ttl
         self._namespace = namespace
 
-    def _key(self, conversation_id: str) -> str:
-        ns = self._namespace or "global"
-        return f"{self.KEY_PREFIX}{ns}:{conversation_id}"
+    def _key(self, conversation_id: str, namespace: str = "") -> str:
+        ns = _key_part(namespace or self._namespace or "global")
+        return f"{self.KEY_PREFIX}{ns}:{_key_part(conversation_id)}"
 
-    def add(self, conversation_id: str, message: Message) -> None:
+    def add(self, conversation_id: str, message: Message, *,
+            namespace: str = "") -> None:
         if self._client is None:
             return
+        key = self._key(conversation_id, namespace)
         record = json.dumps(message.to_dict(), ensure_ascii=False)
-        self._client.list_push(self._key(conversation_id), record)
+        self._client.list_push(key, record)
         # 维护窗口与 TTL
-        key = self._key(conversation_id)
         total = self._client.list_length(key) or 0
         if total > self._max:
             self._client.list_remove_range(
@@ -98,10 +121,11 @@ class RedisChatMemory(ChatMemory):
             pass
 
     def get(self, conversation_id: str,
-            last_n: int = 20) -> List[Message]:
+            last_n: int = 20, *, namespace: str = "") -> List[Message]:
         if self._client is None:
             return []
-        records = self._client.list_range(self._key(conversation_id), -last_n, -1)
+        records = self._client.list_range(
+            self._key(conversation_id, namespace), -last_n, -1)
         messages: List[Message] = []
         for rec in records or []:
             try:
@@ -112,7 +136,7 @@ class RedisChatMemory(ChatMemory):
                 continue
         return messages
 
-    def clear(self, conversation_id: str) -> None:
+    def clear(self, conversation_id: str, *, namespace: str = "") -> None:
         if self._client is None:
             return
-        self._client.delete_key(self._key(conversation_id))
+        self._client.delete_key(self._key(conversation_id, namespace))

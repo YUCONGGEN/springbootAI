@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # Distribution name: springbootAI (pip install springbootAI); import package: springbootai.
 name = "springbootAI"
-version = "2.3.8"
+version = "2.3.9"
 description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
 readme = "README.md"
 license = "MIT"
@@ -256,6 +256,7 @@ full = [
 
 [tool.pytest.ini_options]
 pythonpath = [".", "examples"]
+testpaths = ["tests"]
 filterwarnings = [
     # 闈欓粯 langchain_classic 寮冪敤鍛婅鍜?community sunset 鍛婅
     # 鍘熷洜锛氭湰椤圭洰鏈夋剰閿佸畾 langchain classic (1.x) API锛岃繖浜涙槸棰勬湡鍐呯殑妗嗘灦绾у憡璀?

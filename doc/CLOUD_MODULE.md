@@ -1,6 +1,6 @@
 # SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
 
-> SpringBootAI 2.3.8
+> SpringBootAI 2.3.9
 
 ---
 

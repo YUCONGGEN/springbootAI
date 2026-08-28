@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from springbootai.logging.context import redact_sensitive, sanitize_url
+
 # 可选导入Nacos
 try:
     from nacos import NacosClient
@@ -15,6 +17,31 @@ except ImportError:
     NacosClient = None
 
 logger = logging.getLogger("Spring.Cloud.Discovery")
+
+
+def _safe_log_field(value: Any, limit: int = 160) -> str:
+    """Return a bounded, single-line and credential-redacted log field."""
+    try:
+        text = redact_sensitive(value)
+    except Exception:
+        text = f"<unprintable:{type(value).__name__}>"
+    text = (
+        text.replace("\u0085", "\\u0085")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _safe_endpoint(value: Any) -> str:
+    """Sanitize one or more comma-separated Nacos endpoints for logs."""
+    endpoints = []
+    for item in str(value or "").split(","):
+        item = item.strip()
+        endpoints.append(
+            sanitize_url(item) if "://" in item else _safe_log_field(item)
+        )
+    return _safe_log_field(",".join(endpoints))
 
 
 class NacosDiscoveryClient:
@@ -141,10 +168,13 @@ class NacosDiscoveryClient:
         """
         try:
             client.default_timeout = self.timeout
-        except Exception:
+        except Exception as exc:
             # 第三方替身或未来 SDK 可能使用只读属性；连接本身仍可继续，
             # 但不会把兼容性问题升级为应用启动异常。
-            logger.debug("Unable to apply Nacos request timeout", exc_info=True)
+            logger.debug(
+                "Unable to apply Nacos request timeout error_type=%s",
+                _safe_log_field(type(exc).__name__),
+            )
     
     def connect(self) -> None:
         """连接Nacos"""
@@ -168,8 +198,11 @@ class NacosDiscoveryClient:
                 try:
                     self._client.username = self.username
                     self._client.password = self.password
-                except Exception:
-                    logger.debug("Unable to apply Nacos credentials", exc_info=True)
+                except Exception as exc:
+                    logger.debug(
+                        "Unable to apply Nacos credentials error_type=%s",
+                        _safe_log_field(type(exc).__name__),
+                    )
             # 测试连接是否正常 - 发送一个测试服务注册
             self._client.add_naming_instance(
                 service_name="_health_check",
@@ -189,9 +222,16 @@ class NacosDiscoveryClient:
             except Exception:
                 pass
             self._ready = True
-            logger.info(f"Connected to Nacos: {self.server_addr}")
-        except Exception as e:
-            logger.error(f"Failed to connect to Nacos: {e}")
+            logger.info(
+                "Connected to Nacos endpoint=%s",
+                _safe_endpoint(self.server_addr),
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to connect to Nacos endpoint=%s error_type=%s",
+                _safe_endpoint(self.server_addr),
+                _safe_log_field(type(exc).__name__),
+            )
             self._client = None
             self._ready = False
 
@@ -206,15 +246,22 @@ class NacosDiscoveryClient:
         health_url = f"{server}/nacos/v1/console/health/liveness"
         parsed = urlparse(health_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            logger.error("Nacos health URL must use HTTP(S): %s", health_url)
+            logger.error(
+                "Nacos health URL must use HTTP(S) endpoint=%s",
+                sanitize_url(health_url),
+            )
             return False
 
         probe_timeout = self.timeout if timeout is None else self._normalize_timeout(timeout)
         try:
             with urlopen(health_url, timeout=probe_timeout) as response:  # nosec B310 - validated above
                 return 200 <= response.status < 300
-        except Exception as e:
-            logger.debug(f"Nacos health check failed: {e}")
+        except Exception as exc:
+            logger.debug(
+                "Nacos health check failed endpoint=%s error_type=%s",
+                sanitize_url(health_url),
+                _safe_log_field(type(exc).__name__),
+            )
             return False
     
     def register_service(self, service_name: str, ip: str, port: int, metadata: Dict[str, Any] = None) -> bool:
@@ -250,10 +297,19 @@ class NacosDiscoveryClient:
                 group_name=self.group
             )
             
-            logger.info(f"Registered service: {service_name} at {ip}:{port}")
+            logger.info(
+                "Registered Nacos service service=%s endpoint=%s:%s",
+                _safe_log_field(service_name),
+                _safe_log_field(ip),
+                _safe_log_field(port),
+            )
             return True
-        except Exception as e:
-            logger.error(f"Failed to register service {service_name}: {e}")
+        except Exception as exc:
+            logger.error(
+                "Failed to register Nacos service service=%s error_type=%s",
+                _safe_log_field(service_name),
+                _safe_log_field(type(exc).__name__),
+            )
             return False
 
     # Compatibility aliases used by the example CloudService API.
@@ -278,8 +334,11 @@ class NacosDiscoveryClient:
             if isinstance(response, dict):
                 return response.get("doms") or response.get("serviceList") or []
             return list(response or [])
-        except Exception as e:
-            logger.error(f"Failed to list Nacos services: {e}")
+        except Exception as exc:
+            logger.error(
+                "Failed to list Nacos services error_type=%s",
+                _safe_log_field(type(exc).__name__),
+            )
             return []
     
     def deregister_service(self, service_name: str, ip: str, port: int) -> bool:
@@ -304,10 +363,19 @@ class NacosDiscoveryClient:
                 port=port,
                 group_name=self.group
             )
-            logger.info(f"Deregistered service: {service_name} at {ip}:{port}")
+            logger.info(
+                "Deregistered Nacos service service=%s endpoint=%s:%s",
+                _safe_log_field(service_name),
+                _safe_log_field(ip),
+                _safe_log_field(port),
+            )
             return True
-        except Exception as e:
-            logger.error(f"Failed to deregister service {service_name}: {e}")
+        except Exception as exc:
+            logger.error(
+                "Failed to deregister Nacos service service=%s error_type=%s",
+                _safe_log_field(service_name),
+                _safe_log_field(type(exc).__name__),
+            )
             return False
     
     def get_service_instances(self, service_name: str) -> List[Dict[str, Any]]:
@@ -369,8 +437,12 @@ class NacosDiscoveryClient:
                         })
             
             return result
-        except Exception as e:
-            logger.error(f"Failed to get instances for {service_name}: {e}")
+        except Exception as exc:
+            logger.error(
+                "Failed to get Nacos instances service=%s error_type=%s",
+                _safe_log_field(service_name),
+                _safe_log_field(type(exc).__name__),
+            )
             return []
     
     def get_service_instance(self, service_name: str) -> Optional[Dict[str, Any]]:
@@ -418,10 +490,17 @@ class NacosDiscoveryClient:
                 group_name=self.group,
                 cb=callback
             )
-            logger.info(f"Subscribed to service: {service_name}")
+            logger.info(
+                "Subscribed to Nacos service service=%s",
+                _safe_log_field(service_name),
+            )
             return True
-        except Exception as e:
-            logger.error(f"Failed to subscribe to {service_name}: {e}")
+        except Exception as exc:
+            logger.error(
+                "Failed to subscribe to Nacos service service=%s error_type=%s",
+                _safe_log_field(service_name),
+                _safe_log_field(type(exc).__name__),
+            )
             return False
 
 

@@ -27,6 +27,7 @@ class SearchRequest:
     top_k: int = 4
     similarity_threshold: float = 0.0
     filter_expression: Optional[str] = None
+    filter_metadata: Optional[Dict[str, Any]] = None
 
 
 class VectorStore(ABC):
@@ -97,6 +98,7 @@ class SimpleInMemoryVectorStore(VectorStore):
                 top_k=kwargs.get("k", kwargs.get("top_k", 4)),
                 similarity_threshold=kwargs.get("similarity_threshold", 0.0),
                 filter_expression=kwargs.get("filter_expression"),
+                filter_metadata=kwargs.get("filter_metadata"),
             )
         emb = request.embedding
         if emb is None and self._embedding_model and request.query:
@@ -111,6 +113,9 @@ class SimpleInMemoryVectorStore(VectorStore):
             # RAG 租户隔离：filter_expression 仅返回匹配文档
             if request.filter_expression:
                 if not RedisVectorStore._match_filter(doc, request.filter_expression):
+                    continue
+            if request.filter_metadata:
+                if not RedisVectorStore._match_metadata(doc, request.filter_metadata):
                     continue
             score = cosine_similarity(emb, doc.embedding)
             if score >= request.similarity_threshold:
@@ -200,7 +205,25 @@ class LangChainVectorStore(VectorStore):
             emb = self._embedding_model.embed_one(request.query)
         if emb is None:
             return []
-        docs = self._store.similarity_search_by_vector(emb, k=request.top_k)
+        filters = dict(request.filter_metadata or {})
+        if request.filter_expression and ":" in request.filter_expression:
+            key, _, value = request.filter_expression.partition(":")
+            if key.strip() and value.strip():
+                filters.setdefault(key.strip(), value.strip())
+        if filters:
+            try:
+                docs = self._store.similarity_search_by_vector(
+                    emb, k=request.top_k, filter=filters)
+            except TypeError as exc:
+                # Never issue an unfiltered query when tenant/user isolation was
+                # requested. That would turn a compatibility fallback into a
+                # cross-tenant disclosure.
+                raise RuntimeError(
+                    "the configured LangChain vector store does not support "
+                    "metadata filters required for isolated retrieval"
+                ) from exc
+        else:
+            docs = self._store.similarity_search_by_vector(emb, k=request.top_k)
         result: List[Document] = []
         for i, d in enumerate(docs):
             result.append(Document(
@@ -323,14 +346,18 @@ class RedisVectorStore(VectorStore):
                 return []
         docs: List[Document] = []
         scanned = 0
-        for field, val in raw.items():
+        for redis_field, val in raw.items():
             if max_scan > 0 and scanned >= max_scan:
                 break
             d = _safe_json_loads(val)
             if not d:
                 continue
             docs.append(Document(
-                id=d.get("id", field if isinstance(field, str) else str(field)),
+                id=d.get(
+                    "id",
+                    redis_field if isinstance(redis_field, str)
+                    else str(redis_field),
+                ),
                 content=d.get("content", ""),
                 embedding=d.get("embedding", []),
                 metadata=d.get("metadata", {}),
@@ -351,6 +378,9 @@ class RedisVectorStore(VectorStore):
             # RAG 租户隔离：filter_expression 为 "key:value" 格式，仅返回匹配文档
             if request.filter_expression:
                 if not self._match_filter(doc, request.filter_expression):
+                    continue
+            if request.filter_metadata:
+                if not self._match_metadata(doc, request.filter_metadata):
                     continue
             score = cosine_similarity(emb, doc.embedding)
             if score >= request.similarity_threshold:
@@ -374,6 +404,14 @@ class RedisVectorStore(VectorStore):
         if not value:  # 仅检查键是否存在
             return actual is not None and actual != ""
         return str(actual) == value.strip()
+
+    @staticmethod
+    def _match_metadata(doc: Document, filters: Dict[str, Any]) -> bool:
+        """Require every metadata predicate to match (fail-closed AND ACL)."""
+        if not isinstance(doc.metadata, dict):
+            return False
+        return all(str(doc.metadata.get(key)) == str(value)
+                   for key, value in filters.items())
 
     def count(self) -> int:
         return len(self._all_docs(max_scan=0))  # 0 = 无限制，count 需准确

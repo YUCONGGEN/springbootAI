@@ -18,8 +18,8 @@ python -m pip install -r requirements-ai.txt
 python -m pip install -r requirements-langgraph.txt
 python -m pip install -r requirements-mcp.txt
 
-python -m pytest tests tests/runtime -q `
-  --cov=spring --cov-report=term --cov-fail-under=60
+python -m pytest tests -q `
+  --cov=springbootai --cov-report=term --cov-fail-under=60
 ```
 
 预期：没有失败，覆盖率不少于 60%。`skipped` 必须逐个确认是明确的可选能力，不能把依赖安装失败当成正常跳过。
@@ -52,7 +52,7 @@ pip-audit -r requirements-lock.txt --progress-spinner off
 pip-audit -r requirements-ai.txt --progress-spinner off
 pip-audit -r requirements-langgraph.txt --progress-spinner off
 pip-audit -r requirements-mcp.txt --progress-spinner off
-bandit -r spring example_langchain example_langgraph example_mcp -ll -q
+bandit -r springbootai examples/example_langchain examples/example_langgraph examples/example_mcp -ll -q
 ```
 
 预期：四份依赖均显示 `No known vulnerabilities found`，Bandit 退出码为 0。不要用 `|| true` 或 `--exit-zero` 绕过结果。
@@ -70,7 +70,8 @@ bandit -r spring example_langchain example_langgraph example_mcp -ll -q
 ```powershell
 python -m build
 python -m twine check dist\*
-python -m zipfile -l dist\springbootai-2.2.0-py3-none-any.whl
+$Version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+python -m zipfile -l "dist\springbootai-$Version-py3-none-any.whl"
 ```
 
 确认 wheel 包含 `springbootai/langchain`、`springbootai/langgraph` 和 `springbootai/mcp`，并从新虚拟环境安装 wheel 后执行：
@@ -83,8 +84,8 @@ python -c "import springbootai, springbootai.ai, springbootai.langchain, springb
 
 1. 检查 `git diff --check`、`git status` 和 CHANGELOG，确认没有密钥、数据库、日志、覆盖率文件或压测结果。
 2. 提交代码并推送 `master`，等待 CI 和 Security Scan 全绿。
-3. 创建并推送匹配版本的 tag：`git tag -a v2.2.0 -m "SpringBootAI 2.2.0"`、`git push origin v2.2.0`。
+3. 从 `pyproject.toml` 读取版本，创建并推送严格匹配的 tag：`$Version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"`、`git tag -a "v$Version" -m "SpringBootAI $Version"`、`git push origin "v$Version"`。
 4. 在 GitHub 用这个 tag 创建 Release，发布工作流才会通过 Trusted Publishing 上传 PyPI。
-5. 上传后在全新环境运行 `pip install springbootAI==2.2.0` 和最小示例，检查 PyPI README 链接与代码块。
+5. 上传后在全新环境运行 `pip install "springbootAI==$Version"` 和最小示例，检查 PyPI README 链接与代码块。
 
 不要在本机手工保存 PyPI token。仓库发布工作流使用 OIDC Trusted Publishing，并拒绝从普通分支上传。

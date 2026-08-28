@@ -294,9 +294,11 @@ class TestToolExecutionEdgeCases:
         policy = ToolExecutionPolicy(timeout_seconds=0.1)
         reg = ToolRegistry(policy=policy)
 
-        def slow() -> str:
-            time.sleep(5)
-            return "done"
+        def slow(cancellation_token) -> str:
+            while not cancellation_token.wait(0.01):
+                pass
+            cancellation_token.raise_if_cancelled()
+            return "done"  # pragma: no cover
 
         reg.register("slow", slow)
         with pytest.raises(ToolExecutionError, match="timed out"):
@@ -633,7 +635,8 @@ class TestMessageChatMemoryAdvisor:
             context={"conversation_id": "c1", "user_id": "u1", "tenant_id": "t1"}
         )
         request = advisor.advise_request(request)
-        assert memory._namespace == "t1:u1"
+        assert request.context["memory_namespace"] == "t1:u1"
+        assert memory._namespace == "global"  # shared bean was not mutated
 
     def test_tenant_only_namespace(self):
         from springbootai.ai.advisors import MessageChatMemoryAdvisor
@@ -651,7 +654,8 @@ class TestMessageChatMemoryAdvisor:
             context={"conversation_id": "c1", "tenant_id": "t1"}
         )
         request = advisor.advise_request(request)
-        assert memory._namespace == "t1"
+        assert request.context["memory_namespace"] == "t1"
+        assert memory._namespace == "global"
 
     def test_empty_context_no_namespace(self):
         from springbootai.ai.advisors import MessageChatMemoryAdvisor

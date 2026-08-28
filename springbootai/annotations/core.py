@@ -1,5 +1,8 @@
-from typing import Optional, Union, Any, Type, List, Callable, Tuple
+from typing import Optional, Union, Any, Type, List, Callable, Tuple, TYPE_CHECKING
 import inspect
+
+if TYPE_CHECKING:
+    from springbootai.retry.retry_annotations import Backoff
 
 # Public annotation API for direct imports and IDE static analysis. Keep this
 # list aligned with the symbols re-exported by ``springbootai.annotations``.

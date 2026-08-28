@@ -54,7 +54,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.3.8`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
+当前版本是 `2.3.9`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -185,10 +185,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `springbootai` 框架 API | 2.3.8 |
-| `springbootai.orm.pymybatis` | 2.3.8 |
-| `springbootai.ai` AI 模块 | 2.3.8 |
-| `springbootai.langchain` LangChain 模块 | 2.3.8 |
+| `springbootai` 框架 API | 2.3.9 |
+| `springbootai.orm.pymybatis` | 2.3.9 |
+| `springbootai.ai` AI 模块 | 2.3.9 |
+| `springbootai.langchain` LangChain 模块 | 2.3.9 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景
@@ -774,6 +774,16 @@ class InitService:
         if self.connection:
             self.connection.close()
 ```
+
+每个 HTTP 请求都会获得 `X-Request-ID`（可通过
+`server.request-id.header` 修改），该值会写回响应并自动进入框架日志，Feign
+和 Gateway 也会向下游透传。日志会遮蔽 Bearer Token、API Key、密码、Cookie
+等常见敏感字段；`logging.diagnose` 默认关闭，避免异常帧局部变量泄密。
+
+声明式 Feign 客户端默认复用连接池，对幂等请求执行有限退避重试，并支持连接/
+读取超时与响应大小限制。直接读取 RAG 文本文件时建议使用
+`TextReader.from_file(path, max_bytes=...)`，文件不存在或超限会明确失败，不会把
+错误路径误当成内联文本。
 
 ### 5.7 应用事件
 
@@ -1733,9 +1743,13 @@ export LOG_DIR=logs
 
 # AI 模块
 export AI_PROVIDER=openai
-export AI_ALLOW_FAKE=true
+export AI_ALLOW_FAKE=false
 export OPENAI_API_KEY=sk-xxx
 export OPENAI_CHAT_MODEL=gpt-4o-mini
+export AI_REQUEST_TIMEOUT_SECONDS=60
+export AI_MAX_OUTPUT_TOKENS=4096
+export AI_MAX_TOTAL_TOKENS=100000
+export AI_MAX_TOOL_ITERATIONS=5
 export OLLAMA_BASE_URL=http://localhost:11434
 export OLLAMA_CHAT_MODEL=llama3
 

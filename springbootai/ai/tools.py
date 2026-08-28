@@ -6,10 +6,15 @@
 """
 import inspect
 import json
+import logging
 import threading
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, get_type_hints
+
+
+logger = logging.getLogger("Spring.AI.Tools")
+_CANCELLATION_PARAMETER = "cancellation_token"
 
 
 _PY_TO_JSON_TYPE = {
@@ -26,6 +31,33 @@ class ToolExecutionError(RuntimeError):
     """Raised when a tool call violates the execution policy."""
 
 
+class ToolCancellationToken:
+    """Cooperative cancellation signal for bounded in-process tools.
+
+    Python cannot safely kill an arbitrary running thread. A tool that opts
+    into a timeout accepts ``cancellation_token`` and checks ``cancelled`` or
+    calls ``raise_if_cancelled()`` around side-effect steps. The registry never
+    returns a timeout while that worker is still running.
+    """
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._event.is_set()
+
+    def cancel(self) -> None:
+        self._event.set()
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        return self._event.wait(timeout)
+
+    def raise_if_cancelled(self) -> None:
+        if self.cancelled:
+            raise ToolExecutionError("tool execution cancelled")
+
+
 @dataclass(frozen=True)
 class ToolExecutionPolicy:
     """Fail-closed policy for model initiated tool calls.
@@ -39,7 +71,11 @@ class ToolExecutionPolicy:
     allow_dangerous: bool = False
     max_argument_bytes: int = 16_384
     max_result_chars: int = 10_000
-    timeout_seconds: float = 10.0
+    # Zero means synchronous execution without a framework timeout. A positive
+    # timeout is accepted only for cooperatively cancellable tools; this avoids
+    # returning a timeout while a daemon thread continues mutating state.
+    timeout_seconds: float = 0.0
+    cancellation_grace_seconds: float = 1.0
     require_approval: bool = False
     authorizer: Optional[Callable[[str, Dict[str, Any], Any], bool]] = None
     approver: Optional[Callable[[str, Dict[str, Any], Any], bool]] = None
@@ -51,6 +87,8 @@ class ToolExecutionPolicy:
             raise PermissionError(f"dangerous tool is disabled: {tool.name}")
         if self.max_argument_bytes <= 0 or self.max_result_chars <= 0:
             raise ValueError("tool execution limits must be greater than zero")
+        if self.timeout_seconds < 0 or self.cancellation_grace_seconds < 0:
+            raise ValueError("tool timeout limits cannot be negative")
         try:
             encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
         except (TypeError, ValueError) as exc:
@@ -70,7 +108,9 @@ class ToolDefinition:
     def __init__(self, name: str, description: str, func: Callable,
                  parameters: Dict[str, Any], return_type: str = "string",
                  dangerous: bool = False,
-                 input_schema: Optional[Dict[str, Any]] = None):
+                 input_schema: Optional[Dict[str, Any]] = None,
+                 accepts_cancellation: bool = False,
+                 managed_timeout: bool = False):
         self.name = name
         self.description = description
         self.func = func
@@ -78,6 +118,8 @@ class ToolDefinition:
         self.return_type = return_type
         self.dangerous = dangerous
         self.input_schema = deepcopy(input_schema) if input_schema is not None else None
+        self.accepts_cancellation = accepts_cancellation
+        self.managed_timeout = managed_timeout
 
     def to_schema(self) -> Dict[str, Any]:
         """生成 OpenAI 风格的 function schema"""
@@ -117,6 +159,8 @@ class ToolRegistry:
                  description: str = "", return_description: str = "",
                  dangerous: bool = False) -> ToolDefinition:
         """注册工具，从签名自动推断参数 schema"""
+        if name in self._tools:
+            raise ValueError(f"duplicate tool registration: {name}")
         sig = inspect.signature(func)
         try:
             type_hints = get_type_hints(func)
@@ -124,7 +168,7 @@ class ToolRegistry:
             type_hints = {}
         properties: Dict[str, Any] = {}
         for pname, param in sig.parameters.items():
-            if pname in ("self", "cls"):
+            if pname in ("self", "cls", _CANCELLATION_PARAMETER):
                 continue
             py_type = type_hints.get(
                 pname,
@@ -146,7 +190,11 @@ class ToolRegistry:
         tool = ToolDefinition(name=name, description=desc, func=func,
                               parameters=properties, return_type=ret_type,
                               dangerous=dangerous or bool(
-                                  getattr(func, "__spring_tool_dangerous__", False)))
+                                  getattr(func, "__spring_tool_dangerous__", False)),
+                              accepts_cancellation=(
+                                  _CANCELLATION_PARAMETER in sig.parameters),
+                              managed_timeout=bool(getattr(
+                                  func, "__spring_tool_managed_timeout__", False)))
         self._tools[name] = tool
         return tool
 
@@ -155,6 +203,8 @@ class ToolRegistry:
                         return_type: str = "string",
                         dangerous: bool = False) -> ToolDefinition:
         """Register a tool while preserving its externally supplied schema."""
+        if name in self._tools:
+            raise ValueError(f"duplicate tool registration: {name}")
         if not callable(func):
             raise TypeError("tool func must be callable")
         if not isinstance(input_schema, dict) or input_schema.get("type", "object") != "object":
@@ -183,6 +233,10 @@ class ToolRegistry:
             return_type=return_type,
             dangerous=dangerous,
             input_schema=input_schema,
+            accepts_cancellation=(
+                _CANCELLATION_PARAMETER in inspect.signature(func).parameters),
+            managed_timeout=bool(getattr(
+                func, "__spring_tool_managed_timeout__", False)),
         )
         self._tools[name] = tool
         return tool
@@ -212,12 +266,27 @@ class ToolRegistry:
             raise ToolExecutionError("tool arguments must be an object")
         self.policy.validate(tool, arguments, context)
 
+        call_arguments = dict(arguments)
+        if tool.accepts_cancellation:
+            call_arguments[_CANCELLATION_PARAMETER] = ToolCancellationToken()
+        try:
+            inspect.signature(tool.func).bind(**call_arguments)
+        except TypeError as exc:
+            raise ToolExecutionError(
+                f"tool arguments do not match the registered signature: {name}"
+            ) from exc
+
         result_holder: Dict[str, Any] = {}
         error_holder: Dict[str, BaseException] = {}
+        cancellation_token = call_arguments.pop(
+            _CANCELLATION_PARAMETER, ToolCancellationToken())
 
         def invoke() -> None:
             try:
-                result = tool.func(**arguments)
+                call_arguments = dict(arguments)
+                if tool.accepts_cancellation:
+                    call_arguments[_CANCELLATION_PARAMETER] = cancellation_token
+                result = tool.func(**call_arguments)
                 if inspect.isawaitable(result):
                     import asyncio
                     result = asyncio.run(result)
@@ -225,12 +294,33 @@ class ToolRegistry:
             except BaseException as exc:  # propagate the original tool error
                 error_holder["error"] = exc
 
-        worker = threading.Thread(target=invoke, name=f"spring-ai-tool-{name}", daemon=True)
-        worker.start()
         timeout = self.policy.timeout_seconds
-        worker.join(timeout if timeout > 0 else None)
-        if worker.is_alive():
-            raise ToolExecutionError(f"tool execution timed out: {name}")
+        if timeout <= 0 or tool.managed_timeout:
+            invoke()
+        else:
+            if not tool.accepts_cancellation:
+                raise ToolExecutionError(
+                    f"tool {name} configures a timeout but does not accept "
+                    f"the reserved '{_CANCELLATION_PARAMETER}' parameter"
+                )
+            worker = threading.Thread(
+                target=invoke, name=f"spring-ai-tool-{name}", daemon=False)
+            worker.start()
+            worker.join(timeout)
+            if worker.is_alive():
+                cancellation_token.cancel()
+                worker.join(self.policy.cancellation_grace_seconds)
+                if worker.is_alive():
+                    # Do not return while a timed-out side effect is still
+                    # executing. Cooperative tools should never reach this
+                    # branch; waiting is safer than reporting a false failure
+                    # that may cause the caller to retry the operation.
+                    logger.error(
+                        "Tool %s ignored cancellation; waiting for safe completion",
+                        name,
+                    )
+                    worker.join()
+                raise ToolExecutionError(f"tool execution timed out: {name}")
         if "error" in error_holder:
             raise error_holder["error"]
         result = result_holder.get("value")

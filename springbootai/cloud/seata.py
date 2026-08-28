@@ -33,8 +33,28 @@ from urllib import parse as urlparse
 from urllib import request as urlrequest
 from springbootai.cloud.transaction_store import SQLiteTransactionStore
 from springbootai.cloud.seata_bridge import SeataBridgeClient, SeataBridgeError
+from springbootai.logging.context import redact_sensitive, sanitize_url
 
 logger = logging.getLogger("Spring.Cloud.Seata")
+
+
+def _safe_log_field(value: Any, limit: int = 160) -> str:
+    """Return a bounded, single-line and credential-redacted log field."""
+    try:
+        text = redact_sensitive(value)
+    except Exception:
+        text = f"<unprintable:{type(value).__name__}>"
+    text = (
+        text.replace("\u0085", "\\u0085")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _safe_endpoint(value: Any) -> str:
+    raw = str(value or "")
+    return sanitize_url(raw) if "://" in raw else _safe_log_field(raw)
 
 
 class BranchStatus:
@@ -207,15 +227,19 @@ class SeataTransactionManager:
             self._bridge_client = client
             self._seata_client_initialized = True
             logger.info(
-                "[Seata] Official client bridge ready: bridge=%s server=%s application_id=%s",
-                self.bridge_url,
-                health.get('serverAddr', self.server_addr),
-                self.application_id,
+                "[Seata] Official client bridge ready bridge=%s server=%s "
+                "application_id=%s",
+                _safe_endpoint(self.bridge_url),
+                _safe_endpoint(health.get('serverAddr', self.server_addr)),
+                _safe_log_field(self.application_id),
             )
-        except Exception as e:
+        except Exception as exc:
             self._bridge_client = None
             self._seata_client_initialized = False
-            raise RuntimeError(f"failed to initialize distributed Seata client: {e}") from e
+            raise RuntimeError(
+                "failed to initialize distributed Seata client: "
+                f"error_type={_safe_log_field(type(exc).__name__)}"
+            ) from None
 
     def check_health(self) -> Dict[str, Any]:
         """Return live bridge and coordinator health for readiness checks."""
@@ -224,7 +248,10 @@ class SeataTransactionManager:
         try:
             return self._bridge_client.health()
         except SeataBridgeError as exc:
-            return {"status": "DOWN", "reason": str(exc)}
+            return {
+                "status": "DOWN",
+                "reason": f"bridge health failed: error_type={type(exc).__name__}",
+            }
     
     def begin_transaction(self, timeout: int = 60000, name: str = "") -> str:
         """
@@ -286,7 +313,10 @@ class SeataTransactionManager:
                     'timeout': timeout,
                 }
                 self._branches[tx_id] = []
-            logger.info(f"[Seata-HTTP] Begin global transaction: {tx_id}")
+            logger.info(
+                "[Seata-HTTP] Begin global transaction xid=%s",
+                _safe_log_field(tx_id),
+            )
         
         elif self.mode == "distributed":
             if not (self._bridge_client and self._seata_client_initialized):
@@ -315,21 +345,32 @@ class SeataTransactionManager:
                     tx_id=tx_id,
                     status=str(response.get('status', 'Begin')),
                 )
-                logger.info(f"[Seata] Begin global transaction (distributed): {tx_id}")
+                logger.info(
+                    "[Seata] Begin global transaction mode=distributed xid=%s",
+                    _safe_log_field(tx_id),
+                )
                 return tx_id
-            except Exception as e:
+            except Exception as exc:
                 if self._fallback_to_local:
                     logger.warning(
-                        "[Seata] distributed begin failed (%s), falling back to local transaction "
-                        "(seata.fallback_to_local=True)", e
+                        "[Seata] Distributed begin failed error_type=%s; "
+                        "falling back to local transaction "
+                        "(seata.fallback_to_local=True)",
+                        _safe_log_field(type(exc).__name__),
                     )
                     # 上下文已设置（in_transaction=True, tx_id 已生成），直接降级返回
                     return tx_id
                 self._cleanup_context()
-                raise RuntimeError(f"failed to begin distributed Seata transaction: {e}") from e
+                raise RuntimeError(
+                    "failed to begin distributed Seata transaction: "
+                    f"error_type={_safe_log_field(type(exc).__name__)}"
+                ) from None
         
         else:
-            logger.info(f"[Seata] Begin transaction (local context): {tx_id}")
+            logger.info(
+                "[Seata] Begin transaction mode=local xid=%s",
+                _safe_log_field(tx_id),
+            )
 
         return tx_id
 
@@ -447,12 +488,13 @@ class SeataTransactionManager:
                 }
 
         logger.info(
-            "[Seata-%s] Branch registered: xid=%s... branch_id=%s... service=%s url=%s",
+            "[Seata-%s] Branch registered xid=%s branch_id=%s service=%s "
+            "callback=%s",
             "TCC" if self.mode == "distributed" else "HTTP",
-            xid[:16],
-            branch_id[:16],
-            service_name,
-            callback_url,
+            _safe_log_field(xid),
+            _safe_log_field(branch_id),
+            _safe_log_field(service_name or self.application_id),
+            _safe_endpoint(callback_url),
         )
         return branch_id
 
@@ -468,8 +510,14 @@ class SeataTransactionManager:
                 try:
                     fn(branch['xid'], branch_id)
                     return True
-                except Exception as e:
-                    logger.error(f"[Seata-HTTP] Local branch {action} failed: {e}")
+                except Exception as exc:
+                    logger.error(
+                        "[Seata-HTTP] Local branch callback failed action=%s "
+                        "branch_id=%s error_type=%s",
+                        _safe_log_field(action),
+                        _safe_log_field(branch_id),
+                        _safe_log_field(type(exc).__name__),
+                    )
                     return False
 
         # HTTP回调
@@ -483,11 +531,21 @@ class SeataTransactionManager:
                                          headers={'Content-Type': 'application/json'})
                 with urlrequest.urlopen(req, timeout=5) as resp:  # nosec B310 - URL is validated above
                     return resp.status == 200
-            except Exception as e:
-                logger.error(f"[Seata-HTTP] HTTP branch {action} failed for {branch_id[:16]}: {e}")
+            except Exception as exc:
+                logger.error(
+                    "[Seata-HTTP] HTTP branch callback failed action=%s "
+                    "branch_id=%s callback=%s error_type=%s",
+                    _safe_log_field(action),
+                    _safe_log_field(branch_id),
+                    _safe_endpoint(url),
+                    _safe_log_field(type(exc).__name__),
+                )
                 return False
         logger.error(
-            f"[Seata-HTTP] Branch {branch_id[:16]} has no {action} callback; failing closed"
+            "[Seata-HTTP] Branch has no callback branch_id=%s action=%s; "
+            "failing closed",
+            _safe_log_field(branch_id),
+            _safe_log_field(action),
         )
         return False
     
@@ -505,7 +563,11 @@ class SeataTransactionManager:
             context = self._get_context()
             current_tx_id = context.get('tx_id', "")
             if current_tx_id and current_tx_id != tx_id:
-                logger.error(f"Transaction mismatch: expected {tx_id}, got {current_tx_id}")
+                logger.error(
+                    "Transaction mismatch expected_xid=%s current_xid=%s",
+                    _safe_log_field(tx_id),
+                    _safe_log_field(current_tx_id),
+                )
                 return False
 
             store = None
@@ -514,14 +576,18 @@ class SeataTransactionManager:
                 store = self._ensure_transaction_store()
                 stored_transaction = store.get_transaction(tx_id)
                 if stored_transaction is None:
-                    logger.error(f"[Seata-HTTP] Unknown transaction: {tx_id}")
+                    logger.error(
+                        "[Seata-HTTP] Unknown transaction xid=%s",
+                        _safe_log_field(tx_id),
+                    )
                     return False
                 if stored_transaction['status'] == 'COMMITTED':
                     return True
                 if stored_transaction['status'] in {'ROLLED_BACK', 'ROLLING_BACK'}:
                     logger.error(
-                        f"[Seata-HTTP] Cannot commit transaction in "
-                        f"{stored_transaction['status']}"
+                        "[Seata-HTTP] Cannot commit transaction status=%s xid=%s",
+                        _safe_log_field(stored_transaction['status']),
+                        _safe_log_field(tx_id),
                     )
                     return False
 
@@ -537,7 +603,12 @@ class SeataTransactionManager:
                 and stored_transaction['status'] in {'COMMITTING', 'PARTIAL_COMMIT'}
             )
             if duration > timeout and not recovering_commit:
-                logger.error(f"Transaction timeout: {duration}ms > {timeout}ms")
+                logger.error(
+                    "Transaction timeout xid=%s duration_ms=%.2f timeout_ms=%s",
+                    _safe_log_field(tx_id),
+                    duration,
+                    _safe_log_field(timeout),
+                )
                 self.rollback_transaction(tx_id)
                 return False
 
@@ -551,7 +622,8 @@ class SeataTransactionManager:
                     {'BEGIN', 'PARTIAL_COMMIT'},
                 ):
                     logger.error(
-                        f"[Seata-HTTP] Transaction {tx_id} is already being completed"
+                        "[Seata-HTTP] Transaction is already being completed xid=%s",
+                        _safe_log_field(tx_id),
                     )
                     return False
                 all_ok = True
@@ -576,7 +648,12 @@ class SeataTransactionManager:
                         self._global_transactions[tx_id]['status'] = final_status
                 if all_ok:
                     self._cleanup_http_transaction(tx_id)
-                logger.info(f"[Seata-HTTP] Commit transaction {tx_id[:16]}... branches={len(branches)} success={all_ok}")
+                logger.info(
+                    "[Seata-HTTP] Commit transaction xid=%s branches=%d success=%s",
+                    _safe_log_field(tx_id),
+                    len(branches),
+                    all_ok,
+                )
                 return all_ok
             
             # 分布式模式
@@ -589,15 +666,28 @@ class SeataTransactionManager:
                     if not response.get('success', False):
                         raise SeataBridgeError(f"commit rejected: {response}")
                     self._set_context(status=str(response.get('status', 'Committed')))
-                    logger.info(f"[Seata] Commit global transaction: {tx_id}, duration={duration:.2f}ms")
+                    logger.info(
+                        "[Seata] Commit global transaction xid=%s duration_ms=%.2f",
+                        _safe_log_field(tx_id),
+                        duration,
+                    )
                     return True
-                except Exception as e:
-                    logger.error(f"[Seata] Failed to commit global transaction: {e}")
+                except Exception as exc:
+                    logger.error(
+                        "[Seata] Failed to commit global transaction xid=%s "
+                        "error_type=%s",
+                        _safe_log_field(tx_id),
+                        _safe_log_field(type(exc).__name__),
+                    )
                     return False
             
             # 本地模式
             self._set_context(status='COMMITTED')
-            logger.info(f"[Seata] Commit transaction (local): {tx_id}, duration={duration:.2f}ms")
+            logger.info(
+                "[Seata] Commit transaction mode=local xid=%s duration_ms=%.2f",
+                _safe_log_field(tx_id),
+                duration,
+            )
             return True
         finally:
             self._cleanup_context()
@@ -615,7 +705,11 @@ class SeataTransactionManager:
         try:
             current_tx_id = self._get_context().get('tx_id', "")
             if current_tx_id and current_tx_id != tx_id:
-                logger.error(f"Transaction mismatch: expected {tx_id}, got {current_tx_id}")
+                logger.error(
+                    "Transaction mismatch expected_xid=%s current_xid=%s",
+                    _safe_log_field(tx_id),
+                    _safe_log_field(current_tx_id),
+                )
                 return False
 
             # Durable HTTP compensation mode: rollback is idempotent and each
@@ -624,12 +718,19 @@ class SeataTransactionManager:
                 store = self._ensure_transaction_store()
                 transaction = store.get_transaction(tx_id)
                 if transaction is None:
-                    logger.error(f"[Seata-HTTP] Unknown transaction: {tx_id}")
+                    logger.error(
+                        "[Seata-HTTP] Unknown transaction xid=%s",
+                        _safe_log_field(tx_id),
+                    )
                     return False
                 if transaction['status'] == 'ROLLED_BACK':
                     return True
                 if transaction['status'] in {'COMMITTED', 'COMMITTING'}:
-                    logger.error(f"[Seata-HTTP] Cannot roll back transaction in {transaction['status']}")
+                    logger.error(
+                        "[Seata-HTTP] Cannot roll back transaction status=%s xid=%s",
+                        _safe_log_field(transaction['status']),
+                        _safe_log_field(tx_id),
+                    )
                     return False
                 if not store.transition_transaction(
                     tx_id,
@@ -637,7 +738,8 @@ class SeataTransactionManager:
                     {'BEGIN', 'PARTIAL_ROLLBACK'},
                 ):
                     logger.error(
-                        f"[Seata-HTTP] Transaction {tx_id} is already being completed"
+                        "[Seata-HTTP] Transaction is already being completed xid=%s",
+                        _safe_log_field(tx_id),
                     )
                     return False
                 all_ok = True
@@ -662,7 +764,12 @@ class SeataTransactionManager:
                         self._global_transactions[tx_id]['status'] = final_status
                 if all_ok:
                     self._cleanup_http_transaction(tx_id)
-                logger.info(f"[Seata-HTTP] Rollback transaction {tx_id[:16]}... branches={len(branches)} success={all_ok}")
+                logger.info(
+                    "[Seata-HTTP] Rollback transaction xid=%s branches=%d success=%s",
+                    _safe_log_field(tx_id),
+                    len(branches),
+                    all_ok,
+                )
                 return all_ok
             
             # 分布式模式
@@ -675,15 +782,26 @@ class SeataTransactionManager:
                     if not response.get('success', False):
                         raise SeataBridgeError(f"rollback rejected: {response}")
                     self._set_context(status=str(response.get('status', 'Rollbacked')))
-                    logger.info(f"[Seata] Rollback global transaction: {tx_id}")
+                    logger.info(
+                        "[Seata] Rollback global transaction xid=%s",
+                        _safe_log_field(tx_id),
+                    )
                     return True
-                except Exception as e:
-                    logger.error(f"[Seata] Failed to rollback global transaction: {e}")
+                except Exception as exc:
+                    logger.error(
+                        "[Seata] Failed to rollback global transaction xid=%s "
+                        "error_type=%s",
+                        _safe_log_field(tx_id),
+                        _safe_log_field(type(exc).__name__),
+                    )
                     return False
             
             # 本地模式
             self._set_context(status='ROLLED_BACK')
-            logger.info(f"[Seata] Rollback transaction (local): {tx_id}")
+            logger.info(
+                "[Seata] Rollback transaction mode=local xid=%s",
+                _safe_log_field(tx_id),
+            )
             return True
         finally:
             self._cleanup_context()
@@ -774,8 +892,11 @@ class SeataTransactionManager:
             while not self._recovery_stop.wait(self._recovery_interval_s):
                 try:
                     self.recover_pending_transactions()
-                except Exception:
-                    logger.exception("[Seata-HTTP] Recovery worker failed")
+                except Exception as exc:
+                    logger.error(
+                        "[Seata-HTTP] Recovery worker failed error_type=%s",
+                        _safe_log_field(type(exc).__name__),
+                    )
 
         self._recovery_thread = threading.Thread(
             target=run,
@@ -928,4 +1049,12 @@ def init_seata(config: dict) -> None:
     if mode == 'http' and config.get('recover_on_startup', True):
         recovery = seata_manager.recover_pending_transactions()
         if recovery['committed'] or recovery['rolled_back'] or recovery['pending']:
-            logger.info("[Seata-HTTP] Startup recovery result: %s", recovery)
+            # Log counts, not XID lists: transaction identifiers are supplied
+            # externally during recovery and must not become an injection path.
+            logger.info(
+                "[Seata-HTTP] Startup recovery committed=%d rolled_back=%d "
+                "pending=%d",
+                len(recovery['committed']),
+                len(recovery['rolled_back']),
+                len(recovery['pending']),
+            )

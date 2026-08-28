@@ -179,6 +179,14 @@ class AIProperties:
     default_provider: str = field(default="openai", metadata={"env": "AI_PROVIDER"})
     max_retries: int = field(default=3, metadata={"env": "AI_MAX_RETRIES"})
     retry_delay_ms: int = field(default=500, metadata={"env": "AI_RETRY_DELAY_MS"})
+    request_timeout_seconds: int = field(
+        default=60, metadata={"env": "AI_REQUEST_TIMEOUT_SECONDS"})
+    max_output_tokens: int = field(
+        default=4096, metadata={"env": "AI_MAX_OUTPUT_TOKENS"})
+    max_total_tokens: int = field(
+        default=100000, metadata={"env": "AI_MAX_TOTAL_TOKENS"})
+    max_tool_iterations: int = field(
+        default=5, metadata={"env": "AI_MAX_TOOL_ITERATIONS"})
     openai: OpenAIProps = field(default_factory=OpenAIProps)
     ollama: OllamaProps = field(default_factory=OllamaProps)
     deepseek: DeepSeekProps = field(default_factory=DeepSeekProps)
@@ -246,7 +254,23 @@ def _bind(cls: type, data: Dict[str, Any]) -> Any:
 
 def bind_ai_config(ai_config: Dict[str, Any]) -> AIProperties:
     """从 springbootai.ai 子树（dict）绑定出类型化的 AIProperties。"""
-    return _bind(AIProperties, ai_config or {})
+    props = _bind(AIProperties, ai_config or {})
+    if not 0 <= props.max_retries <= 20:
+        raise ValueError("AI max_retries must be in [0, 20]")
+    if not 0 <= props.retry_delay_ms <= 60_000:
+        raise ValueError("AI retry_delay_ms must be in [0, 60000]")
+    if not 1 <= props.request_timeout_seconds <= 600:
+        raise ValueError("AI request_timeout_seconds must be in [1, 600]")
+    if not 1 <= props.max_output_tokens <= 1_000_000:
+        raise ValueError("AI max_output_tokens must be in [1, 1000000]")
+    if not 1 <= props.max_total_tokens <= 10_000_000:
+        raise ValueError("AI max_total_tokens must be in [1, 10000000]")
+    if props.max_total_tokens < props.max_output_tokens:
+        raise ValueError(
+            "AI max_total_tokens must be greater than or equal to max_output_tokens")
+    if not 0 <= props.max_tool_iterations <= 100:
+        raise ValueError("AI max_tool_iterations must be in [0, 100]")
+    return props
 
 
 # ==================== Bean 构建 ====================
@@ -265,6 +289,16 @@ def _build_circuit_breaker(props: AIProperties, name: str = "default",
     )
 
 
+def _build_fake_chat_model(props: AIProperties,
+                           prefix: str = "[AI]") -> FakeChatModel:
+    """Apply the same request budgets to the explicit development fake."""
+    model = FakeChatModel(prefix=prefix)
+    model.max_output_tokens = props.max_output_tokens
+    model.max_total_tokens = props.max_total_tokens
+    model.max_tool_iterations = props.max_tool_iterations
+    return model
+
+
 def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
     """根据配置构建 ChatModel（含熔断器）"""
     cb = _build_circuit_breaker(props, name="chat", redis_client=redis_client)
@@ -277,15 +311,19 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
                     "AI_ALLOW_FAKE=false 但 springbootai.ai.openai.api-key 未配置。"
                     " 请设置 OPENAI_API_KEY 环境变量或 application.yml 的 api-key。")
             logger.warning("springbootai.ai.openai.api-key 未配置，降级 FakeChatModel")
-            return FakeChatModel(prefix="[AI]")
+            return _build_fake_chat_model(props)
         return OpenAIChatModel(
             api_key=props.openai.api_key,
             base_url=props.openai.base_url,
             model=props.openai.chat.model,
             temperature=props.openai.chat.temperature,
+            timeout=props.request_timeout_seconds,
             max_retries=props.max_retries,
             retry_delay_ms=props.retry_delay_ms,
             circuit_breaker=cb,
+            max_output_tokens=props.max_output_tokens,
+            max_total_tokens=props.max_total_tokens,
+            max_tool_iterations=props.max_tool_iterations,
         )
 
     if provider == "ollama":
@@ -293,9 +331,13 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
             base_url=props.ollama.base_url,
             model=props.ollama.chat.model,
             temperature=props.ollama.chat.temperature,
+            timeout=props.request_timeout_seconds,
             max_retries=props.max_retries,
             retry_delay_ms=props.retry_delay_ms,
             circuit_breaker=cb,
+            max_output_tokens=props.max_output_tokens,
+            max_total_tokens=props.max_total_tokens,
+            max_tool_iterations=props.max_tool_iterations,
         )
 
     # OpenAI 兼容多厂商（DeepSeek / Moonshot / ZhipuAI）— 底层优先 LangChain 专用包
@@ -314,12 +356,16 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
                     f"AI_ALLOW_FAKE=false 但 springbootai.ai.{provider}.api-key 未配置。"
                     f" 请设置 {provider.upper()}_API_KEY 环境变量。")
             logger.warning("springbootai.ai.%s.api-key 未配置，降级 FakeChatModel", provider)
-            return FakeChatModel(prefix="[AI]")
+            return _build_fake_chat_model(props)
         return OpenAICompatChatModel(
             provider=pname, api_key=cfg.api_key, base_url=cfg.base_url,
             model=cfg.model, temperature=cfg.temperature,
+            timeout=props.request_timeout_seconds,
             max_retries=props.max_retries, retry_delay_ms=props.retry_delay_ms,
             circuit_breaker=cb, langchain_module=lc_mod, langchain_class=lc_cls,
+            max_output_tokens=props.max_output_tokens,
+            max_total_tokens=props.max_total_tokens,
+            max_tool_iterations=props.max_tool_iterations,
         )
 
     logger.warning("未知 AI provider: %s", provider)
@@ -327,7 +373,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
         raise ValueError(
             f"AI_ALLOW_FAKE=false 但未知 provider: {provider}。"
             " 请检查 application.yml 的 springbootai.ai.default-provider 配置。")
-    return FakeChatModel()
+    return _build_fake_chat_model(props, prefix="AI:")
 
 
 def _build_embedding_model(props: AIProperties, redis_client=None):
@@ -347,6 +393,7 @@ def _build_embedding_model(props: AIProperties, redis_client=None):
             api_key=props.openai.api_key,
             base_url=props.openai.base_url,
             model=props.openai.embedding.model,
+            timeout=props.request_timeout_seconds,
             max_retries=props.max_retries,
             retry_delay_ms=props.retry_delay_ms,
             circuit_breaker=cb,
@@ -356,6 +403,7 @@ def _build_embedding_model(props: AIProperties, redis_client=None):
         return OllamaEmbeddingModel(
             base_url=props.ollama.base_url,
             model=props.ollama.embedding.model,
+            timeout=props.request_timeout_seconds,
             max_retries=props.max_retries,
             retry_delay_ms=props.retry_delay_ms,
             circuit_breaker=cb,
@@ -373,6 +421,7 @@ def _build_embedding_model(props: AIProperties, redis_client=None):
             return FakeEmbeddingModel(dim=16)
         return OpenAIEmbeddingModel(
             api_key=cfg.api_key, base_url=cfg.base_url,
+            timeout=props.request_timeout_seconds,
             max_retries=props.max_retries,
             retry_delay_ms=props.retry_delay_ms,
             circuit_breaker=cb,

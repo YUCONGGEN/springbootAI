@@ -3,10 +3,15 @@ Loguru结构化日志模块
 提供企业级日志功能
 """
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 import os
 import re
 from typing import Optional
+
+from springbootai.logging.context import (
+    get_request_id, redact_log_data, redact_sensitive, sanitize_exception_value,
+)
 
 # 尝试导入loguru，失败则使用标准logging
 try:
@@ -15,6 +20,73 @@ try:
 except ImportError:
     _loguru_available = False
     loguru_logger = None
+
+
+def _as_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _rotation_bytes(value, default: int = 100 * 1024 * 1024) -> int:
+    """Parse Loguru-like size strings for the stdlib fallback."""
+    if isinstance(value, (int, float)):
+        return max(1, int(value))
+    match = re.fullmatch(
+        r"\s*(\d+(?:\.\d+)?)\s*(B|KB|MB|GB)?\s*",
+        str(value or ""), re.IGNORECASE,
+    )
+    if not match:
+        return default
+    factors = {
+        "B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3,
+    }
+    return max(1, int(float(match.group(1)) * factors[match.group(2).upper() if match.group(2) else "B"]))
+
+
+def _retention_backups(value, default: int = 30) -> int:
+    match = re.search(r"\d+", str(value or ""))
+    if not match:
+        return default
+    return max(1, min(int(match.group()), 3650))
+
+
+def _patch_loguru_record(record: dict) -> None:
+    record["message"] = redact_sensitive(record.get("message", ""))
+    extra = redact_log_data(record.get("extra", {}))
+    extra["request_id"] = get_request_id()
+    record["extra"].clear()
+    record["extra"].update(extra)
+    exception = record.get("exception")
+    if exception is not None and getattr(exception, "value", None) is not None:
+        safe_value = sanitize_exception_value(exception.value)
+        if hasattr(exception, "_replace"):
+            record["exception"] = exception._replace(value=safe_value)
+
+
+class SensitiveDataFilter(logging.Filter):
+    """Add correlation data and redact secrets before any stdlib handler."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            record.msg = redact_sensitive(record.getMessage())
+            record.args = ()
+            record.request_id = get_request_id()
+            for key, value in list(vars(record).items()):
+                if key not in {"msg", "args", "exc_info"}:
+                    sanitized = redact_log_data({key: value})
+                    setattr(record, key, sanitized[key])
+            if record.exc_info and record.exc_info[1] is not None:
+                record.exc_info = (
+                    record.exc_info[0],
+                    sanitize_exception_value(record.exc_info[1]),
+                    record.exc_info[2],
+                )
+        except Exception:
+            record.request_id = "-"
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +172,9 @@ if _loguru_available:
             return 0
 
     # 将 root logger 的日志也转发到 Loguru（兼容未拦截的第三方库）
-    logging.basicConfig(handlers=[LoguruHandler()], level=logging.INFO)
+    _bootstrap_handler = LoguruHandler()
+    _bootstrap_handler.addFilter(SensitiveDataFilter())
+    logging.basicConfig(handlers=[_bootstrap_handler], level=logging.INFO)
 else:
     LoguruHandler = None
 
@@ -182,7 +256,7 @@ class SpringLogger:
     
     def __init__(self, level: str = "INFO", log_format: str = None,
                  log_dir: str = "logs", retention: str = "30 days",
-                 rotation: str = "100 MB"):
+                 rotation: str = "100 MB", diagnose: bool = False):
         if hasattr(self, '_initialized'):
             return
         # 兼容 dict 格式的 level（Spring Boot 风格）
@@ -190,6 +264,7 @@ class SpringLogger:
         self.log_dir = log_dir
         self.retention = retention
         self.rotation = rotation
+        self.diagnose = _as_bool(diagnose, False)
         self._initialized = True
         self._use_loguru = _loguru_available
         self.log_format = log_format or self._default_format()
@@ -198,6 +273,7 @@ class SpringLogger:
         # 文件 handler 在 init_logging → reconfigure 读取用户配置后创建，
         # 避免在 CWD 下提前生成 logs/ 目录与用户配置的 log_dir 产生双份日志。
         if self._use_loguru:
+            loguru_logger.configure(patcher=_patch_loguru_record)
             loguru_logger.remove()
             loguru_logger.add(
                 sys.stdout,
@@ -205,14 +281,15 @@ class SpringLogger:
                 level=self.level,
                 colorize=True,
                 backtrace=True,
-                diagnose=True,
+                diagnose=self.diagnose,
             )
         else:
             self._setup_std_logging(strict=False, enable_file=False)
 
     def reconfigure(self, level: Optional[str] = None, log_format: Optional[str] = None,
                     log_dir: Optional[str] = None, retention: Optional[str] = None,
-                    rotation: Optional[str] = None) -> None:
+                    rotation: Optional[str] = None,
+                    diagnose: Optional[bool] = None) -> None:
         """重新配置日志参数并重建处理器（读取配置后调用）。
 
         SpringLogger 为单例，``__init__`` 的 ``_initialized`` 守卫会阻止后续 ``__init__``
@@ -251,6 +328,8 @@ class SpringLogger:
             self.retention = retention
         if rotation is not None:
             self.rotation = rotation
+        if diagnose is not None:
+            self.diagnose = _as_bool(diagnose, False)
         # 重建日志处理器：
         # - 用户显式配置 log_dir → strict=True + enable_file=True（路径错必须报错）
         # - 用户未配置 log_dir → strict=False + enable_file=False（只有控制台，不创建文件）
@@ -353,11 +432,13 @@ class SpringLogger:
             return (
                 "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
                 "<level>{level: <8}</level> | "
+                "rid=<cyan>{extra[request_id]}</cyan> | "
                 "<cyan>{name}</cyan> | <cyan>{file.path}</cyan>:"
                 "<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
                 "<level>{message}</level>"
             )
-        return "%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d | %(message)s"
+        return ("%(asctime)s | %(levelname)-8s | rid=%(request_id)s | "
+                "%(name)s:%(funcName)s:%(lineno)d | %(message)s")
     
     def _setup_loguru(self, strict: bool = False, enable_file: bool = True):
         """配置Loguru。
@@ -378,7 +459,7 @@ class SpringLogger:
             level=self.level,
             colorize=True,
             backtrace=True,
-            diagnose=True,
+            diagnose=self.diagnose,
         )
 
         # enable_file=False 时只输出到控制台（import 时使用，不创建 logs/ 目录）
@@ -403,7 +484,7 @@ class SpringLogger:
             compression="zip",
             encoding="utf-8",
             backtrace=True,
-            diagnose=True,
+            diagnose=self.diagnose,
         )
         # 添加错误日志单独输出
         loguru_logger.add(
@@ -415,7 +496,7 @@ class SpringLogger:
             compression="zip",
             encoding="utf-8",
             backtrace=True,
-            diagnose=True,
+            diagnose=self.diagnose,
         )
 
         # 拦截 Uvicorn/Starlette/FastAPI 的标准 logging，转发到 Loguru
@@ -430,7 +511,9 @@ class SpringLogger:
 
         # 模块导入时由 ``basicConfig`` 注册；若被第三方清除则在启动时补回。
         if not any(isinstance(handler, LoguruHandler) for handler in root_logger.handlers):
-            root_logger.addHandler(LoguruHandler())
+            handler = LoguruHandler()
+            handler.addFilter(SensitiveDataFilter())
+            root_logger.addHandler(handler)
 
         # utils.logger 曾单独持有 INFO 控制台处理器，既会绕过配置级别，
         # 又会和根 LoguruHandler 的转发结果重复输出。
@@ -464,10 +547,16 @@ class SpringLogger:
         - ``starlette`` — Starlette ASGI 框架日志
         """
         if not self._use_loguru or LoguruHandler is None:
-            # 非 loguru 模式：让第三方 logger 传播到 root（root 有 Spring logger 的 handler）
+            # 非 Loguru 模式也复用 Spring handlers，避免 Uvicorn 绕过脱敏、
+            # 请求 ID 和文件轮转配置。
             for name in ('uvicorn', 'uvicorn.error', 'uvicorn.access',
                          'fastapi', 'starlette'):
-                logging.getLogger(name).propagate = True
+                third_party_logger = logging.getLogger(name)
+                third_party_logger.handlers.clear()
+                for handler in self._logger.handlers:
+                    third_party_logger.addHandler(handler)
+                third_party_logger.propagate = False
+                third_party_logger.setLevel(getattr(logging, self.level))
             return
 
         for name in ('uvicorn', 'uvicorn.error', 'uvicorn.access',
@@ -502,6 +591,7 @@ class SpringLogger:
         # 添加控制台输出（始终启用）
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(logging.Formatter(self.log_format))
+        console_handler.addFilter(SensitiveDataFilter())
         self._logger.addHandler(console_handler)
 
         # enable_file=False 时只输出到控制台
@@ -513,11 +603,14 @@ class SpringLogger:
             return
 
         # 添加文件输出
-        file_handler = logging.FileHandler(
+        file_handler = RotatingFileHandler(
             os.path.join(self.log_dir, "application.log"),
-            encoding="utf-8"
+            maxBytes=_rotation_bytes(self.rotation),
+            backupCount=_retention_backups(self.retention),
+            encoding="utf-8",
         )
         file_handler.setFormatter(logging.Formatter(self.log_format))
+        file_handler.addFilter(SensitiveDataFilter())
         self._logger.addHandler(file_handler)
     
     def get_logger(self):
@@ -617,6 +710,7 @@ def init_logging(config: dict) -> None:
             log_dir=config.get('log_dir'),
             retention=config.get('retention'),
             rotation=config.get('rotation'),
+            diagnose=config.get('diagnose'),
         )
     except LoggingConfigError as e:
         # 只打印格式化的错误信息（含配置项/值/原因/建议），不输出框架 traceback

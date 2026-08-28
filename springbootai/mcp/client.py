@@ -330,7 +330,13 @@ class MCPClientManager:
     def submit(self, coroutine: Any, timeout: Optional[float] = None) -> Any:
         loop = self._ensure_loop()
         future: Future[Any] = asyncio.run_coroutine_threadsafe(coroutine, loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            # Propagate cancellation to the coroutine/HTTP transport instead of
+            # leaving a remote side effect running after the caller times out.
+            future.cancel()
+            raise
 
     async def connect_all(self) -> None:
         results = await asyncio.gather(
@@ -412,6 +418,10 @@ class MCPClientManager:
 
                 invoke_remote.__name__ = public_name
                 invoke_remote.__doc__ = tool.description or f"Remote MCP tool {tool.name}"
+                # MCPConnection owns an asyncio/httpx timeout and cancels the
+                # submitted coroutine. ToolRegistry must not add a second
+                # in-process thread timeout around this managed operation.
+                invoke_remote.__spring_tool_managed_timeout__ = True
                 registry.register_schema(
                     public_name,
                     invoke_remote,

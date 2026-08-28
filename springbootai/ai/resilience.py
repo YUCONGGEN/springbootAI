@@ -17,7 +17,6 @@ logger = logging.getLogger("Spring.AI.Resilience")
 # 复用框架重试基础设施
 try:
     from springbootai.retry.retry_decorator import retry as _retry_decorator
-    from springbootai.retry.retry_annotations import Backoff
     _RETRY_AVAILABLE = True
 except ImportError:
     _RETRY_AVAILABLE = False
@@ -91,14 +90,24 @@ class AICircuitBreaker:
         try:
             state_data = r.hgetall(self._redis_key)
             if state_data:
-                state = (state_data.get("state", b"CLOSED")
-                         if isinstance(state_data, dict) else {})
+                if not isinstance(state_data, dict):
+                    return
+
+                def hash_value(key: str, default):
+                    # redis-py returns byte keys unless decode_responses=True.
+                    # Supporting both forms is required for distributed state.
+                    if key in state_data:
+                        return state_data[key]
+                    return state_data.get(key.encode("utf-8"), default)
+
+                state = hash_value("state", b"CLOSED")
                 if isinstance(state, bytes):
-                    state = state.decode()
+                    state = state.decode("utf-8")
                 self._state = state if isinstance(state, str) else "CLOSED"
-                self._failures = int(state_data.get("failures", 0) if isinstance(
-                    state_data.get("failures"), (int, bytes, str)) else 0)
-                lf = state_data.get("last_failure_time", 0)
+                failures = hash_value("failures", 0)
+                self._failures = int(
+                    failures if isinstance(failures, (int, bytes, str)) else 0)
+                lf = hash_value("last_failure_time", 0)
                 self._last_failure_time = float(lf) if isinstance(lf, (int, float, bytes, str)) else 0.0
         except Exception:
             # Redis 失败，保持本地状态
@@ -215,9 +224,13 @@ def resilient_call(func: Callable,
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         # 1. 构造带重试的核心函数
+        # The shared retry annotation interprets ``max_retries`` as total
+        # attempts. Preserve that behavior while allowing zero to explicitly
+        # request one un-retried attempt.
+        attempts = max(1, int(max_retries))
         if _RETRY_AVAILABLE:
             retried = _retry_decorator(
-                max_retries=max_retries, delay=retry_delay_ms,
+                max_retries=attempts, delay=retry_delay_ms,
                 exceptions=retry_exceptions,
             )(func)
         else:
@@ -248,7 +261,7 @@ def resilient_call(func: Callable,
             from springbootai.ai.observability import ai_metrics
             ai_metrics.record_circuit_state(provider, CircuitState.CLOSED)
             return result
-        except count_as_failure_exc as exc:
+        except count_as_failure_exc:
             circuit_breaker.record_failure()
             from springbootai.ai.observability import ai_metrics
             ai_metrics.record_circuit_state(provider, circuit_breaker.state)

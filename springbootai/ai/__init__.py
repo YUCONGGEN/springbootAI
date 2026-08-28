@@ -16,7 +16,7 @@ SpringBootAI AI 模块 - 对齐 Spring AI 的 ChatClient/Advisor/ETL 抽象，
 from springbootai.ai.core import (
     Advisor, AdvisorRequest, ChatClient, ChatClientBuilder, ChatModel,
     ChatResponse, EmbeddingModel, Generation, Message, MessageType,
-    PromptSpec,
+    PromptSpec, TokenBudgetExceededError, ToolLoopLimitExceededError,
 )
 from springbootai.ai.annotations import (
     Agent, AiAdvisor, AiCache, AiClient, AiMemory, AiRetry, ContentModeration,
@@ -34,7 +34,8 @@ from springbootai.ai.vectorstore import (
     SearchRequest, SimpleInMemoryVectorStore, VectorStore, cosine_similarity,
 )
 from springbootai.ai.etl import (
-    CharacterTextSplitter, DocumentReader, TextDocument, TextReader,
+    CharacterTextSplitter, DocumentReader, DocumentTooLargeError,
+    TextDocument, TextReader,
     TextSplitter, TokenTextSplitter,
 )
 from springbootai.ai.tools import (
@@ -42,10 +43,12 @@ from springbootai.ai.tools import (
     ToolDefinition,
     ToolExecutionPolicy,
     ToolRegistry,
+    ToolCancellationToken,
 )
 from springbootai.ai.providers import (
     FakeChatModel, FakeEmbeddingModel, OllamaChatModel, OllamaEmbeddingModel,
     OpenAICompatChatModel, OpenAIChatModel, OpenAIEmbeddingModel,
+    ProviderProtocolError, ProviderResponseTooLargeError, ProviderStreamError,
 )
 from springbootai.ai.resilience import (
     AICircuitBreaker, CircuitOpenError, TransientError, resilient_call,
@@ -54,13 +57,14 @@ from springbootai.ai.observability import AIMetrics, ai_metrics
 from springbootai.ai.autoconfig import AIProperties, bind_ai_config, configure_ai
 from springbootai.ai.annotation_runtime import ContentModerationError
 
-__version__ = "2.3.8"
+__version__ = "2.3.9"
 
 __all__ = [
     # core
     "Advisor", "AdvisorRequest", "ChatClient", "ChatClientBuilder",
     "ChatModel", "ChatResponse", "EmbeddingModel", "Generation", "Message",
-    "MessageType", "PromptSpec",
+    "MessageType", "PromptSpec", "TokenBudgetExceededError",
+    "ToolLoopLimitExceededError",
     # annotations
     "AiAdvisor", "AiClient", "AiMemory", "Tool", "Prompt", "RAG",
     "StructuredOutput", "Agent", "Embedding", "VectorStore", "AiRetry",
@@ -76,14 +80,18 @@ __all__ = [
     "SearchRequest", "SimpleInMemoryVectorStore", "VectorStore",
     "cosine_similarity",
     # etl
-    "CharacterTextSplitter", "DocumentReader", "TextDocument", "TextReader",
+    "CharacterTextSplitter", "DocumentReader", "DocumentTooLargeError",
+    "TextDocument", "TextReader",
     "TextSplitter", "TokenTextSplitter",
     # tools
-    "CompositeToolRegistry", "ToolDefinition", "ToolExecutionPolicy", "ToolRegistry",
+    "CompositeToolRegistry", "ToolCancellationToken", "ToolDefinition",
+    "ToolExecutionPolicy", "ToolRegistry",
     # providers
     "FakeChatModel", "FakeEmbeddingModel", "OllamaChatModel",
     "OllamaEmbeddingModel", "OpenAICompatChatModel", "OpenAIChatModel",
-    "OpenAIEmbeddingModel",
+    "OpenAIEmbeddingModel", "ProviderProtocolError",
+    "ProviderResponseTooLargeError",
+    "ProviderStreamError",
     # resilience
     "AICircuitBreaker", "CircuitOpenError", "TransientError", "resilient_call",
     # observability

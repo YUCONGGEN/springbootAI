@@ -15,7 +15,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Optional
 
 from springbootai.ai.annotations import (
     Agent, AiCache, AiRetry, ContentModeration, Embedding, Prompt, RAG,
@@ -449,10 +449,15 @@ def _invoke_chat(factory: Any, annotation: Prompt, query: str, values: dict[str,
     system = _render(annotation.system, values)
     if system:
         spec.system(system)
-    return spec.user(query).call()
+    spec.user(query)
+    for key in ("tenant_id", "user_id", "conversation_id"):
+        if values.get(key) is not None:
+            spec.param(key, values[key])
+    return spec.call()
 
 
-def _invoke_rag(factory: Any, annotation: RAG, query: str) -> Any:
+def _invoke_rag(factory: Any, annotation: RAG, query: str,
+                values: Optional[dict[str, Any]] = None) -> Any:
     client = _resolve(factory, annotation.client)
     store = _resolve(factory, annotation.vector_store)
     embedding = _resolve(factory, annotation.embedding)
@@ -463,7 +468,14 @@ def _invoke_rag(factory: Any, annotation: RAG, query: str) -> Any:
         store, prompt_template=annotation.prompt_template,
         top_k=annotation.top_k, embedding_model=embedding,
     )
-    return client.prompt().advisors(advisor).user(query).call()
+    spec = client.prompt().advisors(advisor).user(query)
+    # Carry only identity/session fields into AdvisorRequest. Arbitrary method
+    # arguments must never become trusted authorization context implicitly.
+    values = values or {}
+    for key in ("tenant_id", "user_id", "conversation_id"):
+        if values.get(key) is not None:
+            spec.param(key, values[key])
+    return spec.call()
 
 
 def _invoke_agent(factory: Any, annotation: Agent, query: str) -> Any:
@@ -508,7 +520,7 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
                 if query is None:
                     original = method(*args, **kwargs)
                     query = _content(original)
-                result = _invoke_rag(factory, rag_ann, query)
+                result = _invoke_rag(factory, rag_ann, query, values)
             elif agent_ann:
                 original = method(*args, **kwargs)
                 result = _invoke_agent(factory, agent_ann, _content(original))
@@ -545,7 +557,7 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
                 result = _invoke_chat(factory, prompt_ann, _render(prompt_ann.template, values), values)
             elif rag_ann:
                 original = await method(*args, **kwargs)
-                result = _invoke_rag(factory, rag_ann, _content(original))
+                result = _invoke_rag(factory, rag_ann, _content(original), values)
             elif agent_ann:
                 original = await method(*args, **kwargs)
                 result = _invoke_agent(factory, agent_ann, _content(original))
