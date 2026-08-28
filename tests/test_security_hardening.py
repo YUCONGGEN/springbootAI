@@ -3,8 +3,14 @@
 import pytest
 
 from springbootai.orm.ddl_auto import DdlAutoManager
+from springbootai.orm.pymybatis import build_session_factory
 from springbootai.orm.pymybatis.cache.redis_cache import RedisSecondLevelCache
 from springbootai.orm.pymybatis.dynamic_sql import DynamicSQLProcessor, SecurityError
+from springbootai.orm.pymybatis.interceptor import (
+    InterceptorSecurityError,
+    Invocation,
+    SecurityInterceptor,
+)
 from springbootai.orm.pymybatis.xml_parser import XmlParser
 from springbootai.cloud.seata import SeataTransactionManager
 from springbootai.data import Order, Sort
@@ -46,6 +52,88 @@ def test_dynamic_sql_interpreter_rejects_function_and_dunder_access():
         processor._evaluate_value_expression("__import__('os')", {})
     with pytest.raises(SecurityError):
         processor._evaluate_value_expression("value.__class__", {"value": "x"})
+
+
+def test_prepared_parameters_are_data_even_when_they_look_like_sql():
+    """SQL-like business text must remain safe when bound through ``#{}``."""
+    factory = build_session_factory({
+        "datasource": {"driver": "sqlite", "database": ":memory:"},
+        "pool": {"min_size": 1, "max_size": 1},
+        "security": {
+            "block_ddl": False,
+            "sql_injection_detection": True,
+            "sensitive_data_masking": False,
+        },
+    })
+    session = factory.open_session()
+    payloads = [
+        "O'Reilly -- database handbook",
+        "The expression 1 OR 1=1 is always true",
+        "x'); DROP TABLE notes; --",
+        "UNION SELECT is a SQL concept",
+    ]
+    try:
+        connection = session.get_connection()
+        connection.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)")
+        connection.commit()
+
+        for index, body in enumerate(payloads, start=1):
+            session.insert(
+                "INSERT INTO notes(id, body) VALUES (#{id}, #{body})",
+                {"id": index, "body": body},
+            )
+
+        rows = session.select("SELECT body FROM notes ORDER BY id", use_cache=False)
+        assert [row["body"] for row in rows] == payloads
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notes'"
+        ).fetchone()[0] == 1
+    finally:
+        session.close()
+        factory.close()
+
+
+def test_security_interceptor_does_not_scan_prepared_parameter_values():
+    invocation = Invocation(
+        target=None,
+        method="insert",
+        args=(
+            "INSERT INTO notes(body) VALUES (#{body})",
+            {"body": "x'); DROP TABLE notes; --"},
+        ),
+        proceed=lambda: "executed with a bound value",
+    )
+
+    assert SecurityInterceptor().intercept(invocation) == "executed with a bound value"
+
+
+def test_security_interceptor_keeps_ddl_structure_policy():
+    invocation = Invocation(
+        target=None,
+        method="execute",
+        args=("DROP TABLE notes", {}),
+        proceed=lambda: "must not execute",
+    )
+
+    with pytest.raises(InterceptorSecurityError, match="DDL"):
+        SecurityInterceptor().intercept(invocation)
+
+
+def test_raw_sql_parameters_require_a_full_identifier_match():
+    processor = DynamicSQLProcessor(placeholder="?")
+    processor.enable_raw_params(True)
+    processor.set_raw_param_whitelist({"table"})
+    processor.add_raw_param_pattern(r"[a-z_]+")
+
+    sql, values = processor.process("SELECT * FROM ${table}", {"table": "notes"})
+    assert sql == "SELECT * FROM notes"
+    assert values == []
+
+    with pytest.raises(SecurityError):
+        processor.process(
+            "SELECT * FROM ${table}",
+            {"table": "notes; DROP TABLE notes; --"},
+        )
 
 
 def test_redis_cache_rejects_pickle_serialization_before_connecting():

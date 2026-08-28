@@ -13,7 +13,7 @@
         pass
 
 与配置文件的等价关系：
-- @EnableOAuth2 等价于 springbootai.security.oauth2.enabled: true
+- @EnableOAuth2 等价于 spring.security.oauth2.enabled: true
 - @EnableCsrf   等价于 server.csrf.enabled: true
 
 注解优先级高于配置文件：如果主类上标注了注解，即使配置文件未设置 enabled 也会启用。

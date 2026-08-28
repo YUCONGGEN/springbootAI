@@ -1,6 +1,6 @@
 # SpringBootAI Bean 生命周期与增强注解指南
 
-> SpringBootAI 2.3.4
+> SpringBootAI 2.3.10
 
 ---
 

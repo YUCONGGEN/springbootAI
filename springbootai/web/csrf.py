@@ -55,13 +55,29 @@ class CSRFTokenManager:
                  header_name: str = "X-XSRF-TOKEN",
                  secure: bool = False,
                  samesite: str = "lax",
-                 expire_seconds: int = 3600):
+                 expire_seconds: int = 3600,
+                 token_length: int = 32):
+        try:
+            expire_seconds = int(expire_seconds)
+            token_length = int(token_length)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("CSRF expire_seconds and token_length must be integers") from exc
+        normalized_samesite = str(samesite).lower()
+        if expire_seconds <= 0:
+            raise ValueError("CSRF expire_seconds must be positive")
+        if token_length < 16:
+            raise ValueError("CSRF token_length must be at least 16 bytes")
+        if normalized_samesite not in {"strict", "lax", "none"}:
+            raise ValueError("CSRF samesite must be strict, lax, or none")
+        if normalized_samesite == "none" and not secure:
+            raise ValueError("CSRF SameSite=None requires a Secure cookie")
         self.secret_key = secret_key or secrets.token_hex(32)
         self.cookie_name = cookie_name
         self.header_name = header_name
-        self.secure = secure
-        self.samesite = samesite.lower()
+        self.secure = bool(secure)
+        self.samesite = normalized_samesite
         self.expire_seconds = expire_seconds
+        self.token_length = token_length
 
     def generate_token(self) -> str:
         """生成 CSRF Token（带时间戳和 HMAC 签名）。
@@ -69,7 +85,7 @@ class CSRFTokenManager:
         格式：{timestamp}.{random}.{hmac}
         """
         timestamp = int(time.time())
-        random_part = secrets.token_urlsafe(32)
+        random_part = secrets.token_urlsafe(self.token_length)
         # HMAC 签名：timestamp + random_part
         payload = f"{timestamp}.{random_part}"
         signature = hmac.new(
@@ -97,7 +113,8 @@ class CSRFTokenManager:
             return False
 
         # 检查过期
-        if time.time() - timestamp > self.expire_seconds:
+        age = time.time() - timestamp
+        if age < -60 or age > self.expire_seconds:
             return False
 
         # 验证 HMAC 签名
@@ -254,15 +271,27 @@ def init_csrf(config: dict) -> Optional[CSRFTokenManager]:
 
     csrf_config = config.get('server', {}).get('csrf', {})
     if not csrf_config.get('enabled', False):
+        _csrf_token_manager = None
         return None
 
+    def option(*names, default=None):
+        for name in names:
+            if name in csrf_config:
+                return csrf_config[name]
+        return default
+
+    secure_value = option('secure', 'secure-cookie', 'secure_cookie', default=False)
+    if isinstance(secure_value, str):
+        secure_value = secure_value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
     _csrf_token_manager = CSRFTokenManager(
-        secret_key=csrf_config.get('secret-key'),
-        cookie_name=csrf_config.get('cookie-name', 'XSRF-TOKEN'),
-        header_name=csrf_config.get('header-name', 'X-XSRF-TOKEN'),
-        secure=csrf_config.get('secure', False),
-        samesite=csrf_config.get('samesite', 'lax'),
-        expire_seconds=csrf_config.get('expire-seconds', 3600),
+        secret_key=option('secret-key', 'secret_key'),
+        cookie_name=option('cookie-name', 'cookie_name', default='XSRF-TOKEN'),
+        header_name=option('header-name', 'header_name', default='X-XSRF-TOKEN'),
+        secure=secure_value,
+        samesite=option('samesite', 'same-site', 'same_site', default='lax'),
+        expire_seconds=option('expire-seconds', 'token-ttl', 'token_ttl', default=3600),
+        token_length=option('token-length', 'token_length', default=32),
     )
     logger.info(f"CSRF protection enabled (cookie={_csrf_token_manager.cookie_name})")
     return _csrf_token_manager

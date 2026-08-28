@@ -3,7 +3,7 @@ SpringBootAI API 参考文档
 
 SpringBootAI 是一个 Spring 风格的 Python 框架，对齐 Java Spring Boot 编程模型，
 提供 IoC/AOP/ORM/Web/Cloud/AI 等完整能力。本文档由 Sphinx + autodoc 自动从源码
-docstring 生成，覆盖 ``spring`` 包下的所有公开 API。
+docstring 生成，覆盖 ``springbootai`` 包下的公开 API。
 
 完整使用指南请参阅项目根目录的 ``doc/`` 下的模块文档（如 ``WEB_MODULE.md``、
 ``ORM_MODULE.md`` 等），本文档聚焦于 API 签名与参数说明。

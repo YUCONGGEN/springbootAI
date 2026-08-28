@@ -2,11 +2,15 @@
 PyMyBatis SQL注入检测模块
 
 实现SQL注入攻击的主动检测和防御机制，核心安全特性：
-- 参数值注入检测（正则 + AST双重验证）
+- 未绑定 SQL 文本/原始片段的风险检测（正则 + AST双重验证）
 - SQL语句注入检测
 - DDL语句禁用（DROP/ALTER/CREATE/TRUNCATE等）
 - ${}参数白名单检查（支持表名/字段名白名单）
 - AST解析验证（基于sqlglot，可选）
+
+注意：``#{}`` 预编译参数是数据，不应调用本检测器扫描。包含 SQL 教程、
+代码或攻击样例的正常消息可能匹配规则，但数据库驱动绑定保证它无法改变 SQL
+结构。执行链只对 ``${}`` 原始片段和结构策略使用检测器。
 """
 
 import re
@@ -371,13 +375,10 @@ class SQLInjectionDetector:
         Returns:
             是否安全
         """
-        # 如果不允许${}，直接不安全
-        if not self.allow_raw_params:
+        # A whitelisted parameter name authorizes the placeholder, not an
+        # arbitrary value.  The value must still pass the structural allowlist.
+        if not self.allow_raw_params and param_name not in self.raw_param_whitelist:
             return False
-
-        # 检查参数名白名单
-        if param_name in self.raw_param_whitelist:
-            return True
 
         # 检查参数值模式
         if param_value is None:
@@ -387,8 +388,12 @@ class SQLInjectionDetector:
             param_value = str(param_value)
 
         # 检查白名单模式
+        if re.search(r"(?:;|--|/\*|\*/|['\"`]|\x00|[\r\n\t])", param_value):
+            logger.warning(f"${{{param_name}}} 参数值包含SQL控制字符: {param_value}")
+            return False
+
         for pattern in self.RAW_PARAM_WHITELIST_PATTERNS:
-            if pattern.match(param_value):
+            if pattern.fullmatch(param_value):
                 # 如果指定了参数类型，进行额外验证
                 if param_type == 'table' and self.allowed_tables:
                     if param_value.lower() in [t.lower() for t in self.allowed_tables]:
@@ -465,11 +470,11 @@ class SQLInjectionDetector:
 
     def is_safe(self, value: Any) -> bool:
         """
-        判断值是否安全。
+        判断未绑定 SQL 文本或原始片段是否匹配已知风险规则。
 
-        Mapper XML 支持通过 ``#{entity.field}`` 绑定实体对象，因此这里需要检查
-        容器中的叶子值，而不是检查对象的 ``repr``（其中通常包含内存地址）。
-        循环引用通过对象 id 集合截断。
+        不要将该方法用于 ``#{entity.field}`` 的预编译参数；这些值由数据库驱动
+        绑定，本方法的内容规则会对 SQL 教程、代码、日志和 AI 消息产生误报。
+        显式调用时，容器会检查叶子值，循环引用通过对象 id 集合截断。
 
         Args:
             value: 待检测的值

@@ -19,11 +19,11 @@ project = 'SpringBootAI'
 copyright = '2026, YuConggen'
 author = 'YuConggen'
 
-# 从 spring 包读取版本号
+# 从 springbootai 包读取版本号
 try:
     from springbootai import __version__ as version
 except ImportError:
-    version = '2.3.9'
+    version = '2.3.10'
 
 release = version
 
@@ -48,7 +48,8 @@ language = 'zh_CN'
 
 # -- HTML 输出配置 ----------------------------------------------------------
 html_theme = 'sphinx_rtd_theme'  # ReadTheDocs 主题
-html_static_path = ['_static']
+# 当前未提供自定义静态资源；避免 Sphinx 对不存在的 _static 目录告警。
+html_static_path = []
 
 # 主题选项
 html_theme_options = {

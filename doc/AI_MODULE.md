@@ -1,7 +1,7 @@
 # SpringBootAI AI 模块使用指南 —— 小白也能看懂
 
 > 让你的 Python 程序能和 ChatGPT、DeepSeek 等大模型聊天、回答问题、调用你的函数、读你的文档来回答。
-> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.3.9
+> 安装：`pip install springbootAI[ai]` ｜ 框架版本：SpringBootAI 2.3.10
 
 ---
 
@@ -195,7 +195,7 @@ print(client.prompt().user("你好").call().content())
 ```python
 from springbootai.ai import configure_ai
 
-# 读取 application.yml 的 springbootai.ai.* 配置，自动装配所有 Bean
+# 读取 application.yml 的 spring.ai.* 配置，自动装配所有 Bean
 beans = configure_ai()
 client = beans["aiChatClient"]
 print(client.prompt().user("你好").call().content())
@@ -218,7 +218,7 @@ print(client.prompt().user("你好").call().content())
 
 > **知道如何通过配置文件切换模型厂商、调温度、配向量库——不用改代码，只改配置。**
 
-所有 AI 组件的参数都在 `springbootai.ai.*` 下配置，支持环境变量 `${ENV:default}` 覆盖，优先级：**环境变量 > application.yml > 程序默认值**。
+所有 AI 组件的参数推荐在 `spring.ai.*` 下配置（兼容旧版 `springbootai.ai.*`），支持环境变量 `${ENV:default}` 覆盖，优先级：**环境变量 > application.yml > 程序默认值**。
 
 ### 配置是怎么被读取的？
 
@@ -346,7 +346,7 @@ assert props.circuit_breaker.enabled is False
 
 **大白话**：在类上贴这个标签，告诉框架"这个类要用哪个厂商的哪个模型，温度调多少"。
 
-**参数**：`provider`（str，默认 ""，openai/ollama/deepseek/moonshot/zhipu，空时读 springbootai.ai.default-provider）、`model`（str，默认 ""）、`temperature`（float，默认 None）
+**参数**：`provider`（str，默认 ""，openai/ollama/deepseek/moonshot/zhipu，空时读 `spring.ai.default-provider`）、`model`（str，默认 ""）、`temperature`（float，默认 None）
 
 ```python
 from springbootai.ai import AiClient
@@ -565,7 +565,7 @@ assert registry.execute("add", {"a": 1, "b": 2}) == 3
 
 ### 一句话总结
 
-`configure_ai()` 读取 `springbootai.ai.*` 配置，构建并注册 ChatModel/EmbeddingModel/ChatMemory/VectorStore/ChatClient Bean 到 BeanRegistry（含熔断器注入）。未配置 api-key 时默认失败；只有显式设置 `AI_ALLOW_FAKE=true` 才降级为 FakeChatModel/FakeEmbeddingModel。
+`configure_ai()` 读取 `spring.ai.*` 配置（兼容旧版 `springbootai.ai.*`），构建并注册 ChatModel/EmbeddingModel/ChatMemory/VectorStore/ChatClient Bean 到 BeanRegistry（含熔断器注入）。未配置 api-key 时默认失败；只有显式设置 `AI_ALLOW_FAKE=true` 才降级为 FakeChatModel/FakeEmbeddingModel。
 
 ```python
 from springbootai.ai import configure_ai
@@ -613,7 +613,7 @@ answer = client.prompt().user("你好").call().content()
 | springbootai/ai/tools.py | ToolRegistry 函数调用注册表（签名自动生成 schema） |
 | springbootai/ai/resilience.py | AICircuitBreaker 熔断状态机 + resilient_call 重试（复用 springbootai.retry） |
 | springbootai/ai/observability.py | AIMetrics 单例（复用 PrometheusMetrics，记录调用/token/延迟/熔断） |
-| springbootai/ai/autoconfig.py | AIProperties 类型化绑定 + springbootai.ai.* 配置装配 Bean |
+| springbootai/ai/autoconfig.py | AIProperties 类型化绑定 + spring.ai.* 配置装配 Bean |
 
 ---
 
@@ -719,7 +719,7 @@ results = store.similarity_search(SearchRequest(query="SpringBootAI", top_k=2))
 # 结果: results = [最相关的两条文档]
 ```
 
-`configure_ai()` 会按 `springbootai.ai.vector-store.type` 自动装配 `aiVectorStore`（redis 或 inmemory）并注入 `aiEmbeddingModel`，让 RAG 真正自动可用。
+`configure_ai()` 会按 `spring.ai.vector-store.type` 自动装配 `aiVectorStore`（redis 或 inmemory）并注入 `aiEmbeddingModel`，让 RAG 真正自动可用。
 
 ---
 

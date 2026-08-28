@@ -1,6 +1,6 @@
 # 配置绑定 —— 把 YAML 配置自动变成 Python 对象
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.10
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -135,10 +135,10 @@ JSON 结构，顶层包含 `version`、`metadata` 和 `properties` 三部分：
       "name": "server.port",
       "type": "java.lang.Integer",
       "description": "HTTP 服务端口",
-      "defaultValue": 8000
+      "defaultValue": 8080
     },
     {
-      "name": "springbootai.kafka.bootstrap-servers",
+      "name": "spring.kafka.bootstrap-servers",
       "type": "java.lang.String",
       "description": "Kafka Bootstrap Servers",
       "defaultValue": "localhost:9092"
@@ -163,41 +163,44 @@ JSON 结构，顶层包含 `version`、`metadata` 和 `properties` 三部分：
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `server.port` | Integer | `8000` | HTTP 服务端口 |
+| `server.port` | Integer | `8080` | HTTP 服务端口 |
 | `server.host` | String | `0.0.0.0` | HTTP 服务绑定地址 |
 | `server.cors.allow-origins` | List<String> | — | CORS 允许的源列表 |
 | `server.cors.allow-credentials` | Boolean | `false` | CORS 是否允许携带凭证 |
 | `server.csrf.enabled` | Boolean | `false` | 是否启用 CSRF 防护（Bearer Token 认证无需开启） |
-| `springbootai.application.name` | String | — | 应用名称 |
-| `springbootai.profiles.active` | String | — | 激活的 Profile |
-| `springbootai.devtools.restart.enabled` | Boolean | `false` | 是否启用 DevTools 热重载（仅开发环境） |
-| `springbootai.devtools.restart.poll-interval` | Float | `1.0` | 文件轮询间隔（秒） |
-| `springbootai.datasource.url` | String | — | 数据库连接 URL |
-| `springbootai.datasource.username` | String | — | 数据库用户名 |
-| `springbootai.datasource.password` | String | — | 数据库密码 |
-| `springbootai.datasource.driver-class-name` | String | — | 数据库驱动类名 |
-| `springbootai.datasource.pool-size` | Integer | `10` | 连接池大小 |
-| `springbootai.ddl-auto.mode` | String | `none` | DDL 自动生成模式（none/create/update/validate/create-drop） |
-| `springbootai.ddl-auto.entity-packages` | List<String> | — | @Entity 实体类所在包列表 |
-| `springbootai.security.jwt.secret-key` | String | — | JWT 签名密钥（长度 ≥ 32，生产环境必须配置） |
-| `springbootai.security.jwt.access-token-expiry` | Integer | `3600` | Access Token 过期时间（秒） |
-| `springbootai.security.jwt.refresh-token-expiry` | Integer | `604800` | Refresh Token 过期时间（秒） |
-| `springbootai.security.oauth2.resourceserver.jwt.issuer-uri` | String | — | OAuth2 Authorization Server 的 Issuer URI |
-| `springbootai.security.oauth2.resourceserver.jwt.jwk-set-uri` | String | — | OAuth2 JWKS 公钥集 URI |
-| `springbootai.rabbitmq.host` | String | `localhost` | RabbitMQ 主机 |
-| `springbootai.rabbitmq.port` | Integer | `5672` | RabbitMQ 端口 |
-| `springbootai.kafka.bootstrap-servers` | String | `localhost:9092` | Kafka Bootstrap Servers |
-| `springbootai.kafka.consumer.group-id` | String | — | Kafka 消费者组 ID |
-| `springbootai.kafka.consumer.auto-offset-reset` | String | `latest` | Kafka 消费者 Offset 重置策略（latest/earliest） |
-| `springbootai.redis.host` | String | `localhost` | Redis 主机 |
-| `springbootai.redis.port` | Integer | `6379` | Redis 端口 |
-| `springbootai.cloud.nacos.discovery.server-addr` | String | — | Nacos 服务发现地址 |
-| `springbootai.cloud.seata.mode` | String | `at` | Seata 分布式事务模式（at/tcc/http/distributed） |
+| `spring.application.name` | String | — | 应用名称 |
+| `spring.profiles.active` | String | — | 激活的 Profile |
+| `spring.devtools.restart.enabled` | Boolean | `false` | 是否启用 DevTools 热重载（仅开发环境） |
+| `spring.devtools.restart.poll-interval` | Float | `1.0` | 文件轮询间隔（秒） |
+| `database.url` | String | — | 数据库连接 URL（优先于分项连接参数） |
+| `database.driver` | String | `sqlite` | 数据库驱动类型 |
+| `database.username` | String | — | 数据库用户名 |
+| `database.password` | String | — | 数据库密码 |
+| `database.min_size` | Integer | `1` | 连接池最小连接数 |
+| `database.max_size` | Integer | `5` | 连接池最大连接数 |
+| `database.ddl-auto.mode` | String | `none` | DDL 自动生成模式（none/create/update/validate/create-drop） |
+| `database.ddl-auto.entity_packages` | List<String> | — | @Entity 实体类所在包列表 |
+| `jwt.secret_key` | String | — | JWT 签名密钥（长度 ≥ 32，生产环境必须配置） |
+| `jwt.algorithm` | String | `HS256` | JWT 签名算法 |
+| `jwt.expires_in` | Integer | `3600` | Access Token 过期时间（秒） |
+| `spring.security.oauth2.resourceserver.jwt.issuer-uri` | String | — | OAuth2 Authorization Server 的 Issuer URI |
+| `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` | String | — | OAuth2 JWKS 公钥集 URI |
+| `rabbitmq.host` | String | `localhost` | RabbitMQ 主机 |
+| `rabbitmq.port` | Integer | `5672` | RabbitMQ 端口 |
+| `spring.kafka.bootstrap-servers` | String | `localhost:9092` | Kafka Bootstrap Servers |
+| `spring.kafka.consumer.group-id` | String | — | Kafka 消费者组 ID |
+| `spring.kafka.consumer.auto-offset-reset` | String | `latest` | Kafka 消费者 Offset 重置策略（latest/earliest） |
+| `redis.host` | String | `localhost` | Redis 主机 |
+| `redis.port` | Integer | `6379` | Redis 端口 |
+| `discovery.server_addr` | String | `localhost:8848` | Nacos 服务发现地址 |
+| `seata.mode` | String | `local` | 事务协调模式（local/at/http/distributed） |
 | `management.endpoints.web.security.enabled` | Boolean | `true` | Actuator 敏感端点鉴权开关 |
 | `management.endpoints.web.security.roles` | List<String> | `["ADMIN","ACTUATOR"]` | Actuator 访问角色列表 |
-| `springbootai.ai.provider` | String | — | AI 模型提供商（openai/deepseek/ollama/zhipu/fake） |
-| `springbootai.ai.api-key` | String | — | AI API Key |
-| `springbootai.ai.allow-fake` | Boolean | `false` | 无 API Key 时是否降级 FakeChatModel |
+| `spring.ai.default-provider` | String | `openai` | AI 模型提供商（openai/deepseek/moonshot/zhipu/ollama） |
+| `spring.ai.openai.api-key` | String | — | OpenAI 兼容 Provider 的 API Key（也可用 `OPENAI_API_KEY`） |
+| `spring.ai.openai.base-url` | String | `https://api.openai.com/v1` | OpenAI 兼容 Provider 的 API 地址 |
+
+> 表中使用当前脚手架和 `application.yml` 的推荐路径。AI/LangChain 等少数模块仍兼容旧版 `springbootai.*` 前缀，但新项目应优先使用 `spring.*`；数据库、JWT、Redis、RabbitMQ、服务发现和 Seata 使用顶层功能域配置。Fake 模型只能通过测试/开发环境变量 `AI_ALLOW_FAKE=true` 显式启用，不是生产 YAML 配置项。
 
 ### 如何在 IDE 中使用
 

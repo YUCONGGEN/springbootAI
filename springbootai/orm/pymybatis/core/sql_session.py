@@ -487,13 +487,11 @@ class SqlSession:
         if result_map:
             cache_params['__pymybatis_result_map__'] = result_map
 
-        # 检查SQL注入
-        if self.configuration.sql_injection_detection:
-            for value in params.values():
-                if not self.sql_injection_detector.is_safe(value):
-                    raise SecurityError(f"SQL注入检测失败: {value}")
-
-        # 处理动态SQL
+        # ``#{}`` values are data, not SQL text.  They are passed separately to
+        # the database driver below, so scanning message bodies for SQL syntax
+        # only creates false positives (for example when storing code, logs, or
+        # an upstream AI-agent message).  ``${}`` substitutions are validated by
+        # DynamicSQLProcessor before they can become part of the SQL structure.
         processed_sql, param_order = self._process_sql(processed_sql, params)
 
         # 验证SQL安全性
@@ -794,13 +792,8 @@ class SqlSession:
                     key_value,
                 )
 
-        # 检查SQL注入
-        if self.configuration.sql_injection_detection:
-            for value in params.values():
-                if not self.sql_injection_detector.is_safe(value):
-                    raise SecurityError(f"SQL注入检测失败: {value}")
-
-        # 处理动态SQL
+        # Prepared values remain outside the SQL text; raw ``${}`` fragments
+        # are checked by DynamicSQLProcessor.
         processed_sql, param_order = self._process_sql(processed_sql, params)
 
         # 验证SQL安全性
@@ -903,13 +896,8 @@ class SqlSession:
         if statement is not None:
             timeout = timeout if timeout is not None else statement.timeout
 
-        # 检查SQL注入
-        if self.configuration.sql_injection_detection:
-            for value in params.values():
-                if not self.sql_injection_detector.is_safe(value):
-                    raise SecurityError(f"SQL注入检测失败: {value}")
-
-        # 处理动态SQL
+        # Prepared values remain outside the SQL text; raw ``${}`` fragments
+        # are checked by DynamicSQLProcessor.
         processed_sql, param_order = self._process_sql(processed_sql, params)
 
         # 验证SQL安全性
@@ -964,13 +952,8 @@ class SqlSession:
         if statement is not None:
             timeout = timeout if timeout is not None else statement.timeout
 
-        # 检查SQL注入
-        if self.configuration.sql_injection_detection:
-            for value in params.values():
-                if not self.sql_injection_detector.is_safe(value):
-                    raise SecurityError(f"SQL注入检测失败: {value}")
-
-        # 处理动态SQL
+        # Prepared values remain outside the SQL text; raw ``${}`` fragments
+        # are checked by DynamicSQLProcessor.
         processed_sql, param_order = self._process_sql(processed_sql, params)
 
         # 验证SQL安全性

@@ -1,6 +1,6 @@
 # SpringBootAI Starter 机制 —— 依赖管理指南
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.10
 > 配置位置：`pyproject.toml` 的 `[project.optional-dependencies]` 段
 > 对齐 Java：Spring Boot Starter（`spring-boot-starter-*`）
 
@@ -375,16 +375,14 @@ pip install "springbootAI[langchain]"
 ```
 
 ```python
-from springbootai.ai import ChatClient, UserMessage
+from springbootai.ai import ChatClientBuilder, FakeChatModel
 
 
-chat_client = ChatClient.builder().build()
+# 可直接运行的本地示例；接入真实模型时使用 configure_ai() 获取 aiChatClient。
+chat_client = ChatClientBuilder(FakeChatModel(prefix="AI:")).build()
+response = chat_client.prompt().user("用一句话解释什么是数据库迁移").call()
 
-response = chat_client.prompt(
-    messages=[UserMessage("用一句话解释什么是数据库迁移")]
-).call()
-
-print(response.content)
+print(response.content())
 ```
 
 ### 示例 5：全栈应用
@@ -411,12 +409,12 @@ pip install "springbootAI[web,mysql,dev]"
 
 ```
 # requirements.txt
-$12.3.2
+springbootAI[web,mysql]==2.3.10
 ```
 
 ```
 # 或者用组合 Starter
-$12.3.2
+springbootAI[cloud]==2.3.10
 ```
 
 ### 示例 8：在 pyproject.toml 中使用（自己的项目）
@@ -427,7 +425,7 @@ $12.3.2
 name = "my-app"
 version = "1.0.0"
 dependencies = [
-    "$12.3.2",
+    "springbootAI[web,mysql]==2.3.10",
 ]
 ```
 
@@ -478,7 +476,7 @@ pip install "springbootAI[web]"
 # 或在 pyproject.toml
 [project]
 dependencies = [
-    "$12.3.2",
+    "springbootAI[web]==2.3.10",
 ]
 ```
 
@@ -532,23 +530,23 @@ pip install "springbootAI[all]"
 pip install "springbootAI[web]"
 
 # ✅ 安全：锁定版本
-pip install "$12.3.2"
+pip install "springbootAI[web]==2.3.10"
 ```
 
 ```
 # requirements.txt
-$12.3.2
+springbootAI[web,mysql]==2.3.10
 ```
 
 ### 3. 开发/生产环境分开
 
 ```
 # requirements.txt（生产）
-$12.3.2
+springbootAI[web,mysql]==2.3.10
 
 # requirements-dev.txt（开发，额外加测试工具）
 -r requirements.txt
-$12.3.2
+springbootAI[dev]==2.3.10
 ```
 
 ```bash
@@ -573,17 +571,17 @@ pip install "springbootAI[cloud]"
 
 ### 5. AI 模块用降级设计，不强制安装
 
-SpringBootAI 的 AI 模块设计为"可选依赖 + 降级"——不装 `ai` Starter 也能启动，只是 AI 功能降级为原生 HTTP + FakeChatModel。
+SpringBootAI 的 AI 模块采用“可选依赖 + 显式测试降级”设计——不装 `ai` Starter 不影响普通 Web 应用启动；要在无真实 API Key 时运行 AI 示例，必须显式允许 Fake 模型。
 
 ```python
-# 即使没装 springbootAI[ai]，这段代码也能启动
-from springbootai.ai import ChatClient
+# FakeChatModel 只适合开发和测试
+from springbootai.ai import ChatClientBuilder, FakeChatModel
 
-# 但调用时会提示安装 ai Starter
-chat_client = ChatClient.builder().build()
+chat_client = ChatClientBuilder(FakeChatModel(prefix="AI:")).build()
+print(chat_client.prompt().user("你好").call().content())
 ```
 
-> 这意味着你可以在项目初期不装 AI 依赖，等到真正需要时再装。
+> 生产环境默认禁止静默降级到 FakeChatModel；请安装所需 Starter，并配置真实 Provider 和 API Key。
 
 ### 6. partner 包按需补装
 
@@ -651,12 +649,12 @@ A: 不需要。`web` Starter 已经包含 `fastapi==0.141.1`，直接 `pip insta
 **Q4: Starter 里的版本号能改吗？**
 
 A: 可以，但不推荐。Starter 内的版本号经过测试验证，改了可能不兼容。如果必须改（比如安全漏洞），建议：
-1. 在 `requirements.txt` 中覆盖版本：`$12.3.2` + `fastapi==0.141.1`
+1. 在 `requirements.txt` 中固定框架和覆盖依赖：`springbootAI[web]==2.3.10` + `fastapi==0.141.1`
 2. 充分测试后部署
 
-**Q5: 为什么 `web` Starter 里的 fastapi 版本（0.115.6）和核心依赖里的（0.141.1）不一样？**
+**Q5: `web` Starter 里的 FastAPI 与核心依赖版本一致吗？**
 
-A: 核心依赖 `dependencies` 段的 `fastapi==0.141.1` 是框架运行所需的最低版本；`web` Starter 里的 `fastapi==0.141.1` 是脚手架工具生成新项目时用的版本。两者现在保持一致，安装时不会产生版本冲突。建议以核心依赖的版本为准。
+A: 一致，当前两处都是 `fastapi==0.141.1`。版本由 `pyproject.toml` 统一维护；脚手架生成的项目依赖也应与该文件保持一致。
 
 **Q6: 装了 `mysql` Starter 后，还需要在代码里做什么？**
 

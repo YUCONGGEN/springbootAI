@@ -304,9 +304,14 @@ def authenticate_decorator(annotation):
                 raise AuthenticationError("Token required")
 
             try:
-                payload = jwt_utils.decode_token(token)
+                from springbootai.security.oauth2 import oauth2_resource_server
+                if oauth2_resource_server.is_configured:
+                    payload = oauth2_resource_server.validate_token(token)
+                else:
+                    payload = jwt_utils.decode_token(token)
             except Exception as exc:
-                raise AuthenticationError(f"Invalid token: {exc}") from exc
+                # 对外不泄露签名算法、issuer、kid 等验证细节；详细原因保留在异常链中。
+                raise AuthenticationError("Invalid token") from exc
 
             authentication = {
                 'principal': payload.get('user_id') or payload.get('sub'),

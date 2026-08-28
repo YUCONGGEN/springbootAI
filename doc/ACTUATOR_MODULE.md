@@ -1,6 +1,6 @@
 # Actuator —— 系统健康检查面板
 
-> SpringBootAI 2.3.9
+> SpringBootAI 2.3.10
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---

@@ -1,10 +1,10 @@
 """
-SpringBootAI AI 自动配置 - 读取 application.yml 的 springbootai.ai.* 配置，
+SpringBootAI AI 自动配置 - 读取 application.yml 的 spring.ai.* 配置，
 按 provider 创建 ChatModel/EmbeddingModel/ChatClient/VectorStore/Memory Bean，
 注册到 BeanRegistry，实现 Spring 风格的统一配置与依赖注入。
 
 配置读取采用"混合方式"：
-- 类型化 AIProperties dataclass 绑定 springbootai.ai.* 子树（替换裸 dict.get + 手动 int/float 转换）
+- 类型化 AIProperties dataclass 绑定 spring.ai.* 子树（兼容旧版 springbootai.ai.*）
 - 复用 config_loader 的 ${ENV:default} 占位符解析（env 一致覆盖由 config_loader 保证）
 - 额外一层 metadata env 覆盖作为安全网：yml 写死字面值时，声明的 env 名仍可覆盖
 - 优先级：环境变量 > application.yml > dataclass 默认值（对齐框架约定）
@@ -175,7 +175,7 @@ class CircuitBreakerProps:
 
 @dataclass
 class AIProperties:
-    """springbootai.ai.* 的类型化配置根。"""
+    """spring.ai.* 的类型化配置根（兼容旧版 springbootai.ai.*）。"""
     default_provider: str = field(default="openai", metadata={"env": "AI_PROVIDER"})
     max_retries: int = field(default=3, metadata={"env": "AI_MAX_RETRIES"})
     retry_delay_ms: int = field(default=500, metadata={"env": "AI_RETRY_DELAY_MS"})
@@ -308,9 +308,9 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
         if not props.openai.api_key:
             if not _ai_allow_fake():
                 raise ValueError(
-                    "AI_ALLOW_FAKE=false 但 springbootai.ai.openai.api-key 未配置。"
+                    "AI_ALLOW_FAKE=false 但 spring.ai.openai.api-key 未配置。"
                     " 请设置 OPENAI_API_KEY 环境变量或 application.yml 的 api-key。")
-            logger.warning("springbootai.ai.openai.api-key 未配置，降级 FakeChatModel")
+            logger.warning("spring.ai.openai.api-key 未配置，降级 FakeChatModel")
             return _build_fake_chat_model(props)
         return OpenAIChatModel(
             api_key=props.openai.api_key,
@@ -353,9 +353,9 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
         if not cfg.api_key:
             if not _ai_allow_fake():
                 raise ValueError(
-                    f"AI_ALLOW_FAKE=false 但 springbootai.ai.{provider}.api-key 未配置。"
+                    f"AI_ALLOW_FAKE=false 但 spring.ai.{provider}.api-key 未配置。"
                     f" 请设置 {provider.upper()}_API_KEY 环境变量。")
-            logger.warning("springbootai.ai.%s.api-key 未配置，降级 FakeChatModel", provider)
+            logger.warning("spring.ai.%s.api-key 未配置，降级 FakeChatModel", provider)
             return _build_fake_chat_model(props)
         return OpenAICompatChatModel(
             provider=pname, api_key=cfg.api_key, base_url=cfg.base_url,
@@ -372,7 +372,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
     if not _ai_allow_fake():
         raise ValueError(
             f"AI_ALLOW_FAKE=false 但未知 provider: {provider}。"
-            " 请检查 application.yml 的 springbootai.ai.default-provider 配置。")
+            " 请检查 application.yml 的 spring.ai.default-provider 配置。")
     return _build_fake_chat_model(props, prefix="AI:")
 
 
@@ -430,7 +430,7 @@ def _build_embedding_model(props: AIProperties, redis_client=None):
     if not _ai_allow_fake():
         raise ValueError(
             "AI_ALLOW_FAKE=false 但未知 Embedding provider。"
-            " 请检查 application.yml 的 springbootai.ai.default-provider 配置。")
+            " 请检查 application.yml 的 spring.ai.default-provider 配置。")
     return FakeEmbeddingModel(dim=16)
 
 
@@ -535,7 +535,7 @@ def configure_ai(registry: Optional[BeanRegistry] = None,
     registry.register("aiVectorStore", vector_store)
     beans["aiVectorStore"] = vector_store
 
-    # 4. ChatClient（注入默认 Memory Advisor — 可通过 springbootai.ai.memory.auto-advisor=false 禁用）
+    # 4. ChatClient（注入默认 Memory Advisor — 可通过 spring.ai.memory.auto-advisor=false 禁用）
     memory = _build_memory(props, redis_client)
     registry.register("aiChatMemory", memory)
     beans["aiChatMemory"] = memory

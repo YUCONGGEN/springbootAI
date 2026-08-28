@@ -12,6 +12,7 @@ import json
 import sqlite3
 import threading
 import unittest
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 from springbootai.cloud.seata_at_proxy import (
@@ -23,6 +24,7 @@ from springbootai.cloud.seata_at_proxy import (
     _SQL_TYPE_UPDATE,
     _SQL_TYPE_DELETE,
     _SQL_TYPE_INSERT,
+    SeataATUnsupportedSQLError,
 )
 
 
@@ -83,8 +85,27 @@ class _MockSqlSession:
 
     def __init__(self, conn: sqlite3.Connection):
         self.connection = conn
+        self._in_transaction = False
         self.interceptor_chain = MagicMock()
         self.interceptor_chain.add_interceptor = MagicMock()
+
+    @property
+    def in_transaction(self):
+        return self._in_transaction
+
+    @contextmanager
+    def transaction(self):
+        self.connection.execute("BEGIN")
+        self._in_transaction = True
+        try:
+            yield
+        except Exception:
+            self.connection.rollback()
+            raise
+        else:
+            self.connection.commit()
+        finally:
+            self._in_transaction = False
 
 
 def _create_test_db() -> sqlite3.Connection:
@@ -217,7 +238,8 @@ class TestUndoExecutor(unittest.TestCase):
         self.conn.execute("UPDATE account SET balance = 50 WHERE id = 1")
         self.conn.commit()
         before = [{"id": 1, "name": "Alice", "balance": 100.0}]
-        UndoExecutor.undo(self.conn, "account", _SQL_TYPE_UPDATE, before, None)
+        after = [{"id": 1, "name": "Alice", "balance": 50.0}]
+        UndoExecutor.undo(self.conn, "account", _SQL_TYPE_UPDATE, before, after)
         row = self.conn.execute("SELECT * FROM account WHERE id = 1").fetchone()
         self.assertEqual(row["balance"], 100.0)
 
@@ -283,6 +305,7 @@ class TestSeataATInterceptor(unittest.TestCase):
         seata = _MockSeataManager()
         # 不 begin，不在事务中
         undo = UndoLogManager(None)
+        undo.ensure_table(conn)
         interceptor = SeataATInterceptor(seata, session, undo)
 
         # 模拟 Invocation
@@ -311,12 +334,12 @@ class TestSeataATInterceptor(unittest.TestCase):
         seata.begin()
 
         undo = UndoLogManager(None)
+        undo.ensure_table(conn)
         interceptor = SeataATInterceptor(seata, session, undo)
 
         # 模拟 Invocation：UPDATE account SET balance = 50 WHERE id = 1
         def proceed():
             conn.execute("UPDATE account SET balance = 50 WHERE id = 1")
-            conn.commit()
             return 1
 
         invocation = MagicMock()
@@ -362,11 +385,11 @@ class TestSeataATInterceptor(unittest.TestCase):
         seata.begin()
 
         undo = UndoLogManager(None)
+        undo.ensure_table(conn)
         interceptor = SeataATInterceptor(seata, session, undo)
 
         def proceed():
             conn.execute("DELETE FROM account WHERE id = 3")
-            conn.commit()
             return 1
 
         invocation = MagicMock()
@@ -402,11 +425,11 @@ class TestSeataATInterceptor(unittest.TestCase):
         seata.begin()
 
         undo = UndoLogManager(None)
+        undo.ensure_table(conn)
         interceptor = SeataATInterceptor(seata, session, undo)
 
         def proceed():
             conn.execute("UPDATE account SET balance = 999 WHERE id = 1")
-            conn.commit()
             return 1
 
         invocation = MagicMock()
@@ -429,6 +452,52 @@ class TestSeataATInterceptor(unittest.TestCase):
         # 数据保持修改后的值
         row = conn.execute("SELECT * FROM account WHERE id = 1").fetchone()
         self.assertEqual(row["balance"], 999.0)
+        conn.close()
+
+    def test_parameterized_update_uses_only_where_parameters_for_image(self):
+        conn = _create_test_db()
+        session = _MockSqlSession(conn)
+        seata = _MockSeataManager("xid-params")
+        seata.begin()
+        undo = UndoLogManager(None)
+        undo.ensure_table(conn)
+        interceptor = SeataATInterceptor(seata, session, undo)
+
+        invocation = MagicMock()
+        invocation.get_method.return_value = "update"
+        invocation.get_args.return_value = (
+            "UPDATE account SET balance = ? WHERE id = ?", (25, 2)
+        )
+        invocation.proceed.side_effect = lambda: conn.execute(
+            "UPDATE account SET balance = ? WHERE id = ?", (25, 2)
+        ).rowcount
+
+        self.assertEqual(interceptor.intercept(invocation), 1)
+        record = conn.execute("SELECT * FROM undo_log").fetchone()
+        before = json.loads(record["before_image"])
+        self.assertEqual(before, [{"id": 2, "name": "Bob", "balance": 200.0}])
+        seata.rollback_all()
+        self.assertEqual(
+            conn.execute("SELECT balance FROM account WHERE id = 2").fetchone()[0],
+            200.0,
+        )
+        conn.close()
+
+    def test_unsafe_write_fails_closed_without_executing_business_sql(self):
+        conn = _create_test_db()
+        session = _MockSqlSession(conn)
+        seata = _MockSeataManager("xid-unsafe")
+        seata.begin()
+        undo = UndoLogManager(None)
+        undo.ensure_table(conn)
+        interceptor = SeataATInterceptor(seata, session, undo)
+        invocation = MagicMock()
+        invocation.get_method.return_value = "update"
+        invocation.get_args.return_value = ("UPDATE account SET balance = 0", {})
+
+        with self.assertRaises(SeataATUnsupportedSQLError):
+            interceptor.intercept(invocation)
+        invocation.proceed.assert_not_called()
         conn.close()
 
 

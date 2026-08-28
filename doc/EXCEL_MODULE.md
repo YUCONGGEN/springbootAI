@@ -1,6 +1,6 @@
 # SpringBootAI Excel 模块 —— 小白也能看懂的使用指南
 
-> 模块随 SpringBootAI 2.3.2 发布
+> 模块随 SpringBootAI 2.3.10 发布
 
 ---
 

@@ -1,6 +1,6 @@
 # SpringBootAI CLI 与项目脚手架 —— 使用指南
 
-> 框架版本：SpringBootAI 2.3.2
+> 框架版本：SpringBootAI 2.3.10
 > 源码位置：`springbootai/cli/main.py`、`springbootai/cli/scaffold.py`
 > 对齐 Java：Spring Boot CLI / Spring Initializr
 
@@ -49,7 +49,7 @@ SpringBootAI 提供两个独立的命令行入口（在 `pyproject.toml` 的 `[p
 | `springbootai` | `springbootai.main:run_cli` | 主命令，支持多个子命令（version/info/list/init/run/docs） |
 | `springbootai-init` | `springbootai.cli.scaffold:main` | 独立的脚手架命令（等价于 `springbootai init`） |
 
-> **对齐 Java**：本模块对齐 Java 的 [Spring Boot CLI](https://docs.springbootai.io/spring-boot/docs/current/reference/html/cli.html) 和 [Spring Initializr](https://start.springbootai.io/)。Spring Initializr 是 Web 界面的项目生成器，SpringBootAI 用命令行实现同样功能。
+> **对齐 Java**：本模块参考 Java 的 [Spring Boot CLI](https://docs.spring.io/spring-boot/cli/index.html) 和 [Spring Initializr](https://start.spring.io/)。Spring Initializr 是 Web 界面的项目生成器，SpringBootAI 用命令行实现类似流程。
 
 ### 与 Java Spring Boot CLI 的差异
 
@@ -86,7 +86,7 @@ springbootai version
 预期输出：
 
 ```
-SpringBootAI v2.3.2
+SpringBootAI v2.3.10
   Python: 3.11.5
   Platform: Windows-10-10.0.22621-SP0
   Installation: e:\交付\springbootAI
@@ -111,7 +111,7 @@ springbootai info
 ============================================================
 SpringBootAI 运行环境信息
 ============================================================
-SpringBootAI 2.3.2
+SpringBootAI 2.3.10
 Python 版本: 3.11.5 (main, ...)
 Python 路径: /usr/bin/python3
 操作系统: Linux-5.15.0-x86_64
@@ -548,7 +548,7 @@ redis:
 
 ```
 # my-app 依赖（由 SpringBootAI 脚手架生成）
-springbootAI==2.3.2
+springbootAI==2.3.10
 PyMySQL==1.2.0          # MySQL 驱动
 redis==8.1.0            # Redis 客户端
 ```
@@ -732,7 +732,7 @@ pip install -r requirements.txt
 
 ```
 # blog-system 依赖（由 SpringBootAI 脚手架生成）
-springbootAI==2.3.2
+springbootAI==2.3.10
 PyMySQL==1.2.0                 # MySQL 驱动
 langchain-openai==1.4.2        # AI OpenAI 适配器（按需）
 langchain-core==1.5.4          # AI 核心类型（按需）
@@ -909,7 +909,7 @@ springbootai docs
 
 | 特性 | Java Spring Initializr | SpringBootAI CLI |
 |------|------------------------|------------------|
-| **交互方式** | Web 界面（start.springbootai.io）+ CLI | 命令行（交互式问答 + 非交互 CI 模式） |
+| **交互方式** | Web 界面（start.spring.io）+ CLI | 命令行（交互式问答 + 非交互 CI 模式） |
 | **创建项目命令** | `spring init --dependencies=web,jpa my-project` | `springbootai init my-project`（交互）或追加 `--non-interactive`（脚本） |
 | **项目名** | `--name` 或 `--artifact-id` | 位置参数（项目名/路径） |
 | **包名** | `--package-name`（Java 包名） | `--package`（Python 包名） |
@@ -934,7 +934,7 @@ springbootai docs
 
 ```bash
 # Web 界面
-https://start.springbootai.io/
+https://start.spring.io/
 
 # 命令行
 spring init \

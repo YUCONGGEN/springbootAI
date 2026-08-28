@@ -1,6 +1,6 @@
 # SpringBootAI Cloud 模块 —— 小白也能看懂的微服务指南
 
-> SpringBootAI 2.3.9
+> SpringBootAI 2.3.10
 
 ---
 
@@ -623,35 +623,35 @@ seata:
 |---|---|---|
 | 开发调试 | `local` | 只在本地追踪事务，不做跨服务协调 |
 | 非关键业务的补偿流程 | `http` | 能持久化和恢复，但不是强一致 |
-| 单服务多表事务回滚 | `at` | ORM 拦截器自动记录 undo_log，回滚时自动恢复 |
+| 单进程、单数据库的受限补偿 | `at` | ORM 拦截器记录 undo_log；不提供官方 TC 全局锁 |
 | 支付/订单/库存等核心业务 | 经过业务验证的 TCC/Saga/Outbox | `distributed` 可提供 TCC 协调，但必须完成业务资源、幂等与故障验证 |
 
 ### ⚠️ 重要警告
 
-**http 模式不等于强一致性。** distributed 模式失败时会拒绝静默降级，但 TCC 的最终正确性仍取决于业务 prepare/commit/rollback 是否持久化、幂等并正确处理空回滚和悬挂。没有这些实现和故障测试，不要把它用于支付、订单或库存核心链路。`at` 模式自动处理单表 undo，但不支持 JOIN、子查询和跨服务事务。
+**http 和 at 模式都不等于跨服务强一致性。** distributed 模式失败时会拒绝静默降级，但 TCC 的最终正确性仍取决于业务 prepare/commit/rollback 是否持久化、幂等并正确处理空回滚和悬挂。没有这些实现和故障测试，不要把它用于支付、订单或库存核心链路。`at` 模式没有官方 Seata TC 全局锁，只适用于单进程、单数据库中受支持 SQL 的补偿。
 
 ### AT 模式使用指南
 
 #### ① 是什么
 
-AT（Automatic Transaction）模式是 Seata 最常用的事务模式。它自动拦截 SQL，在执行前查询数据快照（before image），执行后查询新快照（after image），把两个快照存入 `undo_log` 表。全局事务回滚时，根据 undo_log 自动反向恢复数据。
+本项目的 `at` 模式借鉴 Seata AT 的镜像机制：它拦截 SQL，在执行前查询数据快照（before image），执行后查询新快照（after image），并与业务修改在同一本地事务中写入 `undo_log`。它不是官方 Seata RM/TC 实现，也没有跨服务全局锁。
 
 **大白话**：就像你改文件前先备份一份，改错了用备份恢复。AT 模式自动帮你做"备份"和"恢复"。
 
 #### ② 怎么用
 
 ```python
-from springbootai.cloud.seata import seata_manager, SeataTransactionManager
-from springbootai.cloud.seata_at_proxy import SeataATProxy
+from springbootai.annotations import GlobalTransactional
 
-# 1. 设置 AT 模式
-seata_manager.set_mode("at")
+# application.yml
+# seata:
+#   enabled: true
+#   mode: at
+# database:
+#   enabled: true
+#   orm: mybatis
 
-# 2. 在 SqlSession 上安装 AT 拦截器（框架启动时执行一次）
-at_proxy = SeataATProxy(sql_session, seata_manager)
-at_proxy.install()
-
-# 3. 业务代码中开启全局事务
+# 框架会在 SqlSessionFactory 创建后自动安装 AT 拦截器。
 @GlobalTransactional
 def transfer(from_id, to_id, amount):
     # UPDATE 和 DELETE 会自动记录 undo_log
@@ -681,10 +681,13 @@ def transfer(from_id, to_id, amount):
 
 #### ④ 限制
 
-- 仅支持单表 SQL（不支持 JOIN / 子查询）
-- INSERT 的 undo 需要知道主键（不支持自增回填）
-- WHERE 条件直接用于 before image 查询
+- 仅支持单表 SQL；拒绝 JOIN、子查询、注释、多语句和 RETURNING
+- UPDATE/DELETE 必须带 WHERE；表必须恰好有一个主键列
+- INSERT 仅支持显式单行 VALUES，且主键必须通过绑定参数提供（不支持自增回填）
+- 参数化 SQL 的 before image 复用 WHERE 对应的绑定参数
+- 回滚会比较 after image，检测到并发修改时失败并保留 undo_log 供人工处理
 - 仅在 `seata_manager.is_in_transaction()` 为 True 时生效
+- 不提供官方 Seata 全局锁或跨服务 AT；核心交易链路应使用经过验证的 TCC/Saga/Outbox
 
 ---
 
@@ -794,13 +797,13 @@ http 模式的持久化能力仅保证协调器元数据不丢、重启可恢复
 
 **修复方案**：新增 `fallback_to_local` 配置项（默认 False），bridge 未初始化或 begin 失败时降级为本地事务 + 警告日志。降级时上下文已设置（in_transaction=True），直接返回 tx_id。
 
-### Seata recovery worker 无优雅停机 — 中 ⏳ 待处理 (v2.3.0)
+### Seata recovery worker 无优雅停机 — 中 ✅ 已修复 (v2.3.10)
 
 **位置**：`springbootai/cloud/seata.py` recovery worker 线程
 
 **现象**：recovery worker 是守护线程（`daemon=True`），应用退出时被强杀，正在恢复中的事务可能丢失。
 
-**改进方案**：注册 `atexit` 钩子或接入 `springbootai.core.graceful_shutdown`，停机前等待 recovery worker 完成当前任务；设置停机超时（默认 30 秒）。
+**修复方案**：recovery worker 由 ASGI worker 生命周期持有；启动完成后调用 `start_recovery_worker()`，关闭阶段调用 `stop_recovery_worker()`。停止事件会唤醒等待中的线程并执行有界 `join`，避免后台线程脱离应用生命周期。
 
 ### RabbitMQ 消息发布未处理 JSON 序列化失败 — 中 ⏳ 待处理 (v2.3.0)
 

@@ -26,6 +26,10 @@ from springbootai.cloud.seata_at_proxy import (
     SeataATInterceptor,
     UndoLogManager,
     UndoExecutor,
+    SeataATError,
+    SeataATUnsupportedSQLError,
+    SeataATUndoConflictError,
+    install_seata_at_factory,
     parse_sql,
 )
 from springbootai.cloud.sentinel import (
@@ -94,7 +98,9 @@ __all__ = [
     # 分布式事务
     'seata_manager', 'init_seata', 'SeataTransactionManager', 'BranchStatus',
     'SQLiteTransactionStore', 'SeataBridgeClient', 'SeataBridgeError',
-    'SeataATProxy', 'SeataATInterceptor', 'UndoLogManager', 'UndoExecutor', 'parse_sql',
+    'SeataATProxy', 'SeataATInterceptor', 'UndoLogManager', 'UndoExecutor',
+    'SeataATError', 'SeataATUnsupportedSQLError', 'SeataATUndoConflictError',
+    'install_seata_at_factory', 'parse_sql',
     # 熔断限流
     'sentinel_engine', 'SentinelEngine', 'FlowRule', 'DegradeRule',
     'SystemRule', 'HotParamRule', 'BlockException', 'sentinel_protect',

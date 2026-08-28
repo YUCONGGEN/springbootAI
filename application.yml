@@ -21,7 +21,7 @@ server:
 spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:default}
-  # AI 模块配置（对齐 Spring AI 的 springbootai.ai.*）
+  # AI 模块配置（推荐前缀 spring.ai.*；兼容旧版 springbootai.ai.*）
   ai:
     default-provider: ${AI_PROVIDER:openai}   # openai | ollama
     max-retries: ${AI_MAX_RETRIES:3}
@@ -97,7 +97,7 @@ spring:
       # deepseek:
       #   api-key: ${DEEPSEEK_API_KEY:}
       #   model: deepseek-chat
-  # LangGraph 鐙珯鐘舵€佸浘缂栨帓閰嶇疆锛堟湁闇€鏃跺畨瑁?springbootAI[langgraph]锛?
+  # LangGraph 状态图编排配置（按需安装 springbootAI[langgraph]）
   # 默认关闭；生产请注入持久化 checkpointer，不要把 memory 用于多 worker/生产。
   langgraph:
     enabled: ${LG_ENABLED:false}

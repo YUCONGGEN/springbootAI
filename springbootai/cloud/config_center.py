@@ -25,8 +25,8 @@ Spring Cloud Config 配置中心客户端（对齐 Spring Cloud Config Client）
           # backend: file
           # file:
           #   path: ./config-repo
-          name: myapp                            # 应用名（默认 springbootai.application.name）
-          profile: dev                           # 环境（默认 springbootai.profiles.active）
+          name: myapp                            # 应用名（默认 spring.application.name）
+          profile: dev                           # 环境（默认 spring.profiles.active）
           label: master                          # 分支/标签
           fail-fast: false                       # 拉取失败是否快速失败
           retry:
@@ -470,7 +470,7 @@ class ConfigCenterClient:
     def _flatten(data: Dict[str, Any], prefix: str = '') -> Dict[str, Any]:
         """扁平化嵌套字典为点分隔的key。
 
-        例如: {"spring": {"datasource": {"url": "..."}}} → {"springbootai.datasource.url": "..."}
+        例如: {"spring": {"datasource": {"url": "..."}}} → {"spring.datasource.url": "..."}
         """
         result: Dict[str, Any] = {}
         for k, v in data.items():

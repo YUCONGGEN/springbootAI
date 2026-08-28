@@ -1,6 +1,6 @@
 # 测试切片 —— 只测试你关心的部分
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.10
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---

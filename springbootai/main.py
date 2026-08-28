@@ -306,11 +306,15 @@ class SpringApplication:
         if not self.application_context:
             return
         from springbootai.data.rest import RepositoryRestController
-        registry = self.application_context.bean_registry
-        if not registry:
-            return
         registered = 0
-        for bean_name, bean_instance in registry.beans.items():
+        for bean_name in self.application_context.get_bean_names():
+            try:
+                bean_instance = self.application_context.get_bean(bean_name)
+            except Exception as exc:
+                self.logger.debug(
+                    "Skipping Data REST bean %s: %s", bean_name, type(exc).__name__
+                )
+                continue
             bean_class = type(bean_instance)
             rest_annotations = [
                 ann for ann in getattr(bean_class, '__spring_annotations__', [])
@@ -326,14 +330,18 @@ class SpringApplication:
                         f"Repository '{bean_name}' has @RepositoryRestResource but no entity_class"
                     )
                     continue
-                path = ann.path
-                if base_path and not path.startswith('/'):
-                    path = f'{base_path}/{path}'
+                path = '/' + str(ann.path).strip('/')
+                if base_path:
+                    path = f"/{str(base_path).strip('/')}{path}"
                 controller = RepositoryRestController(
                     repository=bean_instance,
                     path=path,
                     entity_class=entity_class,
                     id_type=ann.id_type,
+                    secured=getattr(ann, 'secured', True),
+                    required_scopes=getattr(ann, 'required_scopes', []),
+                    read_fields=getattr(ann, 'read_fields', None),
+                    write_fields=getattr(ann, 'write_fields', None),
                 )
                 # 注册到 FastAPI app（延迟到 web_context 初始化后）
                 self._pending_rest_controllers = getattr(self, '_pending_rest_controllers', [])
@@ -447,7 +455,7 @@ class SpringApplication:
                 self._handle_init_error('Seata', seata_config, e, fail_fast)
 
         # 初始化Spring Cloud Config配置中心（延迟导入）
-        # 支持两种启用方式：配置文件 springbootai.cloud.config.enabled=true 或 @EnableConfigServer 注解
+        # 支持两种启用方式：配置文件 spring.cloud.config.enabled=true 或 @EnableConfigServer 注解
         spring_config = self._section(config.get('spring'))
         cloud_config = self._section(spring_config.get('cloud'))
         config_center_cfg = self._section(cloud_config.get('config'))
@@ -477,7 +485,7 @@ class SpringApplication:
                 self._handle_init_error('ConfigCenter', config_center_cfg, e, fail_fast)
 
         # 初始化Spring Cloud Bus事件总线（延迟导入）
-        # 支持两种启用方式：配置文件 springbootai.cloud.bus.enabled=true 或 @EnableBus 注解
+        # 支持两种启用方式：配置文件 spring.cloud.bus.enabled=true 或 @EnableBus 注解
         bus_cfg = self._section(cloud_config.get('bus'))
         bus_annotation = self._find_annotation(EnableBus)
         bus_enabled = bus_cfg.get('enabled', False) or bus_annotation is not None
@@ -508,7 +516,7 @@ class SpringApplication:
             except Exception as e:
                 self._handle_init_error('RabbitMQ', rabbitmq_config, e, fail_fast)
 
-        # 初始化Kafka（延迟导入，配置 key 为 springbootai.kafka）
+        # 初始化 Kafka（延迟导入，配置 key 为 spring.kafka）
         kafka_config = self._section(spring_config.get('kafka'))
         if kafka_config.get('enabled', False):
             try:
@@ -519,7 +527,7 @@ class SpringApplication:
                 self._handle_init_error('Kafka', kafka_config, e, fail_fast)
 
         # 初始化OAuth2资源服务器（延迟导入）
-        # 支持两种启用方式：配置文件 springbootai.security.oauth2.* 或 @EnableOAuth2 注解
+        # 支持两种启用方式：配置文件 spring.security.oauth2.* 或 @EnableOAuth2 注解
         security_config = self._section(spring_config.get('security'))
         oauth2_config = self._section(security_config.get('oauth2'))
         oauth2_annotation = self._find_annotation(EnableOAuth2)
@@ -528,18 +536,27 @@ class SpringApplication:
             try:
                 if oauth2_annotation:
                     merged_config = dict(config)
-                    oauth2_merged = merged_config.setdefault('spring', {}).setdefault('security', {}).setdefault('oauth2', {})
+                    merged_spring = dict(self._section(merged_config.get('spring')))
+                    merged_security = dict(self._section(merged_spring.get('security')))
+                    oauth2_merged = dict(self._section(merged_security.get('oauth2')))
+                    resourceserver = dict(self._section(oauth2_merged.get('resourceserver')))
+                    jwt_merged = dict(self._section(resourceserver.get('jwt')))
+                    merged_config['spring'] = merged_spring
+                    merged_spring['security'] = merged_security
+                    merged_security['oauth2'] = oauth2_merged
+                    oauth2_merged['resourceserver'] = resourceserver
+                    resourceserver['jwt'] = jwt_merged
                     oauth2_merged['enabled'] = True
                     if oauth2_annotation.issuer:
-                        oauth2_merged['issuer'] = oauth2_annotation.issuer
+                        jwt_merged['issuer-uri'] = oauth2_annotation.issuer
                     if oauth2_annotation.audiences:
-                        oauth2_merged['audiences'] = oauth2_annotation.audiences
+                        jwt_merged['audiences'] = list(oauth2_annotation.audiences)
                     if oauth2_annotation.jwks_uri:
-                        oauth2_merged['jwks_uri'] = oauth2_annotation.jwks_uri
+                        jwt_merged['jwk-set-uri'] = oauth2_annotation.jwks_uri
                     if oauth2_annotation.algorithms:
-                        oauth2_merged['algorithms'] = oauth2_annotation.algorithms
+                        jwt_merged['algorithms'] = list(oauth2_annotation.algorithms)
                     if oauth2_annotation.secret_key:
-                        oauth2_merged['secret-key'] = oauth2_annotation.secret_key
+                        jwt_merged['secret-key'] = oauth2_annotation.secret_key
                     from springbootai.security.oauth2 import init_oauth2
                     init_oauth2(merged_config)
                 else:
@@ -548,6 +565,9 @@ class SpringApplication:
                 self.logger.info("OAuth2 resource server initialized")
             except Exception as e:
                 self._handle_init_error('OAuth2', oauth2_config, e, fail_fast)
+        else:
+            from springbootai.security.oauth2 import oauth2_resource_server
+            oauth2_resource_server.reset()
 
         # 初始化CSRF防护（延迟导入）
         # 支持两种启用方式：配置文件 server.csrf.enabled=true 或 @EnableCsrf 注解
@@ -559,14 +579,17 @@ class SpringApplication:
             try:
                 if csrf_annotation:
                     merged_config = dict(config)
-                    csrf_merged = merged_config.setdefault('server', {}).setdefault('csrf', {})
+                    merged_server = dict(self._section(merged_config.get('server')))
+                    csrf_merged = dict(self._section(merged_server.get('csrf')))
+                    merged_config['server'] = merged_server
+                    merged_server['csrf'] = csrf_merged
                     csrf_merged['enabled'] = True
-                    csrf_merged.setdefault('token_length', csrf_annotation.token_length)
-                    csrf_merged.setdefault('token_ttl', csrf_annotation.token_ttl)
-                    csrf_merged.setdefault('cookie_name', csrf_annotation.cookie_name)
-                    csrf_merged.setdefault('header_name', csrf_annotation.header_name)
-                    csrf_merged.setdefault('secure_cookie', csrf_annotation.secure_cookie)
-                    csrf_merged.setdefault('same_site', csrf_annotation.same_site)
+                    csrf_merged['token-length'] = csrf_annotation.token_length
+                    csrf_merged['expire-seconds'] = csrf_annotation.token_ttl
+                    csrf_merged['cookie-name'] = csrf_annotation.cookie_name
+                    csrf_merged['header-name'] = csrf_annotation.header_name
+                    csrf_merged['secure'] = csrf_annotation.secure_cookie
+                    csrf_merged['samesite'] = csrf_annotation.same_site
                     from springbootai.web.csrf import init_csrf
                     init_csrf(merged_config)
                 else:
@@ -575,6 +598,9 @@ class SpringApplication:
                 self.logger.info("CSRF protection initialized")
             except Exception as e:
                 self._handle_init_error('CSRF', csrf_config, e, fail_fast)
+        else:
+            from springbootai.web.csrf import init_csrf
+            init_csrf({'server': {'csrf': {'enabled': False}}})
 
         # 初始化Prometheus监控（延迟导入）
         prometheus_config = self._section(config.get('prometheus'))
@@ -591,15 +617,16 @@ class SpringApplication:
         self._init_devtools(config, spring_config, fail_fast)
 
         # 初始化Spring Data REST（扫描 @RepositoryRestResource 标记的 Repository）
-        # 支持两种启用方式：配置文件 springbootai.data.rest.enabled=true 或 @EnableDataRest 注解
+        # 支持两种启用方式：配置文件 spring.data.rest.enabled=true 或 @EnableDataRest 注解
         data_rest_cfg = self._section(self._section(spring_config.get('data')).get('rest'))
         data_rest_annotation = self._find_annotation(EnableDataRest)
         data_rest_enabled = data_rest_cfg.get('enabled', False) or data_rest_annotation is not None
         if data_rest_enabled:
             try:
                 base_path = (data_rest_annotation.base_path if data_rest_annotation else data_rest_cfg.get('base_path', '')) or ''
-                self._register_repository_rest_resources(base_path)
-                self.logger.info(f"Spring Data REST enabled (base_path={base_path or '/api'})")
+                # Repository Bean 要到 ApplicationContext.refresh() 后才完整可用。
+                self._data_rest_base_path = base_path
+                self.logger.info(f"Spring Data REST scheduled (base_path={base_path or '/api'})")
             except Exception as e:
                 self._handle_init_error('DataRest', data_rest_cfg, e, fail_fast)
 
@@ -641,7 +668,27 @@ class SpringApplication:
             except Exception as e:
                 self._handle_init_error('MyBatis', self._section(config.get('database')), e, fail_fast)
 
+            # Seata AT 必须在 SqlSessionFactory 创建后、任何业务 Session 创建前安装。
+            # 显式启用 AT 却没有可代理的数据源时始终失败关闭。
+            seata_config = self._section(config.get('seata'))
+            if seata_config.get('enabled', False) and str(
+                seata_config.get('mode', 'local')
+            ).lower() == 'at':
+                try:
+                    factory = self.application_context.bean_factory.get_bean(
+                        'sqlSessionFactory'
+                    )
+                    from springbootai.cloud.seata import seata_manager
+                    from springbootai.cloud.seata_at_proxy import install_seata_at_factory
+                    install_seata_at_factory(factory, seata_manager)
+                    self.logger.info("Seata AT datasource proxy initialized")
+                except Exception as exc:
+                    self._handle_init_error('Seata AT', seata_config, exc, True)
+
             self.application_context.refresh()
+
+            if hasattr(self, '_data_rest_base_path'):
+                self._register_repository_rest_resources(self._data_rest_base_path)
 
             # IoC 容器就绪后再开启 Nacos Config 长轮询。配置发生变化时重载
             # ConfigLoader，并只重新绑定 @RefreshScope / @NacosValue(auto_refreshed=True) Bean。

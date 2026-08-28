@@ -5,7 +5,7 @@ SpringBootAI LangChain 模块 - 把 langchain classic 全套能力封装为 Spri
 - core:        LangChainCore 统一核心入口（构建器模式 + 一站式 RAG/对话/Agent）
 - adapters:    springbootAI ChatModel/EmbeddingModel <-> langchain 模型/嵌入/向量库 双向桥接
 - partners:    30+ Partner 提供商工厂（OpenAI/Anthropic/Ollama/DeepSeek/ZhipuAI/Tongyi...）
-- autoconfig:  从 application.yml 的 springbootai.langchain.* 自动装配 Bean
+- autoconfig:  从 application.yml 的 spring.langchain.* 自动装配 Bean
 - prompts:     PromptTemplate / ChatPromptTemplate / FewShotPromptTemplate 工厂
 - chains:      LLMChain / ConversationChain / RetrievalQA / ConversationalRetrieval /
                SequentialChain / APIChain / ConstitutionalChain / MultiPromptChain /
@@ -90,7 +90,7 @@ from springbootai.langchain.annotations import (
     bind_langchain_client,
 )
 
-__version__ = "2.3.9"
+__version__ = "2.3.10"
 
 __all__ = [
     # core

@@ -11,7 +11,7 @@ SpringBootAI AI 模块 - 对齐 Spring AI 的 ChatClient/Advisor/ETL 抽象，
 - vectorstore:  VectorStore 抽象 + SimpleInMemoryVectorStore
 - etl:          DocumentReader / TextSplitter（TokenTextSplitter / CharacterTextSplitter）
 - tools:        ToolRegistry 函数调用注册表
-- autoconfig:   从 application.yml 的 springbootai.ai.* 自动装配 Bean
+- autoconfig:   从 application.yml 的 spring.ai.* 自动装配 Bean
 """
 from springbootai.ai.core import (
     Advisor, AdvisorRequest, ChatClient, ChatClientBuilder, ChatModel,
@@ -57,7 +57,7 @@ from springbootai.ai.observability import AIMetrics, ai_metrics
 from springbootai.ai.autoconfig import AIProperties, bind_ai_config, configure_ai
 from springbootai.ai.annotation_runtime import ContentModerationError
 
-__version__ = "2.3.9"
+__version__ = "2.3.10"
 
 __all__ = [
     # core

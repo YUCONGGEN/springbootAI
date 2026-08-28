@@ -16,11 +16,11 @@
         pass
 
 与配置文件的等价关系：
-- @EnableDevTools          等价于 springbootai.devtools.restart.enabled: true
-- @EnableConfigServer      等价于 springbootai.cloud.config.enabled: true
-- @EnableBus               等价于 springbootai.cloud.bus.enabled: true
-- @EnableBatchProcessing   等价于 springbootai.batch.enabled: true
-- @EnableDataRest          等价于 springbootai.data.rest.enabled: true
+- @EnableDevTools          等价于 spring.devtools.restart.enabled: true
+- @EnableConfigServer      等价于 spring.cloud.config.enabled: true
+- @EnableBus               等价于 spring.cloud.bus.enabled: true
+- @EnableBatchProcessing   等价于 spring.batch.enabled: true
+- @EnableDataRest          等价于 spring.data.rest.enabled: true
 """
 from typing import List, Optional
 
@@ -75,7 +75,7 @@ class EnableConfigServer(SpringAnnotation):
 
     Attributes:
         uri: 配置中心地址（如 http://config-server:8888）
-        profile: 环境名（如 dev/prod，默认读取 springbootai.profiles.active）
+        profile: 环境名（如 dev/prod，默认读取 spring.profiles.active）
         label: 分支/标签（默认 master）
         fail_fast: 拉取失败是否快速失败（默认 False）
         backend: 后端类型（'http' 或 'file'）
@@ -192,7 +192,7 @@ class EnableDataRest(SpringAnnotation):
     标记在主类上，自动将标记了 @RepositoryRestResource 的 Repository 暴露为 REST API。
 
     Attributes:
-        base_path: 所有 Repository REST 端点的基础路径（默认 '/api'）
+        base_path: 所有 Repository REST 端点的基础路径（默认空字符串）
         default_page_size: 默认分页大小（默认 20）
         max_page_size: 最大分页大小（默认 1000）
 

@@ -44,7 +44,7 @@ pip install -r requirements-mcp.txt
 python -c "import mcp, springbootai.mcp; print('MCP ready')"
 ```
 
-没有安装 MCP 依赖且 `springbootai.mcp.enabled=false` 时，核心项目仍可正常运行。
+没有安装 MCP 依赖且 `spring.mcp.enabled=false` 时，核心项目仍可正常运行。
 
 ## 3. 第一个注解式 MCP Server
 

@@ -66,7 +66,7 @@ class BranchStatus:
 
 
 class SeataTransactionManager:
-    """Seata事务管理器（支持local/http/distributed三种模式）"""
+    """Seata事务管理器（支持 local/http/distributed/at 四种模式）。"""
     
     _instance = None
     _lock = threading.Lock()
@@ -656,6 +656,25 @@ class SeataTransactionManager:
                 )
                 return all_ok
             
+            # AT 模式：在进程内同步完成数据库分支回调。AT 代理已经把
+            # 业务变更和 undo_log 原子提交，这里负责清理 undo_log。
+            if self.mode == "at":
+                with self._gt_lock:
+                    branches = list(self._branches.get(tx_id, []))
+                results = [self._notify_branch(branch, 'commit') for branch in branches]
+                all_ok = all(results)
+                if all_ok:
+                    self._cleanup_at_transaction(tx_id, branches)
+                    self._set_context(status='COMMITTED')
+                else:
+                    self._set_context(status='COMMIT_FAILED')
+                    logger.error(
+                        "[Seata-AT] Commit cleanup failed xid=%s branches=%d",
+                        _safe_log_field(tx_id),
+                        len(branches),
+                    )
+                return all_ok
+
             # 分布式模式
             if self.mode == "distributed":
                 if not (self._bridge_client and self._seata_client_initialized):
@@ -772,6 +791,25 @@ class SeataTransactionManager:
                 )
                 return all_ok
             
+            # AT 模式按分支注册的逆序执行补偿，避免同一事务内多次写入时
+            # 以错误顺序恢复镜像。
+            if self.mode == "at":
+                with self._gt_lock:
+                    branches = list(reversed(self._branches.get(tx_id, [])))
+                results = [self._notify_branch(branch, 'rollback') for branch in branches]
+                all_ok = all(results)
+                if all_ok:
+                    self._cleanup_at_transaction(tx_id, branches)
+                    self._set_context(status='ROLLED_BACK')
+                else:
+                    self._set_context(status='ROLLBACK_FAILED')
+                    logger.error(
+                        "[Seata-AT] Rollback failed xid=%s branches=%d",
+                        _safe_log_field(tx_id),
+                        len(branches),
+                    )
+                return all_ok
+
             # 分布式模式
             if self.mode == "distributed":
                 if not (self._bridge_client and self._seata_client_initialized):
@@ -814,6 +852,15 @@ class SeataTransactionManager:
         """Drop process-local callback caches; durable audit state remains stored."""
         with self._gt_lock:
             branches = self._branches.pop(tx_id, [])
+            self._global_transactions.pop(tx_id, None)
+        with self._cb_lock:
+            for branch in branches:
+                self._branch_callbacks.pop(branch['branch_id'], None)
+
+    def _cleanup_at_transaction(self, tx_id: str, branches: List[Dict[str, Any]]) -> None:
+        """清理 AT 模式的进程内分支状态。"""
+        with self._gt_lock:
+            self._branches.pop(tx_id, None)
             self._global_transactions.pop(tx_id, None)
         with self._cb_lock:
             for branch in branches:

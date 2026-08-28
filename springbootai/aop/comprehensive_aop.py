@@ -12,6 +12,7 @@ import secrets
 import re
 import logging
 import inspect
+import json
 from springbootai.annotations.core import (
     RateLimit,
     CircuitBreaker,
@@ -35,11 +36,32 @@ from springbootai.validation.aop import (
 
 logger = logging.getLogger("Spring.AOP")
 
+
+class DistributedGuardError(RuntimeError):
+    """分布式保护组件不可用或状态不一致。"""
+
+
+class RateLimitExceeded(DistributedGuardError):
+    """请求超过限流阈值。"""
+
+
+class CircuitBreakerOpenError(DistributedGuardError):
+    """熔断器处于打开状态。"""
+
+
+class IdempotencyInProgressError(DistributedGuardError):
+    """相同幂等键对应的操作仍在执行。"""
+
+
+class DistributedLockUnavailable(DistributedGuardError):
+    """无法获取分布式锁。"""
+
 # ==================== 本地缓存（读写分离，提升性能） ====================
 _rate_limit_local_cache: Dict[str, List[float]] = {}
 _circuit_breaker_local_cache: Dict[str, dict] = {}
 _idempotent_local_cache: Dict[str, Any] = {}
 _idempotent_expire_times: Dict[str, float] = {}
+_IDEMPOTENT_PROCESSING = object()
 _metrics_local_cache: Dict[str, dict] = {}
 _trace_context = threading.local()
 
@@ -90,68 +112,73 @@ def _resolve_dynamic_key(key_template: str, func: Callable, args: tuple, kwargs:
 # ==================== RateLimit 限流切面（Redis持久化） ====================
 def rate_limit_decorator(annotation: RateLimit):
     def decorator(func: Callable) -> Callable:
+        def build_key(args, kwargs):
+            base_key = annotation.key or f"{func.__module__}.{func.__name__}"
+            resolved = _resolve_dynamic_key(base_key, func, args, kwargs)
+            if resolved == base_key and annotation.key:
+                return f"rate_limit:{annotation.key}:{resolved}"
+            return f"rate_limit:{resolved}"
+
+        def reserve(args, kwargs):
+            key = build_key(args, kwargs)
+            now = time.time()
+            redis = redis_client.get_client()
+            if redis is None:
+                with _get_segment_lock(key):
+                    entries = [
+                        value for value in _rate_limit_local_cache.get(key, [])
+                        if now - value < annotation.time_window
+                    ]
+                    if len(entries) >= annotation.max_requests:
+                        raise RateLimitExceeded(
+                            f"Rate limit exceeded: {annotation.max_requests} "
+                            f"requests per {annotation.time_window}s"
+                        )
+                    entries.append(now)
+                    _rate_limit_local_cache[key] = entries
+                return
+
+            # 清理、计数和占位必须是一个原子操作，否则并发请求会共同越过阈值。
+            script = """
+            redis.call('zremrangebyscore', KEYS[1], 0, ARGV[1] - ARGV[2])
+            if redis.call('zcard', KEYS[1]) >= tonumber(ARGV[3]) then
+                return 0
+            end
+            redis.call('zadd', KEYS[1], ARGV[1], ARGV[4])
+            redis.call('expire', KEYS[1], math.max(1, math.ceil(ARGV[2])))
+            return 1
+            """
+            try:
+                allowed = redis.eval(
+                    script,
+                    1,
+                    key,
+                    now,
+                    annotation.time_window,
+                    annotation.max_requests,
+                    f"{now}:{secrets.token_hex(8)}",
+                )
+            except Exception as exc:
+                raise DistributedGuardError(
+                    f"Redis rate limiter unavailable for {key}"
+                ) from exc
+            if int(allowed or 0) != 1:
+                raise RateLimitExceeded(
+                    f"Rate limit exceeded: {annotation.max_requests} "
+                    f"requests per {annotation.time_window}s"
+                )
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                await asyncio.to_thread(reserve, args, kwargs)
+                return await func(*args, **kwargs)
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            base_key = annotation.key or f"{func.__module__}.{func.__name__}"
-            # 解析动态key
-            key = _resolve_dynamic_key(base_key, func, args, kwargs)
-            if key == base_key and annotation.key:
-                key = f"rate_limit:{annotation.key}:{key}"
-            else:
-                key = f"rate_limit:{key}"
-            
-            now = time.time()
-            time_window = annotation.time_window
-            max_requests = annotation.max_requests
-            
-            # 尝试使用 Redis 进行限流
-            redis = redis_client.get_client()
-            if redis is not None:
-                try:
-                    # 使用 Redis sorted set 实现滑动窗口限流
-                    # 移除过期的请求记录
-                    redis.zremrangebyscore(key, 0, now - time_window)
-                    # 获取当前窗口内的请求数
-                    current_count = redis.zcard(key)
-                    
-                    if current_count >= max_requests:
-                        raise Exception(f"Rate limit exceeded: {max_requests} requests per {time_window}s")
-                    
-                    # 添加当前请求时间戳
-                    redis.zadd(key, {str(now): now})
-                    # 设置过期时间，避免内存泄漏
-                    redis.expire(key, time_window)
-                except Exception as e:
-                    logger.warning(f"Redis rate limit failed, falling back to local: {e}")
-                    # Redis 失败时回退到本地缓存
-                    return _rate_limit_local(func, args, kwargs, key, now, time_window, max_requests)
-            else:
-                # Redis 不可用时使用本地缓存
-                return _rate_limit_local(func, args, kwargs, key, now, time_window, max_requests)
-            
+            reserve(args, kwargs)
             return func(*args, **kwargs)
-        
-        def _rate_limit_local(func, args, kwargs, key, now, time_window, max_requests):
-            """本地限流实现（回退方案）"""
-            with _get_segment_lock(key):
-                if key not in _rate_limit_local_cache:
-                    _rate_limit_local_cache[key] = []
-                
-                # 清理过期的请求记录
-                _rate_limit_local_cache[key] = [
-                    t for t in _rate_limit_local_cache[key] 
-                    if now - t < time_window
-                ]
-                
-                current_count = len(_rate_limit_local_cache[key])
-                
-                if current_count >= max_requests:
-                    raise Exception(f"Rate limit exceeded: {max_requests} requests per {time_window}s")
-                
-                _rate_limit_local_cache[key].append(now)
-            
-            return func(*args, **kwargs)
-        
         return wrapper
     return decorator
 
@@ -159,118 +186,127 @@ def rate_limit_decorator(annotation: RateLimit):
 # ==================== CircuitBreaker 熔断切面（Redis持久化） ====================
 def circuit_breaker_decorator(annotation: CircuitBreaker):
     def decorator(func: Callable) -> Callable:
+        key = f"circuit_breaker:{func.__module__}.{func.__name__}"
+
+        def read_value(mapping, name, default):
+            return mapping.get(name, mapping.get(name.encode(), default))
+
+        def before_call(redis):
+            if redis is None:
+                with _get_segment_lock(key):
+                    state_data = _circuit_breaker_local_cache.setdefault(
+                        key,
+                        {"failures": 0, "last_failure": 0, "state": "CLOSED"},
+                    )
+                    state = state_data["state"]
+                    if state == "OPEN":
+                        if time.time() - state_data["last_failure"] > annotation.recovery_timeout:
+                            state_data["state"] = "HALF_OPEN"
+                            state_data["failures"] = 0
+                        else:
+                            return False, state_data["failures"]
+                    return True, state_data["failures"]
+
+            try:
+                state_data = redis.hgetall(key)
+                if not state_data:
+                    state_data = {"failures": "0", "last_failure": "0", "state": "CLOSED"}
+                    redis.hset(key, mapping=state_data)
+                state = read_value(state_data, "state", "CLOSED")
+                if isinstance(state, bytes):
+                    state = state.decode()
+                failures = int(read_value(state_data, "failures", "0"))
+                last_failure = float(read_value(state_data, "last_failure", "0"))
+                if state == "OPEN":
+                    if time.time() - last_failure > annotation.recovery_timeout:
+                        redis.hset(key, mapping={"state": "HALF_OPEN", "failures": "0"})
+                        failures = 0
+                    else:
+                        return False, failures
+                return True, failures
+            except Exception as exc:
+                raise DistributedGuardError(
+                    f"Redis circuit breaker unavailable for {key}"
+                ) from exc
+
+        def record_success(redis):
+            try:
+                if redis is None:
+                    with _get_segment_lock(key):
+                        state_data = _circuit_breaker_local_cache.get(key)
+                        if state_data:
+                            state_data.update(failures=0, state="CLOSED")
+                else:
+                    redis.hset(key, mapping={"failures": "0", "state": "CLOSED"})
+            except Exception:
+                # 业务已经成功；此时抛出基础设施异常会诱导调用方重试并重复业务。
+                logger.exception("Failed to reset circuit breaker state for %s", key)
+
+        def record_failure(redis, previous_failures):
+            try:
+                new_failures = previous_failures + 1
+                if redis is None:
+                    with _get_segment_lock(key):
+                        state_data = _circuit_breaker_local_cache.setdefault(
+                            key,
+                            {"failures": 0, "last_failure": 0, "state": "CLOSED"},
+                        )
+                        state_data["failures"] += 1
+                        state_data["last_failure"] = time.time()
+                        if state_data["failures"] >= annotation.failure_threshold:
+                            state_data["state"] = "OPEN"
+                else:
+                    values = {
+                        "failures": str(new_failures),
+                        "last_failure": str(time.time()),
+                    }
+                    if new_failures >= annotation.failure_threshold:
+                        values["state"] = "OPEN"
+                    redis.hset(key, mapping=values)
+                if new_failures >= annotation.failure_threshold:
+                    logger.warning("Circuit breaker opened for %s", key)
+            except Exception:
+                # 保留并重新抛出原始业务异常，绝不能转去第二次调用业务。
+                logger.exception("Failed to record circuit breaker failure for %s", key)
+
+        def fallback(args, kwargs):
+            method = getattr(args[0], annotation.fallback_method, None) if args else None
+            if method and callable(method):
+                return method(*args[1:], **kwargs)
+            raise CircuitBreakerOpenError(f"Circuit breaker is open for {key}")
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                redis = redis_client.get_client()
+                allowed, failures = await asyncio.to_thread(before_call, redis)
+                if not allowed:
+                    value = fallback(args, kwargs) if annotation.fallback_method else None
+                    if annotation.fallback_method:
+                        return await value if inspect.isawaitable(value) else value
+                    raise CircuitBreakerOpenError(f"Circuit breaker is open for {key}")
+                try:
+                    result = await func(*args, **kwargs)
+                except Exception:
+                    await asyncio.to_thread(record_failure, redis, failures)
+                    raise
+                await asyncio.to_thread(record_success, redis)
+                return result
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            key = f"circuit_breaker:{func.__module__}.{func.__name__}"
-            
-            # 尝试使用 Redis 获取熔断状态
             redis = redis_client.get_client()
-            if redis is not None:
-                try:
-                    return _circuit_breaker_redis(func, args, kwargs, key, annotation, redis)
-                except Exception as e:
-                    logger.warning(f"Redis circuit breaker failed, falling back to local: {e}")
-                    return _circuit_breaker_local(func, args, kwargs, key, annotation)
-            else:
-                return _circuit_breaker_local(func, args, kwargs, key, annotation)
-        
-        def _circuit_breaker_redis(func, args, kwargs, key, annotation, redis):
-            """Redis 熔断实现"""
-            # 获取熔断状态
-            state_data = redis.hgetall(key)
-            
-            if not state_data:
-                # 初始化状态
-                state_data = {
-                    "failures": "0",
-                    "last_failure": "0",
-                    "state": "CLOSED",
-                }
-                redis.hset(key, mapping=state_data)
-            
-            state = state_data.get("state", "CLOSED")
-            failures = int(state_data.get("failures", "0"))
-            last_failure = float(state_data.get("last_failure", "0"))
-            now = time.time()
-            
-            # 判断是否需要熔断
-            if state == "OPEN":
-                if now - last_failure > annotation.recovery_timeout:
-                    # 进入半开状态
-                    redis.hset(key, "state", "HALF_OPEN", "failures", "0")
-                else:
-                    # 熔断中，直接返回
-                    if annotation.fallback_method:
-                        fallback = getattr(args[0], annotation.fallback_method, None) if args else None
-                        if fallback and callable(fallback):
-                            return fallback(*args[1:], **kwargs)
-                    raise Exception(f"Circuit breaker is open for {key}")
-            
+            allowed, failures = before_call(redis)
+            if not allowed:
+                return fallback(args, kwargs) if annotation.fallback_method else fallback(args, kwargs)
             try:
                 result = func(*args, **kwargs)
-                
-                # 成功，重置状态
-                redis.hset(key, "failures", "0", "state", "CLOSED")
-                
-                return result
-            except Exception as e:
-                # 失败，增加失败计数
-                new_failures = failures + 1
-                redis.hset(key, "failures", str(new_failures), "last_failure", str(time.time()))
-                
-                if new_failures >= annotation.failure_threshold:
-                    redis.hset(key, "state", "OPEN")
-                    logger.warning(f"Circuit breaker opened for {key}")
-                
+            except Exception:
+                record_failure(redis, failures)
                 raise
-        
-        def _circuit_breaker_local(func, args, kwargs, key, annotation):
-            """本地熔断实现（回退方案）"""
-            with _get_segment_lock(key):
-                if key not in _circuit_breaker_local_cache:
-                    _circuit_breaker_local_cache[key] = {
-                        "failures": 0,
-                        "last_failure": 0,
-                        "state": "CLOSED",
-                    }
-                
-                state = _circuit_breaker_local_cache[key]["state"]
-                failures = _circuit_breaker_local_cache[key]["failures"]
-                last_failure = _circuit_breaker_local_cache[key]["last_failure"]
-                now = time.time()
-                
-                if state == "OPEN":
-                    if now - last_failure > annotation.recovery_timeout:
-                        _circuit_breaker_local_cache[key]["state"] = "HALF_OPEN"
-                        _circuit_breaker_local_cache[key]["failures"] = 0
-                    else:
-                        if annotation.fallback_method:
-                            fallback = getattr(args[0], annotation.fallback_method, None) if args else None
-                            if fallback and callable(fallback):
-                                return fallback(*args[1:], **kwargs)
-                        raise Exception(f"Circuit breaker is open for {key}")
-            
-            try:
-                result = func(*args, **kwargs)
-                
-                with _get_segment_lock(key):
-                    if key in _circuit_breaker_local_cache:
-                        _circuit_breaker_local_cache[key]["failures"] = 0
-                        _circuit_breaker_local_cache[key]["state"] = "CLOSED"
-                
-                return result
-            except Exception as e:
-                with _get_segment_lock(key):
-                    if key in _circuit_breaker_local_cache:
-                        _circuit_breaker_local_cache[key]["failures"] += 1
-                        _circuit_breaker_local_cache[key]["last_failure"] = time.time()
-                        
-                        if _circuit_breaker_local_cache[key]["failures"] >= annotation.failure_threshold:
-                            _circuit_breaker_local_cache[key]["state"] = "OPEN"
-                            logger.warning(f"Circuit breaker opened for {key}")
-                
-                raise
-        
+            record_success(redis)
+            return result
         return wrapper
     return decorator
 
@@ -278,135 +314,170 @@ def circuit_breaker_decorator(annotation: CircuitBreaker):
 # ==================== Idempotent 幂等性切面（Redis持久化） ====================
 def idempotent_decorator(annotation: Idempotent):
     def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # 生成幂等键
+        def build_key(args, kwargs):
             if annotation.key:
-                param_value = _resolve_dynamic_key(annotation.key, func, args, kwargs)
-                key = f"idempotent:{annotation.prefix}:{param_value}"
-            else:
-                params_hash = hashlib.sha256(f"{args}{kwargs}".encode()).hexdigest()
-                key = f"idempotent:{annotation.prefix}:{params_hash}"
-            
+                value = _resolve_dynamic_key(annotation.key, func, args, kwargs)
+                return f"idempotent:{annotation.prefix}:{value}"
+            params_hash = hashlib.sha256(f"{args}{kwargs}".encode()).hexdigest()
+            return f"idempotent:{annotation.prefix}:{params_hash}"
+
+        def deserialize(value):
+            try:
+                decoded = json.loads(value)
+                if isinstance(decoded, dict) and decoded.get("__springbootai_idempotent__") == 1:
+                    return decoded.get("value")
+                return decoded
+            except (json.JSONDecodeError, TypeError):
+                return value
+
+        def claim(key):
             now = time.time()
-            
-            # 尝试使用 Redis 实现幂等性
             redis = redis_client.get_client()
-            if redis is not None:
-                try:
-                    return _idempotent_redis(func, args, kwargs, key, annotation, now, redis)
-                except Exception as e:
-                    logger.warning(f"Redis idempotent failed, falling back to local: {e}")
-                    return _idempotent_local(func, args, kwargs, key, annotation, now)
-            else:
-                return _idempotent_local(func, args, kwargs, key, annotation, now)
-        
-        def _idempotent_redis(func, args, kwargs, key, annotation, now, redis):
-            """Redis 幂等性实现"""
-            # 使用 Lua 脚本保证原子性
-            script = """
-            local key = KEYS[1]
-            local result_key = key .. ":result"
-            local expire_key = key .. ":expire"
-            
-            -- 检查是否已有缓存结果
-            local stored_result = redis.call("get", result_key)
-            local expire_time = tonumber(redis.call("get", expire_key) or "0")
-            
-            if stored_result and expire_time > tonumber(ARGV[1]) then
-                return stored_result
-            end
-            
-            -- 标记正在处理（设置一个短暂的锁）
-            local lock_set = redis.call("set", key .. ":processing", "1", "nx", "ex", 5)
-            if not lock_set then
-                -- 正在处理中，等待一小会儿
-                return "PROCESSING"
-            end
-            
-            -- 返回 nil 表示需要执行
-            return nil
-            """
-            
-            result = redis.eval(script, 1, key, now)
-            
-            if result == "PROCESSING":
-                # 正在处理中，等待结果
-                wait_end = time.time() + 5
-                while time.time() < wait_end:
-                    stored_result = redis.get(f"{key}:result")
-                    expire_time = float(redis.get(f"{key}:expire") or "0")
-                    if stored_result and expire_time > time.time():
-                        try:
-                            import json
-                            return json.loads(stored_result)
-                        except:
-                            return stored_result
-                    time.sleep(0.05)
-                raise Exception("Idempotent operation timeout")
-            
-            if result is not None:
-                # 有缓存结果，直接返回
-                try:
-                    import json
-                    return json.loads(result)
-                except:
-                    return result
-            
-            # 需要执行
-            try:
-                result = func(*args, **kwargs)
-                
-                # 缓存结果
-                try:
-                    import json
-                    result_str = json.dumps(result)
-                except:
-                    result_str = str(result)
-                
-                redis.set(f"{key}:result", result_str, ex=annotation.expire)
-                redis.set(f"{key}:expire", time.time() + annotation.expire, ex=annotation.expire)
-                
-                return result
-            except:
-                # 清理处理标记
-                redis.delete(f"{key}:processing")
-                raise
-        
-        def _idempotent_local(func, args, kwargs, key, annotation, now):
-            """本地幂等性实现（回退方案）"""
-            with _get_segment_lock(key):
-                # 清理过期条目
-                expired_keys = [k for k, t in _idempotent_expire_times.items() if now > t]
-                for k in expired_keys:
-                    _idempotent_local_cache.pop(k, None)
-                    _idempotent_expire_times.pop(k, None)
-                
-                if key in _idempotent_local_cache:
-                    stored_value = _idempotent_local_cache[key]
-                    expire_time = _idempotent_expire_times.get(key, 0)
-                    
-                    if stored_value is not None and expire_time > now:
-                        return stored_value
-                
-                # 标记正在处理
-                _idempotent_local_cache[key] = None
-                _idempotent_expire_times[key] = now + annotation.expire
-            
-            try:
-                result = func(*args, **kwargs)
-                
+            if redis is None:
                 with _get_segment_lock(key):
-                    _idempotent_local_cache[key] = result
-                    _idempotent_expire_times[key] = time.time() + annotation.expire
-                
-                return result
-            except:
+                    if _idempotent_expire_times.get(key, 0) <= now:
+                        _idempotent_local_cache.pop(key, None)
+                        _idempotent_expire_times.pop(key, None)
+                    if key in _idempotent_local_cache:
+                        value = _idempotent_local_cache[key]
+                        if value is _IDEMPOTENT_PROCESSING:
+                            raise IdempotencyInProgressError(
+                                f"Idempotent operation already in progress for {key}"
+                            )
+                        return redis, None, True, value
+                    _idempotent_local_cache[key] = _IDEMPOTENT_PROCESSING
+                    _idempotent_expire_times[key] = now + annotation.expire
+                return redis, None, False, None
+
+            owner = secrets.token_hex(16)
+            result_key = f"{key}:result"
+            processing_key = f"{key}:processing"
+            script = """
+            local result = redis.call('get', KEYS[1])
+            if result then
+                return {'CACHED', result}
+            end
+            local acquired = redis.call('set', KEYS[2], ARGV[1], 'nx', 'ex', ARGV[2])
+            if acquired then
+                return {'ACQUIRED'}
+            end
+            return {'PROCESSING'}
+            """
+            try:
+                response = redis.eval(
+                    script,
+                    2,
+                    result_key,
+                    processing_key,
+                    owner,
+                    max(1, int(annotation.expire)),
+                )
+                if not isinstance(response, (list, tuple)) or not response:
+                    raise DistributedGuardError("Invalid Redis idempotency response")
+                status = response[0].decode() if isinstance(response[0], bytes) else response[0]
+                if status == "CACHED" and len(response) == 2:
+                    return redis, owner, True, deserialize(response[1])
+                if status == "PROCESSING":
+                    raise IdempotencyInProgressError(
+                        f"Idempotent operation already in progress for {key}"
+                    )
+                if status == "ACQUIRED":
+                    return redis, owner, False, None
+                raise DistributedGuardError("Unknown Redis idempotency response")
+            except IdempotencyInProgressError:
+                raise
+            except DistributedGuardError:
+                raise
+            except Exception as exc:
+                raise DistributedGuardError(
+                    f"Redis idempotency guard unavailable for {key}"
+                ) from exc
+
+        def release_claim(redis, key, owner):
+            if redis is None:
                 with _get_segment_lock(key):
                     _idempotent_local_cache.pop(key, None)
                     _idempotent_expire_times.pop(key, None)
+                return
+            script = """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            end
+            return 0
+            """
+            try:
+                redis.eval(script, 1, f"{key}:processing", owner)
+            except Exception:
+                logger.exception("Failed to release idempotency claim for %s", key)
+
+        def store_result(redis, key, owner, result):
+            if redis is None:
+                with _get_segment_lock(key):
+                    _idempotent_local_cache[key] = result
+                    _idempotent_expire_times[key] = time.time() + annotation.expire
+                return
+            try:
+                payload = json.dumps(
+                    {"__springbootai_idempotent__": 1, "value": result},
+                    ensure_ascii=False,
+                )
+            except (TypeError, ValueError):
+                # 保留 processing 标记到期，避免成功业务在无法安全缓存时立即被重放。
+                logger.exception("Idempotent result for %s is not JSON serializable", key)
+                return
+            script = """
+            if redis.call('get', KEYS[1]) ~= ARGV[1] then
+                return 0
+            end
+            redis.call('set', KEYS[2], ARGV[2], 'ex', ARGV[3])
+            redis.call('del', KEYS[1])
+            return 1
+            """
+            try:
+                stored = redis.eval(
+                    script,
+                    2,
+                    f"{key}:processing",
+                    f"{key}:result",
+                    owner,
+                    payload,
+                    max(1, int(annotation.expire)),
+                )
+                if int(stored or 0) != 1:
+                    logger.error("Idempotency claim expired before result was stored for %s", key)
+            except Exception:
+                # 业务已经成功；不能抛出并诱导上游重试。processing 标记仍会阻止即时重放。
+                logger.exception("Failed to store idempotent result for %s", key)
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                key = build_key(args, kwargs)
+                redis, owner, cached, value = await asyncio.to_thread(claim, key)
+                if cached:
+                    return value
+                try:
+                    result = await func(*args, **kwargs)
+                except Exception:
+                    await asyncio.to_thread(release_claim, redis, key, owner)
+                    raise
+                await asyncio.to_thread(store_result, redis, key, owner, result)
+                return result
+            return async_wrapper
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            key = build_key(args, kwargs)
+            redis, owner, cached, value = claim(key)
+            if cached:
+                return value
+            try:
+                result = func(*args, **kwargs)
+            except Exception:
+                release_claim(redis, key, owner)
                 raise
-        
+            store_result(redis, key, owner, result)
+            return result
         return wrapper
     return decorator
 
@@ -492,44 +563,58 @@ def feature_toggle_decorator(annotation: FeatureToggle):
 # ==================== Lock 分布式锁切面（Redis实现） ====================
 def lock_decorator(annotation: Lock):
     def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # 生成锁键
+        def build_key(args, kwargs):
             if annotation.key:
                 resolved_key = _resolve_dynamic_key(annotation.key, func, args, kwargs)
-                lock_key = f"{annotation.prefix}:{resolved_key}"
-            else:
-                lock_key = f"{annotation.prefix}:{func.__module__}.{func.__name__}"
-            
-            # 尝试使用 Redis 分布式锁
+                return f"{annotation.prefix}:{resolved_key}"
+            return f"{annotation.prefix}:{func.__module__}.{func.__name__}"
+
+        def acquire(lock_key):
             redis = redis_client.get_client()
-            if redis is not None:
-                try:
-                    return _lock_redis(func, args, kwargs, lock_key, annotation, redis)
-                except Exception as e:
-                    logger.warning(f"Redis lock failed, falling back to local: {e}")
-                    return _lock_local(func, args, kwargs, lock_key, annotation)
-            else:
-                return _lock_local(func, args, kwargs, lock_key, annotation)
-        
-        def _lock_redis(func, args, kwargs, lock_key, annotation, redis):
-            """Redis 分布式锁实现"""
-            lock_id = redis_client.acquire_lock(lock_key, timeout=annotation.expire, wait_timeout=annotation.wait_timeout)
-            
+            if redis is None:
+                lock = _get_segment_lock(lock_key)
+                lock.acquire()
+                return None, lock
+            try:
+                lock_id = redis_client.acquire_lock(
+                    lock_key,
+                    timeout=annotation.expire,
+                    wait_timeout=annotation.wait_timeout,
+                )
+            except Exception as exc:
+                raise DistributedGuardError(
+                    f"Redis distributed lock unavailable for {lock_key}"
+                ) from exc
             if lock_id is None:
-                raise Exception(f"Could not acquire lock for {lock_key}")
-            
+                raise DistributedLockUnavailable(f"Could not acquire lock for {lock_key}")
+            return lock_id, None
+
+        def release(lock_key, lock_id, local_lock):
+            if local_lock is not None:
+                local_lock.release()
+                return
+            if not redis_client.release_lock(lock_key, lock_id):
+                logger.error("Failed to release distributed lock for %s", lock_key)
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                lock_key = build_key(args, kwargs)
+                lock_id, local_lock = await asyncio.to_thread(acquire, lock_key)
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    await asyncio.to_thread(release, lock_key, lock_id, local_lock)
+            return async_wrapper
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            lock_key = build_key(args, kwargs)
+            lock_id, local_lock = acquire(lock_key)
             try:
                 return func(*args, **kwargs)
             finally:
-                redis_client.release_lock(lock_key, lock_id)
-        
-        def _lock_local(func, args, kwargs, lock_key, annotation):
-            """本地锁实现（回退方案）"""
-            # 使用分段锁
-            with _get_segment_lock(lock_key):
-                return func(*args, **kwargs)
-        
+                release(lock_key, lock_id, local_lock)
         return wrapper
     return decorator
 

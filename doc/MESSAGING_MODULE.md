@@ -1,6 +1,6 @@
 # SpringBootAI 消息队列模块指南
 
-> SpringBootAI 2.3.9
+> SpringBootAI 2.3.10
 
 ---
 
@@ -277,7 +277,7 @@ pip install pika
 
 ### application.yml 配置
 
-> ⚠️ 配置项在**顶层 `rabbitmq:`** 下（不是 `springbootai.rabbitmq:`），且必须显式设置 `enabled: true` 才会启用。
+> ⚠️ 配置项在**顶层 `rabbitmq:`** 下（不是 `spring.rabbitmq:`），且必须显式设置 `enabled: true` 才会启用。
 
 ```yaml
 rabbitmq:
@@ -418,9 +418,9 @@ $env:RABBITMQ_PASSWORD = "secret"
 - `auto_ack=False`（默认）：方法抛异常时，框架会 `basic_nack` 并把消息**重新入队**，稍后会再次投递。适合需要可靠消费的场景。
 - `auto_ack=True`：消息一出队就确认，方法抛异常消息就丢了。仅适合允许丢失的场景。
 
-### Q5: 为什么配置写在 `rabbitmq:` 而不是 `springbootai.rabbitmq:`？
+### Q5: 为什么配置写在 `rabbitmq:` 而不是 `spring.rabbitmq:`？
 
-框架配置统一按功能域分顶层键（如 `database`、`redis`、`rabbitmq`、`jwt`），`main.py` 通过 `config.get('rabbitmq', {})` 读取。这与 Spring Boot 的 `springbootai.rabbitmq.*` 命名不同，是 SpringBootAI 自身的约定。
+框架配置统一按功能域分顶层键（如 `database`、`redis`、`rabbitmq`、`jwt`），`main.py` 通过 `config.get('rabbitmq', {})` 读取。这与 Spring Boot 的 `spring.rabbitmq.*` 命名不同，是 SpringBootAI 自身的约定。
 
 ### Q6: 能同时监听多个队列吗？
 
@@ -464,7 +464,7 @@ $env:RABBITMQ_PASSWORD = "secret"
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `topics` | `str` / `List[str]` | **必填** | 要订阅的主题，支持单个字符串或列表 |
-| `groupId` | `str` | `""` | 消费者组 ID；不填则用全局 `springbootai.kafka.consumer.group-id` |
+| `groupId` | `str` | `""` | 消费者组 ID；不填则用全局 `spring.kafka.consumer.group-id` |
 
 **代码示例：**
 
@@ -543,7 +543,7 @@ class OrderController:
 
 ### 配置方式
 
-Kafka 配置写在 `application.yml` 的 `springbootai.kafka` 下：
+Kafka 配置写在 `application.yml` 的 `spring.kafka` 下：
 
 ```yaml
 spring:
@@ -561,9 +561,9 @@ spring:
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `springbootai.kafka.bootstrap-servers` | `localhost:9092` | Kafka Broker 地址列表 |
-| `springbootai.kafka.consumer.group-id` | `default-group` | 消费者组 ID |
-| `springbootai.kafka.consumer.auto-offset-reset` | `latest` | Offset 重置策略：`latest`（只消费新消息）/ `earliest`（从头消费） |
+| `spring.kafka.bootstrap-servers` | `localhost:9092` | Kafka Broker 地址列表 |
+| `spring.kafka.consumer.group-id` | `default-group` | 消费者组 ID |
+| `spring.kafka.consumer.auto-offset-reset` | `latest` | Offset 重置策略：`latest`（只消费新消息）/ `earliest`（从头消费） |
 
 **环境变量覆盖：**
 
@@ -588,9 +588,9 @@ pip install kafka-python
 | 消费注解 | `@KafkaListener(topics=..., groupId=...)` | `@KafkaListener(topics=..., groupId=...)` |
 | 发送模板 | `KafkaTemplate.send(topic, data)` | `KafkaTemplate.send(topic, value=...)` |
 | 全局模板实例 | `@Autowired KafkaTemplate` | `from springbootai.annotations.messaging import kafka_template` |
-| 消费者组配置 | `springbootai.kafka.consumer.group-id` | `springbootai.kafka.consumer.group-id` |
-| Bootstrap 配置 | `springbootai.kafka.bootstrap-servers` | `springbootai.kafka.bootstrap-servers` |
-| Offset 重置 | `springbootai.kafka.consumer.auto-offset-reset` | `springbootai.kafka.consumer.auto-offset-reset` |
+| 消费者组配置 | `spring.kafka.consumer.group-id` | `spring.kafka.consumer.group-id` |
+| Bootstrap 配置 | `spring.kafka.bootstrap-servers` | `spring.kafka.bootstrap-servers` |
+| Offset 重置 | `spring.kafka.consumer.auto-offset-reset` | `spring.kafka.consumer.auto-offset-reset` |
 | 序列化 | 配置 `Producer/Deserializer` 类 | 框架内置 JSON 序列化 |
 | 消息确认 | `Acknowledgment` 对象手动确认 | `enable_auto_commit=True` 自动确认 |
 | 底层客户端 | `org.apache.kafka.clients` | `kafka-python` |

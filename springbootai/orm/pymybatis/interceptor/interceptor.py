@@ -391,7 +391,11 @@ class SecurityInterceptor(Interceptor):
     """
     安全拦截器
 
-    检查SQL执行的安全性，防止SQL注入等攻击
+    检查SQL结构策略，不扫描预编译参数值。
+
+    ``#{}`` 参数由数据库驱动绑定，即使消息正文包含 SQL 关键字也不会改变
+    SQL 结构。将这些值交给基于正则的 SQL 检测器会误报代码、日志和 AI
+    消息。``${}`` 原始片段由 ``DynamicSQLProcessor`` 单独执行白名单校验。
     """
 
     def intercept(self, invocation: Invocation) -> Any:
@@ -404,19 +408,20 @@ class SecurityInterceptor(Interceptor):
         Returns:
             拦截结果
         """
-        from ..security.sql_injection_detector import check_sql_injection
-
         args = invocation.get_args()
 
-        # 检查参数安全性
-        for arg in args:
-            if isinstance(arg, dict):
-                for key, value in arg.items():
-                    if not check_sql_injection(value):
-                        raise InterceptorSecurityError(f"SQL注入检测失败: {key}={value}")
-            elif isinstance(arg, str):
-                if not check_sql_injection(arg):
-                    raise InterceptorSecurityError(f"SQL注入检测失败: {arg}")
+        # Only the first argument represents a SQL template (or statement id).
+        # Remaining arguments are bound data and must never be interpreted as
+        # SQL text.  Keep the structural DDL policy in the interceptor; the
+        # SqlSession performs the same check after resolving mapped statements.
+        sql = args[0] if args and isinstance(args[0], str) else None
+        target = invocation.get_target()
+        detector = getattr(target, 'sql_injection_detector', None)
+        if detector is None:
+            from ..security.sql_injection_detector import DEFAULT_DETECTOR
+            detector = DEFAULT_DETECTOR
+        if sql is not None and detector.is_ddl_blocked(sql):
+            raise InterceptorSecurityError(f"DDL语句被阻止: {sql}")
 
         # 执行原方法
         return invocation.proceed()

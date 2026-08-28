@@ -134,15 +134,31 @@ class OAuth2ResourceServer:
         Args:
             config: 应用配置字典
         """
+        self._configured = False
         oauth2_config = config.get('spring', {}).get('security', {}).get('oauth2', {})
         jwt_config = oauth2_config.get('resourceserver', {}).get('jwt', {})
 
-        self._issuer = jwt_config.get('issuer-uri') or jwt_config.get('issuer')
-        self._audiences = jwt_config.get('audiences', [])
-        self._algorithms = jwt_config.get('algorithms', ["RS256", "HS256"])
-        self._secret_key = jwt_config.get('secret-key')
+        self._issuer = (
+            jwt_config.get('issuer-uri')
+            or jwt_config.get('issuer_uri')
+            or jwt_config.get('issuer')
+        )
+        audiences = jwt_config.get('audiences', [])
+        self._audiences = [audiences] if isinstance(audiences, str) else list(audiences)
+        algorithms = jwt_config.get('algorithms', ["RS256", "HS256"])
+        self._algorithms = [algorithms] if isinstance(algorithms, str) else list(algorithms)
+        self._algorithms = [str(value).upper() for value in self._algorithms]
+        if not self._algorithms or any(value == 'NONE' for value in self._algorithms):
+            raise ValueError("OAuth2 algorithms must contain signed JWT algorithms")
+        self._secret_key = jwt_config.get('secret-key') or jwt_config.get('secret_key')
+        self._jwks_cache = None
 
-        jwk_set_uri = jwt_config.get('jwk-set-uri')
+        jwk_set_uri = (
+            jwt_config.get('jwk-set-uri')
+            or jwt_config.get('jwk_set_uri')
+            or jwt_config.get('jwks-uri')
+            or jwt_config.get('jwks_uri')
+        )
         if jwk_set_uri:
             self._jwks_cache = JwksCache(jwk_set_uri)
             logger.info(f"OAuth2 Resource Server configured with JWKS: {jwk_set_uri}")
@@ -158,10 +174,24 @@ class OAuth2ResourceServer:
             else:
                 logger.warning(
                     "OAuth2 Resource Server not fully configured. "
-                    "Set springbootai.security.oauth2.resourceserver.jwt.jwk-set-uri or secret-key."
+                    "Set spring.security.oauth2.resourceserver.jwt.jwk-set-uri or secret-key."
                 )
 
         self._configured = True
+
+    @property
+    def is_configured(self) -> bool:
+        """是否已完成资源服务器配置。"""
+        return self._configured
+
+    def reset(self) -> None:
+        """清除上一个应用实例留下的资源服务器状态。"""
+        self._jwks_cache = None
+        self._secret_key = None
+        self._issuer = None
+        self._audiences = []
+        self._algorithms = ["RS256", "HS256"]
+        self._configured = False
 
     def validate_token(self, token: str) -> Dict[str, Any]:
         """验证 OAuth2 JWT Access Token。
@@ -289,7 +319,7 @@ class OAuth2ResourceServer:
                 from fastapi import HTTPException
                 raise HTTPException(
                     status_code=401,
-                    detail=str(e),
+                    detail="Invalid bearer token",
                     headers={"WWW-Authenticate": "Bearer error=\"invalid_token\""},
                 ) from e
 
@@ -350,5 +380,6 @@ def init_oauth2(config: dict) -> None:
     """
     oauth2_config = config.get('spring', {}).get('security', {}).get('oauth2', {})
     if not oauth2_config:
+        oauth2_resource_server.reset()
         return
     oauth2_resource_server.configure(config)

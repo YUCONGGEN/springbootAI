@@ -1,7 +1,7 @@
 # SpringBootAI LangChain 模块使用指南 —— 小白也能看懂
 
 > 把 [LangChain](https://github.com/langchain-ai/langchain) 全套能力（Chains / Agents / Memory / Retrievers / VectorStores / Parsers / Loaders）封装为 Spring 风格 Bean，配合 30+ 第三方模型提供商（OpenAI / Anthropic / Ollama / DeepSeek / ZhipuAI / Tongyi …）开箱即用。
-> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.3.9
+> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.3.10
 
 ---
 
@@ -145,7 +145,7 @@ export OPENAI_API_KEY=sk-你的真实key
 
 - ❌ 以为要自己 `import langchain.xxx` 再 `new` → ✅ 全部走 `@Autowired` 注入 `lc*Service` Bean
 - ❌ 直接在 Controller 里写 LangChain 代码 → ✅ Controller 只调 Service，Service 通过 `@Autowired` 拿 `lcChainService`
-- ❌ 30 个 partner 全装上拖慢启动 → ✅ 按需在 `application.yml` 的 `springbootai.langchain.partners` 下配置，未配置的不加载
+- ❌ 30 个 partner 全装上拖慢启动 → ✅ 按需在 `application.yml` 的 `spring.langchain.partners` 下配置，未配置的不加载
 - ❌ 以为 `lcLangChainModel` 是 springbootAI 模型 → ✅ 它是**langchain `BaseChatModel`**（由 `aiChatModel` 桥接而来）；要 springbootAI 模型请用 `aiChatModel`
 - ❌ RAG 流程忘记配嵌入模型 → ✅ `configure_ai` 默认会装 `aiEmbeddingModel`，缺失时 RAG 会告警但不崩溃
 
@@ -180,7 +180,7 @@ springbootai.langchain/
 
 设计原则（与 Spring AI 对齐）：
 
-- **配置即启用**：在 `application.yml` 写一段 `springbootai.langchain.partners.<name>` 即可启用一个厂商，零代码。
+- **配置即启用**：在 `application.yml` 写一段 `spring.langchain.partners.<name>` 即可启用一个厂商，零代码。
 - **懒加载**：所有 partner 包、外部向量库均按需 `importlib.import_module`，缺失时抛带 `pip install` 提示的 `ImportError`，不污染全局启动。
 - **双重注册**：每个 Bean 同时注册到 `BeanRegistry`（`registry.get(name)` 直取）和 `ApplicationContext.bean_factory`（`@Autowired` 按名称/类型注入），兼容两套用法。
 - **降级友好**：无 API Key 时 `aiChatModel` 自动降级 `FakeChatModel`，整个 LangChain 流程仍可演示；某 partner 嵌入不可用时只告警不阻塞聊天。
@@ -805,7 +805,7 @@ result = chain.invoke({"q": "你好"}, config={"callbacks": [cb]})
 
 ## 第6章：自动装配（configure_langchain）
 
-`configure_langchain()` 是模块入口，读取 `springbootai.langchain.*` 配置，构建并注册全部 `lc*` Bean：
+`configure_langchain()` 是模块入口，读取 `spring.langchain.*` 配置（兼容旧版 `springbootai.langchain.*`），构建并注册全部 `lc*` Bean：
 
 ```python
 from springbootai.context.registry import BeanRegistry
@@ -942,7 +942,7 @@ curl -X POST http://localhost:8081/api/lc/rag/query \
 | 定位 | Spring AI 2.0 对齐的统一抽象 | LangChain 生态的 Spring 封装 |
 | 模型来源 | 自己实现 Provider（OpenAI/Ollama/DeepSeek/Moonshot/Zhipu） | 复用 springbootai.ai 的 `aiChatModel`，桥接为 langchain `BaseChatModel` |
 | 核心抽象 | `ChatClient` / `Advisor` / `Tools` / RAG | `Chain` / `Agent` / `Memory` / `Retriever` |
-| 配置前缀 | `springbootai.ai.*` | `springbootai.langchain.*` |
+| 配置前缀 | `spring.ai.*` | `spring.langchain.*` |
 | 入口 | `configure_ai()` | `configure_langchain()` |
 | 装配顺序 | 先 | 后（依赖 `aiChatModel`） |
 
@@ -1021,7 +1021,7 @@ A：能。设置 `AI_ALLOW_FAKE=true`，`configure_ai` 会降级 `FakeChatModel`
 
 **Q2：怎么换 partner？**
 
-A：两种方式：① 改 `application.yml` 的 `springbootai.langchain.default-llm` 为 partner 名（如 `anthropic`），并在 `partners.anthropic` 下配 key/model；② 直接 `PartnerProviderFactory.create("anthropic", cfg)` 手动创建。
+A：两种方式：① 改 `application.yml` 的 `spring.langchain.default-llm` 为 partner 名（如 `anthropic`），并在 `partners.anthropic` 下配 key/model；② 直接 `PartnerProviderFactory.create("anthropic", cfg)` 手动创建。
 
 **Q3：某个 partner 的包没装会怎样？**
 

@@ -10,6 +10,8 @@
 [![Security](https://github.com/YUCONGGEN/springbootAI/actions/workflows/security.yml/badge.svg?branch=master)](https://github.com/YUCONGGEN/springbootAI/actions/workflows/security.yml)
 [![License](https://img.shields.io/pypi/l/springbootAI)](https://github.com/YUCONGGEN/springbootAI/blob/master/LICENSE)
 
+> 感谢阿里、华为、讯飞、心之声、字节、OpenAI、DeepSeek 等公司的支持。
+
 ## SpringBootAI 考试认证与证书
 
 SpringBootAI 已提供配套的在线考试认证平台，学习者、团队成员和项目使用方可以通过认证考试检验自己对框架核心能力的掌握情况，并在通过考试后获得对应证书。
@@ -54,7 +56,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.3.9`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 模式通过 ORM 拦截器自动生成 undo_log 实现自动回滚。
+当前版本是 `2.3.10`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 是无 TC 全局锁的单进程受限补偿模式，不应当作跨服务强一致方案。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -185,10 +187,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `springbootai` 框架 API | 2.3.9 |
-| `springbootai.orm.pymybatis` | 2.3.9 |
-| `springbootai.ai` AI 模块 | 2.3.9 |
-| `springbootai.langchain` LangChain 模块 | 2.3.9 |
+| `springbootai` 框架 API | 2.3.10 |
+| `springbootai.orm.pymybatis` | 2.3.10 |
+| `springbootai.ai` AI 模块 | 2.3.10 |
+| `springbootai.langchain` LangChain 模块 | 2.3.10 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景
@@ -204,7 +206,7 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 - `@Transactional` 支持七种 Spring 传播模式；`REQUIRES_NEW` 和 `NOT_SUPPORTED` 需要连接池有额外可用连接。
 - Profile 会筛选 `@Profile` Bean，并深度合并同目录的 `application-{profile}.yml`。
 - Nacos、RabbitMQ、Prometheus 依赖外部服务；Sentinel 限流熔断和 OpenTelemetry 追踪可内嵌运行。
-- HTTP 事务模式是持久化补偿协调器；`distributed` 模式提供真实 Seata TC + TCC 回调；`at` 模式通过 ORM 拦截器自动记录 undo_log 并在回滚时反向恢复数据。
+- HTTP 事务模式是持久化补偿协调器；`distributed` 模式提供真实 Seata TC + TCC 回调；`at` 模式通过 ORM 拦截器记录 undo_log，但仅提供单进程、单数据库的受限补偿。
 - 限流、分布式锁、幂等和缓存语义依赖 Redis 等后端；核心业务必须选择 fail-closed，不能依赖进程内降级继续提供分布式语义。
 
 ### 1.6 注解使用总览
@@ -239,7 +241,7 @@ SpringBootAI 注解会先把元数据放到 `__spring_annotations__`。之后是
 | Nacos 服务发现 | ✅ 可用 | 服务注册/发现/订阅 |
 | Sentinel 限流熔断 | ✅ 可用 | 内嵌引擎，QPS 限流、异常比例熔断、热点参数限流，无需 Dashboard |
 | 分布式追踪 | ✅ 可用 | 原生 OpenTelemetry(W3C traceparent)，自动 HTTP/Feign 注入 |
-| Seata 分布式事务 | ✅ 可用 | `distributed` 对接真实 Seata TC 执行 TCC 回调；`at` 模式通过 ORM 拦截器自动记录 undo_log 并反向恢复；`http` 提供持久化补偿 |
+| Seata 分布式事务 | ✅ 有条件可用 | `distributed` 对接真实 Seata TC 执行 TCC 回调；`at` 仅为无全局锁的单进程受限补偿；`http` 提供持久化补偿 |
 | API Gateway | ✅ 可用 | 轻量 ASGI/WSGI 网关，路由转发、路径重写、过滤器链、负载均衡 |
 | Prometheus 监控 | ✅ 可用 | Counter/Gauge/Histogram 指标暴露 |
 | Feign 声明式 HTTP | ✅ 可用 | 声明式接口、Fallback 降级、自动传播 XID 和 trace 头 |
@@ -743,7 +745,7 @@ class AppService:
         self.app_name = value
 
 @Component
-@ConfigurationProperties(prefix="springbootai.datasource")
+@ConfigurationProperties(prefix="database")
 class DataSourceProperties:
     def __init__(self):
         self.url = ""

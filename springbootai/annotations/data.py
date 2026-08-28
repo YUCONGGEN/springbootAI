@@ -21,7 +21,7 @@
 - Java 通过 @RepositoryRestResource 注解标记 Repository
 - Python 版本提供同名注解，配合 @EnableDataRest 使用
 """
-from typing import Optional, Type
+from typing import List, Optional, Type
 
 from .core import SpringAnnotation
 
@@ -37,6 +37,10 @@ class RepositoryRestResource(SpringAnnotation):
         entity_class: 实体类（必须指定，用于创建实例和文档）
         id_type: ID 字段类型（默认 int）
         exported: 是否暴露为 REST（默认 True，设为 False 可临时禁用）
+        secured: 是否要求 Bearer Token（默认 True）
+        required_scopes: OAuth2 scope 要求
+        read_fields: 响应字段白名单
+        write_fields: 请求字段白名单
 
     使用示例::
 
@@ -58,10 +62,18 @@ class RepositoryRestResource(SpringAnnotation):
         entity_class: Optional[Type] = None,
         id_type: type = int,
         exported: bool = True,
+        secured: bool = True,
+        required_scopes: Optional[List[str]] = None,
+        read_fields: Optional[List[str]] = None,
+        write_fields: Optional[List[str]] = None,
     ):
         super().__init__(
             path=path,
             entity_class=entity_class,
             id_type=id_type,
             exported=exported,
+            secured=secured,
+            required_scopes=list(required_scopes or []),
+            read_fields=list(read_fields) if read_fields else None,
+            write_fields=list(write_fields) if write_fields else None,
         )

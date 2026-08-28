@@ -1,6 +1,6 @@
 # SpringBootAI 并发与弹性模块指南
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.10
 
 ---
 

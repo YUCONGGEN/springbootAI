@@ -149,7 +149,7 @@ def _list_annotations() -> None:
         for ann in sorted(annotations_all):
             print(f"  @{ann}")
     except ImportError:
-        print("无法导入注解模块，请确认 spring 包已正确安装")
+        print("无法导入注解模块，请确认 springbootAI 包已正确安装")
 
 
 def _cmd_run(args: argparse.Namespace) -> None:

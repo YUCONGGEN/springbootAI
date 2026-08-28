@@ -104,29 +104,28 @@ class DynamicSQLProcessor:
         Returns:
             是否允许
         """
-        # 检查参数名白名单（优先级最高）
-        if param_name in self.raw_param_whitelist:
-            return True
-
-        # 如果未启用${}，直接拒绝
-        if not self.allow_raw_params:
+        # A name whitelist authorizes this placeholder, but never authorizes an
+        # arbitrary value.  Returning True for the name alone would turn
+        # ``${table}`` into an injection sink.
+        if not self.allow_raw_params and param_name not in self.raw_param_whitelist:
             return False
 
-        # 检查参数值模式
-        if isinstance(param_value, str):
-            for pattern in self.raw_param_allowed_patterns:
-                if pattern.match(param_value):
-                    return True
+        if not isinstance(param_value, str) or not param_value:
+            return False
+
+        # Raw substitutions are for identifiers/directions, never string
+        # literals or complete expressions.  Reject SQL control tokens even if
+        # a caller accidentally configures an overly broad custom regex.
+        if re.search(r"(?:;|--|/\*|\*/|['\"`]|\x00|[\r\n\t])", param_value):
+            return False
+
+        # ``fullmatch`` is important: ``match`` accepted a safe prefix followed
+        # by attacker-controlled SQL.
+        if self.raw_param_allowed_patterns:
+            return any(pattern.fullmatch(param_value) for pattern in self.raw_param_allowed_patterns)
 
         # 如果没有配置允许模式，只允许字母数字下划线的参数值（表名、字段名等）
-        if not self.raw_param_allowed_patterns:
-            if isinstance(param_value, str) and re.fullmatch(
-                r'[a-zA-Z_][a-zA-Z0-9_]*', param_value
-            ):
-                return True
-
-        # 不在白名单且不匹配任何允许模式，拒绝使用
-        return False
+        return re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_]*', param_value) is not None
 
     def _get_nested_value(self, params: Dict[str, Any], param_name: str) -> Any:
         """
@@ -259,7 +258,8 @@ class DynamicSQLProcessor:
         if not isinstance(value, str):
             value = str(value)
 
-        # 移除危险字符（保留单引号用于表名/字段名，由调用方负责安全）
+        # The value has already passed a full-match allowlist.  Keep a final
+        # defensive cleanup for callers invoking this helper directly.
         dangerous_chars = [';', '--', '/*', '*/', '\x00']
         for char in dangerous_chars:
             value = value.replace(char, '')

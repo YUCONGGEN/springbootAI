@@ -1,5 +1,7 @@
 # 企业级注解驱动模块
 
+> SpringBootAI 2.3.10
+>
 > 对齐 Java Spring Boot 的 `@EnableXxx` 系列注解，通过注解驱动方式启用企业级功能，替代繁琐的 YAML 配置。
 
 ## 概述
@@ -63,8 +65,11 @@ spring:
   security:
     oauth2:
       enabled: true
-      issuer: https://auth.example.com
-      algorithms: [RS256]
+      resourceserver:
+        jwt:
+          issuer-uri: https://auth.example.com
+          jwk-set-uri: https://auth.example.com/.well-known/jwks.json
+          algorithms: [RS256]
 ```
 
 ### 在路由中使用 OAuth2 保护
@@ -172,7 +177,7 @@ class Application:
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `uri` | `str` | `'http://localhost:8888'` | 配置中心地址 |
-| `profile` | `str` | `None` | 环境名（默认读取 `springbootai.profiles.active`） |
+| `profile` | `str` | `None` | 环境名（默认读取 `spring.profiles.active`） |
 | `label` | `str` | `'master'` | 分支/标签 |
 | `fail_fast` | `bool` | `False` | 拉取失败是否快速失败 |
 | `backend` | `str` | `'http'` | 后端类型（`'http'` 或 `'file'`） |
@@ -330,6 +335,10 @@ class UserRestController:
 | `entity_class` | `Type` | `None` | 实体类 |
 | `id_type` | `type` | `int` | ID 字段类型 |
 | `exported` | `bool` | `True` | 是否暴露为 REST |
+| `secured` | `bool` | `True` | 是否要求有效的 Bearer Token；仅明确的内部开发场景才应关闭 |
+| `required_scopes` | `list` | `[]` | Token 必须具备的 OAuth2 scope |
+| `read_fields` | `list` | `None` | 响应字段白名单；密钥、密码和 Token 类字段始终过滤 |
+| `write_fields` | `list` | `None` | 请求字段白名单；默认拒绝密钥和权限提升类字段 |
 
 ### 自动生成的端点
 
@@ -340,6 +349,10 @@ POST   /api/v1/users              创建
 PUT    /api/v1/users/{id}         更新
 DELETE /api/v1/users/{id}         删除
 ```
+
+这些自动端点默认要求 `Authorization: Bearer <token>`。如果 OAuth2 资源服务器已启用，
+使用其 issuer/audience/JWKS 规则校验；否则使用框架 JWT 配置。设置 `secured=False`
+会公开完整 CRUD 能力，生产环境不建议这样做。
 
 ---
 
@@ -472,10 +485,13 @@ class Application:
 spring:
   security:
     oauth2:
-      issuer: https://auth.example.com
-      audiences: [my-api]
-      algorithms: [RS256]
-      jwks_uri: https://auth.example.com/.well-known/jwks.json
+      enabled: true
+      resourceserver:
+        jwt:
+          issuer-uri: https://auth.example.com
+          audiences: [my-api]
+          algorithms: [RS256]
+          jwk-set-uri: https://auth.example.com/.well-known/jwks.json
 ```
 
 ---

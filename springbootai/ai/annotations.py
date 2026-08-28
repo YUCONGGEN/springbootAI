@@ -22,7 +22,7 @@ class AiClient(SpringAnnotation):
     框架启动时为该类注入对应的 ChatClient（按 provider 配置自动创建）。
 
     参数：
-        provider: 模型提供者，如 openai/ollama；为空时读取 springbootai.ai.default-provider
+        provider: 模型提供者，如 openai/ollama；为空时读取 spring.ai.default-provider
         model: 具体模型名覆盖（如 gpt-4o-mini / llama3）
     """
     _annotation_type = "ai"

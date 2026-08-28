@@ -1,6 +1,6 @@
 # 声明式 AOP、后置鉴权与重试恢复指南
 
-> SpringBootAI 2.3.4
+> SpringBootAI 2.3.10
 >
 > 适用范围：`@Aspect` 通知、`@PostAuthorize` 返回后鉴权、`@Recover` 重试失败兜底。
 
@@ -471,10 +471,10 @@ conda run -n py3.10 python -m pytest tests/test_declarative_aop_post_authorize_r
 
 新增 `args(...)`（参数类型）、`@within(...)`（类注解）、`@target(...)`（目标类注解）、`@args(...)`（参数注解）切点，以及 `@Order` 切面优先级排序。测试见 `tests/test_aop_pointcut_enhancements.py`。
 
-### AOP 异步切面未正确 await 返回值 — 中 ⏳ 待处理 (v2.3.0)
+### AOP 异步切面未正确 await 返回值 — 中 ✅ 已修复 (v2.3.10)
 
 **位置**：`springbootai/aop/aspect.py` 异步包装路径
 
 **现象**：异步函数上的 advice 包装未完全考虑 `await` 传播。若 `around` advice 返回 coroutine 但未被 await，会导致协程从未执行（静默跳过业务逻辑）。
 
-**改进方案**：统一使用 `async def` + `await` 调用 advice；增加 `inspect.iscoroutinefunction(target)` 检测，对同步/异步方法走不同包装路径；补充异步 `@Around`、`@AfterReturning` 测试。
+**修复方案**：异步目标统一使用 `async def` 包装，并对 advice 与目标返回值执行 `inspect.isawaitable()` 检查和 `await`；同步路径若意外返回 awaitable 会明确抛出 `TypeError`，避免协程静默丢失。

@@ -411,12 +411,12 @@ class ConfigLoader:
         self._normalize_section_mappings()
 
         # 1.5 加载 profile 特定配置文件并深度合并（application-{profile}.yml 覆盖主配置）
-        #     profile 来自主配置的 springbootai.profiles.active 或 SPRING_PROFILES_ACTIVE 环境变量。
+        #     profile 来自主配置的 spring.profiles.active 或 SPRING_PROFILES_ACTIVE 环境变量。
         #     在占位符解析之前合并，使 profile 文件中的占位符也能被解析。
         spring_config = self._mapping(self._config.get('spring'))
         profiles_config = self._mapping(spring_config.get('profiles'))
         profile = os.getenv('SPRING_PROFILES_ACTIVE') or profiles_config.get('active', 'default')
-        # 兼容 dict 格式的 profile.active（如 springbootai.profiles.active: {name: prod}）
+        # 兼容 dict 格式的 profile.active（如 spring.profiles.active: {name: prod}）
         if isinstance(profile, dict):
             profile = profile.get('name') or profile.get('active') or 'default'
         # Profile 文件必须在完整配置占位符解析前决定，但 active 本身也
@@ -1229,7 +1229,7 @@ class ConfigLoader:
                 spring_config = self._mapping(self._config.get('spring'))
                 profiles_config = self._mapping(spring_config.get('profiles'))
                 active = profiles_config.get('active') or 'default'
-        # 兼容 dict 格式（如 springbootai.profiles.active: {name: prod}）
+        # 兼容 dict 格式（如 spring.profiles.active: {name: prod}）
         if isinstance(active, dict):
             active = active.get('name') or active.get('active') or 'default'
         return str(active)

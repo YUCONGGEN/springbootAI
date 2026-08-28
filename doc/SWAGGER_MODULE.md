@@ -1,6 +1,6 @@
 # SpringBootAI Swagger / OpenAPI 模块使用文档
 
-> SpringBootAI 2.3.2
+> SpringBootAI 2.3.10
 
 ---
 
@@ -245,7 +245,7 @@ spring:
 ### Q1: 打开 /docs 是空白页？
 
 **检查清单：**
-- `application.yml` 中 `springbootai.swagger.enabled` 是否为 `true`？
+- `application.yml` 中 `spring.swagger.enabled` 是否为 `true`？
 - Controller 类有没有加 `@RestController`？
 - 方法有没有加 `@GetMapping` / `@PostMapping` 等路由注解？
 

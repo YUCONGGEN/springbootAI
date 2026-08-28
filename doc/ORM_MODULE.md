@@ -1,6 +1,6 @@
 # SpringBootAI 数据库操作（ORM）—— 使用指南
 
-> 框架版本：SpringBootAI 2.3.2 / 内嵌 PyMyBatis 2.3.2
+> 框架版本：SpringBootAI 2.3.10 / 内嵌 PyMyBatis 2.3.10
 
 ---
 
@@ -466,6 +466,12 @@ def find(self, table: str, id: int):
     pass
 # ${...} 默认被拦截，只有配置 allow_raw_params: true 且通过白名单才能用
 ```
+
+**AI 代理、聊天记录、日志和代码片段的特别说明**：消息正文可能正常包含
+`UNION SELECT`、`DROP TABLE`、引号或 SQL 注入攻击样例。只要正文使用
+`#{message}` 绑定，它始终是数据，框架不会按 SQL 文本扫描，也不会改变查询
+结构；不要为了绕过误报关闭安全配置。只有把消息写进 `${message}` 或用
+f-string/字符串拼接生成 SQL 才是真正的注入风险。
 
 ### ③ 一句话记住
 

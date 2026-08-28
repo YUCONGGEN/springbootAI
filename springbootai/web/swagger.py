@@ -11,7 +11,7 @@
   供 ``WebApplicationContext._add_route`` 传递给 FastAPI 路由参数。
 - ``configure_swagger`` 自定义 ``app.openapi()``，注入全局 ``securitySchemes`` 与
   ``@Schema`` 模型描述（``title``/``description``/``example``）。
-- 配置由 ``application.yml`` 的 ``springbootai.swagger.*`` 驱动，对齐 Spring Boot
+- 配置由 ``application.yml`` 的 ``spring.swagger.*`` 驱动，对齐 Spring Boot
   ``springdoc.api-docs.*`` / ``springdoc.swagger-ui.*``。
 
 与 Java Spring 的差异：
@@ -260,8 +260,8 @@ class SecurityRequirement(SpringAnnotation):
 class SwaggerConfig:
     """Swagger/OpenAPI 配置，对齐 ``springdoc.*`` 配置项。
 
-    从 ``application.yml`` 的 ``springbootai.swagger.*``（或 ``springdoc.*``）读取：
-    ``springbootai.swagger.title`` / ``description`` / ``version`` / ``enabled`` /
+    从 ``application.yml`` 的 ``spring.swagger.*``（或 ``springdoc.*``）读取：
+    ``spring.swagger.title`` / ``description`` / ``version`` / ``enabled`` /
     ``docs-url`` / ``redoc-url`` / ``openapi-url`` / ``contact.name`` ...
     """
 
@@ -281,7 +281,7 @@ class SwaggerConfig:
 
     @classmethod
     def from_config(cls, config: Any) -> "SwaggerConfig":
-        """从配置字典构建。读取 ``springbootai.swagger.*`` 或 ``springdoc.*``。"""
+        """从配置字典构建。读取 ``spring.swagger.*`` 或 ``springdoc.*``。"""
         if not isinstance(config, dict):
             return cls()
         spring = config.get("spring", {}) if isinstance(config.get("spring"), dict) else {}
@@ -356,7 +356,7 @@ class SwaggerConfig:
             enabled=api_docs_enabled,
             title=_opt("title", "SpringBootAI Application"),
             description=_opt("description", ""),
-            version=_opt("version", "2.3.9"),
+            version=_opt("version", "2.3.10"),
             terms_of_service=_opt("terms-of-service", ""),
             contact_name=_opt("contact-name", "") or (contact.get("name", "") if isinstance(contact, dict) else ""),
             contact_email=_opt("contact-email", "") or (contact.get("email", "") if isinstance(contact, dict) else ""),

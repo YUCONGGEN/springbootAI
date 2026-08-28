@@ -6,7 +6,7 @@ JWT 工具类
 - ``configure()`` / ``init_jwt()`` 未显式提供 ``secret_key`` 时，不再使用硬编码默认值，
   而是生成进程级随机密钥（每次重启变化），并打印醒目警告。
   这样即使开发环境误暴露到公网，攻击者也无法用已知密钥伪造 token。
-  生产环境应通过配置文件 ``springbootai.security.jwt.secret-key`` 显式注入稳定密钥。
+  生产环境应通过配置文件顶层 ``jwt.secret_key`` 显式注入稳定密钥。
 """
 import jwt
 import logging
@@ -48,7 +48,7 @@ def _warn_insecure_key(reason: str) -> None:
     """打印醒目的安全警告，提醒当前密钥不安全。"""
     _logger.warning(
         "[JWT 安全警告] %s。当前使用进程级随机密钥，重启后所有 token 将失效。"
-        "生产环境请通过配置项 springbootai.security.jwt.secret-key 显式注入稳定密钥（长度 >= 32）。",
+        "生产环境请通过配置项 jwt.secret_key 显式注入稳定密钥（长度 >= 32）。",
         reason,
     )
 
