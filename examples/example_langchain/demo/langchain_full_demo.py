@@ -1,5 +1,5 @@
 """
-LangChain 模块完整能力演示 - 一键跑通 12 个能力子模块。
+LangChain 模块完整能力演示 - 一键跑通 15 个能力子模块。
 
 本脚本是「小白教学版」demo：不依赖 Spring 容器 / HTTP 服务 / 真实 API Key，
 直接用 FakeChatModel + FakeEmbeddingModel 演示 springbootai.langchain 全部能力的用法。
@@ -36,6 +36,21 @@ import os
 import sys
 import warnings
 from pathlib import Path
+
+
+def _configure_utf8_output():
+    """Keep the Unicode-heavy demo usable in redirected Windows consoles."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
+_configure_utf8_output()
 
 # 屏蔽 langchain classic 弃用告警（迁移目的即兼容旧 API，告警无意义）
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -438,18 +453,19 @@ def demo_loaders(tmp_path):
     """
     banner("11. DocumentLoader - Text/CSV/JSON")
     loader = DocumentLoaderRegistry()
+    allowed_roots = [str(tmp_path)]
 
     # 11.1 Text 加载
     txt_file = tmp_path / "demo.txt"
     txt_file.write_text("Hello LangChain\n第二行内容", encoding="utf-8")
-    docs = loader.load_text(str(txt_file))
+    docs = loader.load_text(str(txt_file), allowed_roots=allowed_roots)
     print(f"  [Text] 加载 {len(docs)} 个文档, 内容: {docs[0].page_content[:30]}")
 
     # 11.2 CSV 加载
     csv_file = tmp_path / "demo.csv"
     csv_file.write_text("name,age\n张三,20\n李四,25", encoding="utf-8")
     try:
-        csv_docs = loader.load_csv(str(csv_file))
+        csv_docs = loader.load_csv(str(csv_file), allowed_roots=allowed_roots)
         print(f"  [CSV] 加载 {len(csv_docs)} 行")
     except Exception as exc:
         print(f"  [CSV] 失败（缺依赖？）: {type(exc).__name__}")
@@ -459,7 +475,10 @@ def demo_loaders(tmp_path):
     json_file.write_text('[{"text": "条目1"}, {"text": "条目2"}]', encoding="utf-8")
     try:
         # jq_schema='.text' 表示从每个对象取 text 字段
-        json_docs = loader.load("json", str(json_file), jq_schema=".text")
+        json_docs = loader.load(
+            "json", str(json_file), jq_schema=".text",
+            allowed_roots=allowed_roots,
+        )
         print(f"  [JSON] 加载 {len(json_docs)} 个文档, 首条: {json_docs[0].page_content}")
     except (ImportError, Exception) as exc:
         print(f"  [JSON] 失败（缺 jq 依赖或 schema）: {type(exc).__name__}")
@@ -569,24 +588,25 @@ def main():
     print("=" * 70)
 
     import tempfile
-    tmp_path = Path(tempfile.mkdtemp())
+    with tempfile.TemporaryDirectory(prefix="springbootai-langchain-demo-") as temp_dir:
+        tmp_path = Path(temp_dir)
 
-    # 依次运行 15 个章节
-    demo_adapters()
-    demo_prompts()
-    demo_chains()
-    demo_agents()
-    demo_memory()
-    demo_parsers()
-    demo_vectorstores()
-    demo_retrievers()
-    demo_index_service()
-    demo_tools()
-    demo_loaders(tmp_path)
-    demo_utilities()
-    demo_callbacks(tmp_path)
-    demo_safe_eval()
-    demo_partners()
+        # 依次运行 15 个章节
+        demo_adapters()
+        demo_prompts()
+        demo_chains()
+        demo_agents()
+        demo_memory()
+        demo_parsers()
+        demo_vectorstores()
+        demo_retrievers()
+        demo_index_service()
+        demo_tools()
+        demo_loaders(tmp_path)
+        demo_utilities()
+        demo_callbacks(tmp_path)
+        demo_safe_eval()
+        demo_partners()
 
     print("\n" + "=" * 70)
     print("  ✅ 全部 15 个章节演示完成！".center(60))
