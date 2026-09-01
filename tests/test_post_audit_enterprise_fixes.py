@@ -413,3 +413,13 @@ def test_publish_workflow_requires_ci_and_matches_coverage_gate():
     assert "workflow_id: 'ci.yml'" in workflow
     assert "--cov-fail-under=68" in workflow
     assert "springbootai/py.typed" in workflow
+
+
+def test_ci_defers_coverage_gate_until_all_test_slices_finish():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8")
+
+    assert "--cov-append --cov-report=term --cov-fail-under=0" in workflow
+    assert "--cov-append --cov-report=xml --cov-report=term" in workflow
+    assert "--cov-fail-under=68" in workflow

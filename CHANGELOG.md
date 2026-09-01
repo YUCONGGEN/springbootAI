@@ -7,6 +7,7 @@
 - 修复 Spring Cloud Bus RabbitMQ API 调用错误和缺失消费者，增加 Broker 确认、广播消费者、去重、消息大小限制及明确的失败状态。
 - 加固 MCP/AI 工具边界：限制 HTTP 响应、队列、集合和 Schema 深度，拒绝压缩炸弹及高风险正则表达式。
 - 修复 Prometheus Summary 创建失败、Tracer 已结束 Span 无界增长以及 Actuator/启动日志暴露原始异常的问题。
+- 修复 CI 在 AI 测试切片后提前执行总覆盖率门槛的问题，覆盖率阈值现在只在全部测试切片完成后统一校验。
 
 ## [2.3.10] - 2026-08-29
 
