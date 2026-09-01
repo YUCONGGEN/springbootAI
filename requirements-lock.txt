@@ -205,7 +205,7 @@ requests==2.34.2
     # via
     #   -r requirements.txt
     #   alibabacloud-tea
-sqlalchemy==2.0.40
+sqlalchemy==2.0.52
     # via -r requirements.txt
 sqlglot==27.28.1
     # via -r requirements.txt

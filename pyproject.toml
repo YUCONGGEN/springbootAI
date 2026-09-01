@@ -60,7 +60,7 @@ dependencies = [
 # ========================================
 mysql = ["PyMySQL==1.2.0"]
 postgresql = ["psycopg2-binary==2.9.12"]
-sqlalchemy = ["sqlalchemy==2.0.40"]
+sqlalchemy = ["sqlalchemy==2.0.52"]
 
 # ========================================
 # Redis——类似 Spring Boot Starter Data Redis
@@ -211,7 +211,7 @@ full = [
     # 数据库驱动
     "PyMySQL==1.2.0",
     "psycopg2-binary==2.9.12",
-    "sqlalchemy==2.0.40",
+    "sqlalchemy==2.0.52",
     # 缓存 / 消息 / 服务发现
     "redis==8.1.0",
     "pika==1.4.4",
