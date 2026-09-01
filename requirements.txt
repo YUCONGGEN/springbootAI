@@ -25,7 +25,7 @@ PyMySQL==1.2.0
 DBUtils==3.1.2
 
 # SQL AST解析（SQL注入检测）
-sqlglot==27.28.1
+sqlglot==30.17.0
 defusedxml==0.7.1
 
 # 认证授权
