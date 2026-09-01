@@ -76,21 +76,14 @@ class TestCronParsing:
         assert delay > 0
 
     def test_matches_weekday(self):
-        """_matches_weekday matching follows the implementation's direct value comparison.
-
-        The method treats the numeric cron weekday value literally against the
-        supplied integer value (the code performs ``value == day`` with a
-        special case that maps cron ``7`` -> ``0``). Wildcards always match.
-        """
+        """Cron Sunday=0/7 is converted from datetime Monday=0 semantics."""
         sched = Scheduler()
         assert sched._matches_weekday(0, "*") is True
         assert sched._matches_weekday(0, "?") is True
-        # Direct equality: cron "3" matches integer value 3
-        assert sched._matches_weekday(3, "3") is True
-        assert sched._matches_weekday(3, "4") is False
-        # Cron "7" is normalized to 0
-        assert sched._matches_weekday(0, "7") is True
-        assert sched._matches_weekday(0, "0") is True
+        assert sched._matches_weekday(0, "1") is True  # Monday
+        assert sched._matches_weekday(0, "0") is False
+        assert sched._matches_weekday(6, "7") is True  # Sunday
+        assert sched._matches_weekday(6, "0") is True
 
 
 class TestFixedRateScheduling:
@@ -249,3 +242,23 @@ class TestNoScheduleType:
         sched.schedule("no-type", lambda: None)
         time.sleep(0.1)
         assert "no-type" not in sched._tasks
+
+
+def test_scheduler_rejects_invalid_cron_before_starting_worker():
+    sched = Scheduler()
+    with pytest.raises(ValueError, match="cron expression is invalid"):
+        sched.schedule("invalid", lambda: None, cron="*/0 * * * * *")
+    assert sched._worker_thread is None
+    assert sched._tasks == {}
+
+
+def test_scheduler_owned_worker_stops_after_last_task():
+    sched = Scheduler()
+    ran = threading.Event()
+    sched.schedule("once", ran.set, fixed_delay=10000)
+    assert ran.wait(timeout=2)
+    worker = sched._worker_thread
+    assert worker is not None and worker.is_alive()
+    sched.stop("once")
+    assert not worker.is_alive()
+    assert sched._worker_thread is None

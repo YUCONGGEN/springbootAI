@@ -182,7 +182,9 @@ class PartnerProviderFactory:
                 spring_emb = LangChainEmbeddingToSpring(lc_emb)
             except (ImportError, Exception) as exc:
                 # 嵌入可选 - 缺失不阻塞聊天模型
-                logger.debug("partner %s 嵌入不可用: %s", name, exc)
+                logger.debug(
+                    "partner %s 嵌入不可用 error_type=%s",
+                    name, type(exc).__name__)
                 spring_emb = None
 
         logger.info("Partner '%s' 已实例化: chat=%s, embedding=%s",

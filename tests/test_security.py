@@ -697,14 +697,15 @@ class TestReplayHeaders:
         assert 'signature' in reason.lower()
 
     def test_unsigned_request_without_signature_header(self):
-        """测试不带签名头的请求（签名可选时）仅做nonce和timestamp校验"""
+        """默认安全配置必须拒绝不带签名头的请求。"""
         headers = {
             'X-Timestamp': str(int(time.time())),
             'X-Nonce': os.urandom(16).hex(),
         }
 
         valid, reason = self.protector.validate_headers(headers, body='any')
-        assert valid is True, "不提供签名时仅做nonce+timestamp校验应通过"
+        assert valid is False
+        assert 'signature' in reason.lower()
 
     def test_old_timestamp_headers_rejected(self):
         """测试带有过期时间戳的头被拒绝"""

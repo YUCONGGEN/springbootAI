@@ -69,7 +69,9 @@ def _register_bean(registry: BeanRegistry, name: str, bean: Any) -> None:
             bf.register_bean_definition(name, definition)
             bf.register_instance(name, bean)
         except Exception as exc:
-            logger.debug("Bean %s 同步到 BeanFactory 失败: %s", name, exc)
+            logger.debug(
+                "Bean %s 同步到 BeanFactory 失败 error_type=%s",
+                name, type(exc).__name__)
 
 
 # ==================== 类型化配置 dataclass ====================
@@ -266,7 +268,9 @@ def _read_langchain_config(config: Any) -> Dict[str, Any]:
             if found:
                 return extracted or {}
     except Exception as exc:
-        logger.debug("读取 LangChain 配置失败，使用默认值: %s", exc)
+        logger.debug(
+            "读取 LangChain 配置失败，使用默认值 error_type=%s",
+            type(exc).__name__)
     return {}
 
 
@@ -338,8 +342,10 @@ def _register_partners(props: LangChainProperties, registry: BeanRegistry,
                 _register_bean(registry, f"lcPartnerEmbeddingModel_{name}", emb)
                 beans[f"lcPartnerEmbeddingModel_{name}"] = emb
             logger.info("Partner '%s' 已注册为 Bean", name)
-        except (ImportError, Exception) as exc:
-            logger.warning("Partner '%s' 注册失败（跳过）: %s", name, exc)
+        except Exception as exc:
+            logger.warning(
+                "Partner '%s' 注册失败（跳过） error_type=%s",
+                name, type(exc).__name__)
 
 
 def configure_langchain(registry: Optional[BeanRegistry] = None,

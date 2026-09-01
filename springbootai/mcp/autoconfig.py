@@ -41,7 +41,9 @@ def _register(registry: BeanRegistry, name: str, bean: Any) -> None:
             )
             factory.register_instance(name, bean)
     except Exception as exc:
-        logger.debug("MCP bean factory synchronization skipped: %s", exc)
+        logger.debug(
+            "MCP bean factory synchronization skipped error_type=%s",
+            type(exc).__name__)
 
 
 def configure_mcp(

@@ -30,11 +30,11 @@ from .transaction import Transaction, TransactionIsolationLevel
 from .pool import ConnectionPool
 from .cache import SqlCache, LRUCache, GLOBAL_SECOND_LEVEL_CACHE
 from .dialect import Dialect, MySQLDialect, PostgreSQLDialect, SQLiteDialect, OracleDialect
-from .security import SensitiveDataMasker, SQLInjectionDetector
+from .security import AccessCondition, SensitiveDataMasker, SQLInjectionDetector
 from .interceptor import Interceptor
 from .type_handler import TypeHandler
 
-__version__ = "2.3.10"
+__version__ = "2.3.11"
 __author__ = "PyMyBatis Team"
 
 # 基础导出列表
@@ -47,7 +47,8 @@ __all__ = [
     'Transaction', 'TransactionIsolationLevel', 'ConnectionPool',
     'SqlCache', 'LRUCache', 'GLOBAL_SECOND_LEVEL_CACHE', 'Dialect',
     'MySQLDialect', 'PostgreSQLDialect', 'SQLiteDialect', 'OracleDialect',
-    'SensitiveDataMasker', 'SQLInjectionDetector', 'Interceptor', 'TypeHandler',
+    'AccessCondition', 'SensitiveDataMasker', 'SQLInjectionDetector',
+    'Interceptor', 'TypeHandler',
     'build_session_factory',
 ]
 

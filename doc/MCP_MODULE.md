@@ -157,7 +157,15 @@ spring:
         allow-dangerous-tools: false
         max-argument-bytes: 65536
         max-result-chars: 100000
+        max-response-bytes: 1048576
+        max-collection-items: 256
+        max-schema-depth: 16
+        max-pending-requests: 128
 ```
+
+HTTP 客户端请求 `identity` 编码并在读取过程中执行响应字节上限；压缩响应会被拒绝，
+避免解压炸弹。工具/资源/Prompt 列表同时限制条目数，远程工具 Schema 限制嵌套深度，
+请求队列满时在配置超时内失败，不会无界堆积。
 
 应用启动装配阶段调用：
 
@@ -214,10 +222,13 @@ props = MCPClientProperties(
     command=sys.executable,
     args=("-m", "example_mcp.stdio_server"),
     allowed_tools=("multiply",),
+    # 仅显式传入该工具确实需要的变量；默认不继承宿主全部环境。
+    env={"TOOL_MODE": "production"},
 )
 ```
 
 stdio 服务端不能向标准输出打印日志，因为标准输出属于 MCP 协议通道。日志必须写标准错误或文件。仓库测试会真的启动这个子进程并调用 `multiply`，不是同进程模拟。
+`inherit_environment` 默认为 `False`，防止宿主数据库密码、云凭据和 AI Key 被第三方工具进程读取。只有完全可信且确实依赖宿主环境的旧工具才能显式设为 `True`；生产环境优先使用 `env` 最小白名单。
 
 ## 8. 挂载到现有 FastAPI 应用
 
@@ -247,6 +258,7 @@ app.mount("/", server.streamable_http_app())
 3. `allowed_tools` 使用最小白名单，不在生产使用 `*`。
 4. 把查询工具与写入工具分开部署；危险工具保留人工确认、幂等键和审计日志。
 5. 不把 API Key 写入源码。HTTP Header 和 stdio 环境变量应来自密钥管理系统。
+   stdio 默认隔离宿主环境，使用 `env` 逐项传递；不要为了兼容直接开启全环境继承。
 6. 注解直连和 AI 工具桥接都执行工具白名单、危险标记、参数大小、结果大小和超时限制；服务端还按 JSON Schema 校验输入。
 7. MCP Server 是能力入口，不是权限系统。工具内部仍要校验用户、租户和资源归属。
 8. `allowed_hosts`、`allowed_origins` 和请求体上限不要为了“先跑通”而全部放开。

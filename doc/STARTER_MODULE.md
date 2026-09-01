@@ -1,6 +1,6 @@
 # SpringBootAI Starter 机制 —— 依赖管理指南
 
-> SpringBootAI 2.3.10
+> SpringBootAI 2.3.11
 > 配置位置：`pyproject.toml` 的 `[project.optional-dependencies]` 段
 > 对齐 Java：Spring Boot Starter（`spring-boot-starter-*`）
 
@@ -409,12 +409,12 @@ pip install "springbootAI[web,mysql,dev]"
 
 ```
 # requirements.txt
-springbootAI[web,mysql]==2.3.10
+springbootAI[web,mysql]==2.3.11
 ```
 
 ```
 # 或者用组合 Starter
-springbootAI[cloud]==2.3.10
+springbootAI[cloud]==2.3.11
 ```
 
 ### 示例 8：在 pyproject.toml 中使用（自己的项目）
@@ -425,7 +425,7 @@ springbootAI[cloud]==2.3.10
 name = "my-app"
 version = "1.0.0"
 dependencies = [
-    "springbootAI[web,mysql]==2.3.10",
+    "springbootAI[web,mysql]==2.3.11",
 ]
 ```
 
@@ -476,7 +476,7 @@ pip install "springbootAI[web]"
 # 或在 pyproject.toml
 [project]
 dependencies = [
-    "springbootAI[web]==2.3.10",
+    "springbootAI[web]==2.3.11",
 ]
 ```
 
@@ -530,23 +530,23 @@ pip install "springbootAI[all]"
 pip install "springbootAI[web]"
 
 # ✅ 安全：锁定版本
-pip install "springbootAI[web]==2.3.10"
+pip install "springbootAI[web]==2.3.11"
 ```
 
 ```
 # requirements.txt
-springbootAI[web,mysql]==2.3.10
+springbootAI[web,mysql]==2.3.11
 ```
 
 ### 3. 开发/生产环境分开
 
 ```
 # requirements.txt（生产）
-springbootAI[web,mysql]==2.3.10
+springbootAI[web,mysql]==2.3.11
 
 # requirements-dev.txt（开发，额外加测试工具）
 -r requirements.txt
-springbootAI[dev]==2.3.10
+springbootAI[dev]==2.3.11
 ```
 
 ```bash
@@ -649,7 +649,7 @@ A: 不需要。`web` Starter 已经包含 `fastapi==0.141.1`，直接 `pip insta
 **Q4: Starter 里的版本号能改吗？**
 
 A: 可以，但不推荐。Starter 内的版本号经过测试验证，改了可能不兼容。如果必须改（比如安全漏洞），建议：
-1. 在 `requirements.txt` 中固定框架和覆盖依赖：`springbootAI[web]==2.3.10` + `fastapi==0.141.1`
+1. 在 `requirements.txt` 中固定框架和覆盖依赖：`springbootAI[web]==2.3.11` + `fastapi==0.141.1`
 2. 充分测试后部署
 
 **Q5: `web` Starter 里的 FastAPI 与核心依赖版本一致吗？**

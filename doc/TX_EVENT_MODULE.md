@@ -1,6 +1,6 @@
 # 事务事件 —— 操作完成后自动发通知
 
-> SpringBootAI 2.3.10
+> SpringBootAI 2.3.11
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---

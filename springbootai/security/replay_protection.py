@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import logging
 import threading
+import re
 from typing import Optional, Dict, Tuple
 from collections import OrderedDict
 
@@ -24,6 +25,13 @@ DEFAULT_TIMESTAMP_WINDOW = 300
 DEFAULT_NONCE_CACHE_SIZE = 100000
 # Nonce过期清理间隔（秒）
 NONCE_CLEANUP_INTERVAL = 60
+MIN_SECRET_BYTES = 32
+MAX_NONCE_LENGTH = 256
+DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+
+
+class ReplayProtectionUnavailable(RuntimeError):
+    """The shared replay store is unavailable, so validation cannot be safe."""
 
 
 class NonceCache:
@@ -48,16 +56,16 @@ class NonceCache:
     def _cleanup_expired(self):
         """清理过期的nonce"""
         now = time.time()
-        if time.monotonic() - self._last_cleanup < NONCE_CLEANUP_INTERVAL:
-            # 即使到了清理间隔，也只清理部分避免阻塞
-            expired_keys = []
-            for k, ts in list(self._cache.items()):
-                if now - ts > self._ttl:
-                    expired_keys.append(k)
-                else:
-                    break  # OrderedDict按插入顺序，前面过期后面也应该过期
-            for k in expired_keys:
-                self._cache.pop(k, None)
+        # OrderedDict is oldest-first, so this stops at the first live item and
+        # also permits a nonce to be reused immediately after its configured TTL.
+        expired_keys = []
+        for k, ts in self._cache.items():
+            if now - ts > self._ttl:
+                expired_keys.append(k)
+            else:
+                break  # OrderedDict按插入顺序，前面过期后面也应该过期
+        for k in expired_keys:
+            self._cache.pop(k, None)
         self._last_cleanup = time.monotonic()
 
     def check_and_add(self, nonce: str) -> bool:
@@ -97,9 +105,12 @@ class RedisNonceCache:
         try:
             # SET NX: 仅在key不存在时设置，成功返回True（nonce有效）
             return bool(self._redis.set(key, '1', ex=self._ttl, nx=True))
-        except Exception as e:
-            logger.warning(f"Redis nonce check failed, falling back to allow: {e}")
-            return True  # Redis故障时降级为允许（由timestamp校验兜底）
+        except Exception as exc:
+            logger.error(
+                "Redis nonce check failed; rejecting request (%s)",
+                type(exc).__name__,
+            )
+            raise ReplayProtectionUnavailable("distributed nonce store unavailable") from exc
 
 
 class ReplayProtection:
@@ -119,10 +130,28 @@ class ReplayProtection:
     def __init__(self, secret_key: str,
                  timestamp_window: int = DEFAULT_TIMESTAMP_WINDOW,
                  nonce_cache=None,
-                 redis_client=None):
+                 redis_client=None,
+                 require_signature: bool = True,
+                 max_nonce_length: int = MAX_NONCE_LENGTH,
+                 max_body_bytes: int = DEFAULT_MAX_BODY_BYTES):
         if not isinstance(secret_key, str) or not secret_key:
             raise ValueError("secret_key must be a non-empty string")
         self.secret_key = secret_key.encode('utf-8')
+        if len(self.secret_key) < MIN_SECRET_BYTES:
+            raise ValueError(
+                f"secret_key must contain at least {MIN_SECRET_BYTES} UTF-8 bytes"
+            )
+        self.require_signature = bool(require_signature)
+        try:
+            self.max_nonce_length = min(MAX_NONCE_LENGTH, max(8, int(max_nonce_length)))
+        except (TypeError, ValueError):
+            self.max_nonce_length = MAX_NONCE_LENGTH
+        try:
+            self.max_body_bytes = min(
+                100 * 1024 * 1024, max(1, int(max_body_bytes))
+            )
+        except (TypeError, ValueError):
+            self.max_body_bytes = DEFAULT_MAX_BODY_BYTES
         try:
             self.timestamp_window = max(1, int(timestamp_window))
         except (TypeError, ValueError):
@@ -142,7 +171,10 @@ class ReplayProtection:
 
         签名字符串: METHOD\nPATH\nTIMESTAMP\nNONCE\nBODY_SHA256
         """
-        body_hash = hashlib.sha256(body.encode('utf-8') if isinstance(body, str) else body).hexdigest()
+        if not isinstance(body, (str, bytes, bytearray)):
+            raise TypeError("body must be str or bytes")
+        body_bytes = body.encode('utf-8') if isinstance(body, str) else bytes(body)
+        body_hash = hashlib.sha256(body_bytes).hexdigest()
         message = f"{method.upper()}\n{path}\n{timestamp}\n{nonce}\n{body_hash}"
         return hmac.new(self.secret_key, message.encode('utf-8'), hashlib.sha256).hexdigest()
 
@@ -155,7 +187,7 @@ class ReplayProtection:
         Args:
             timestamp: 请求时间戳（毫秒或秒，自动检测）
             nonce: 唯一请求标识
-            signature: 请求签名（可选）
+            signature: 请求签名（默认必需；require_signature=False 时可选）
             body: 请求体（用于签名验证）
             method: HTTP方法
             path: 请求路径
@@ -164,6 +196,8 @@ class ReplayProtection:
             (is_valid, reason)
         """
         # 1. 验证时间戳
+        if not isinstance(timestamp, str) or len(timestamp) > 20:
+            return False, "Invalid timestamp format"
         try:
             ts = int(timestamp)
             # 自动检测毫秒/秒
@@ -176,18 +210,52 @@ class ReplayProtection:
             return False, "Invalid timestamp format"
 
         # 2. 验证Nonce
-        if not isinstance(nonce, str) or len(nonce) < 8:
-            return False, "Invalid or missing nonce (minimum 8 characters)"
+        if (
+            not isinstance(nonce, str)
+            or not 8 <= len(nonce) <= self.max_nonce_length
+            or not re.fullmatch(r"[A-Za-z0-9._~-]+", nonce)
+        ):
+            return False, (
+                f"Invalid or missing nonce (8-{self.max_nonce_length} URL-safe characters)"
+            )
 
-        if not self.nonce_cache.check_and_add(nonce):
-            logger.warning(f"Replay attack detected: duplicate nonce {nonce[:8]}***")
-            return False, "Duplicate nonce detected (possible replay attack)"
+        if not isinstance(method, str) or len(method) > 32 or "\n" in method or "\r" in method:
+            return False, "Invalid HTTP method"
+        if not isinstance(path, str) or len(path.encode("utf-8")) > 8192 or "\n" in path or "\r" in path:
+            return False, "Invalid request path"
+        if not isinstance(body, (str, bytes, bytearray)):
+            return False, "Invalid request body type"
+        body_bytes = body.encode("utf-8") if isinstance(body, str) else bytes(body)
+        if len(body_bytes) > self.max_body_bytes:
+            return False, "Request body exceeds replay protection limit"
 
-        # 3. 验证签名（如果提供）
-        if signature:
-            expected_sig = self.generate_signature(str(timestamp), nonce, body, method, path)
-            if not hmac.compare_digest(expected_sig, signature):
+        # Verify authentication before consuming the nonce. Otherwise an
+        # attacker can burn a victim's nonce using a deliberately bad signature.
+        if not signature:
+            if self.require_signature:
+                return False, "Missing signature"
+        else:
+            if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", signature):
+                return False, "Invalid signature format"
+            expected_sig = self.generate_signature(
+                timestamp, nonce, body_bytes, method, path
+            )
+            if not hmac.compare_digest(expected_sig, signature.lower()):
                 return False, "Invalid signature"
+
+        # Consume the nonce only after all stateless checks succeed.
+        try:
+            nonce_is_new = self.nonce_cache.check_and_add(nonce)
+        except ReplayProtectionUnavailable:
+            return False, "Nonce store unavailable"
+        except Exception as exc:
+            logger.error(
+                "Nonce cache failed; rejecting request (%s)", type(exc).__name__
+            )
+            return False, "Nonce store unavailable"
+        if not nonce_is_new:
+            logger.warning("Replay attack detected: duplicate nonce %s***", nonce[:8])
+            return False, "Duplicate nonce detected (possible replay attack)"
 
         return True, "OK"
 

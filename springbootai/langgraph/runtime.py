@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue
 import re
 import threading
+import time
 from typing import Any, AsyncIterator, Callable, Dict, Generator, Hashable, Mapping, Optional, Type
 
 from springbootai.langgraph.config import LangGraphConfigurationError, LangGraphProperties
@@ -69,6 +71,10 @@ class LangGraphWorkflow:
         self._builder = None
         self._compiled = None
         self._nodes: set[str] = set()
+        self._compile_lock = threading.RLock()
+        self._execution_slots = threading.BoundedSemaphore(
+            self.properties.max_concurrent_executions
+        )
         self._build_graph()
 
     def _build_graph(self) -> None:
@@ -122,19 +128,24 @@ class LangGraphWorkflow:
         return self.add_edge(START, node)
 
     def compile(self, *, checkpointer: Any = None, debug: bool = False) -> Any:
-        if self._compiled is not None and checkpointer is None:
-            return self._compiled
-        selected = checkpointer if checkpointer is not None else self._checkpointer
-        if selected is None and self.properties.checkpointer == "memory":
-            selected = _load_memory_checkpointer()
-        if self.properties.checkpointer == "injected" and selected is None:
-            raise LangGraphConfigurationError(
-                "checkpointer=injected requires a persistent checkpointer instance"
+        with self._compile_lock:
+            if self._compiled is not None and checkpointer is None:
+                return self._compiled
+            selected = checkpointer if checkpointer is not None else self._checkpointer
+            if selected is None and self.properties.checkpointer == "memory":
+                selected = _load_memory_checkpointer()
+            if self.properties.checkpointer == "injected" and selected is None:
+                raise LangGraphConfigurationError(
+                    "checkpointer=injected requires a persistent checkpointer instance"
+                )
+            compiled = self._builder.compile(
+                checkpointer=selected, debug=debug, name=self.name
             )
-        self._compiled = self._builder.compile(
-            checkpointer=selected, debug=debug, name=self.name
-        )
-        return self._compiled
+            # A one-off caller supplied checkpointer must not replace the
+            # workflow's default compiled graph for later requests.
+            if checkpointer is None:
+                self._compiled = compiled
+            return compiled
 
     def _config(self, *, thread_id: Optional[str], tenant_id: Optional[str], config: Optional[dict]) -> dict:
         result = dict(config or {})
@@ -145,9 +156,9 @@ class LangGraphWorkflow:
             configurable["tenant_id"] = tenant_id
         if self.properties.require_thread_id and not configurable.get("thread_id"):
             raise LangGraphConfigurationError("thread_id is required for every graph invocation")
-        if self.properties.checkpointer != "none" and not configurable.get("tenant_id") and not tenant_id:
+        if self.properties.checkpointer != "none" and not tenant_id:
             raise LangGraphConfigurationError(
-                "tenant_id is required when a checkpointer is enabled to prevent cross-tenant state access"
+                "tenant_id must be passed explicitly when a checkpointer is enabled"
             )
         if configurable.get("thread_id") and len(str(configurable["thread_id"])) > 256:
             raise LangGraphConfigurationError("thread_id is too long")
@@ -155,7 +166,12 @@ class LangGraphWorkflow:
             tenant = str(configurable["tenant_id"])
             if len(tenant) > 128:
                 raise LangGraphConfigurationError("tenant_id is too long")
-            configurable.setdefault("checkpoint_ns", f"tenant:{tenant}")
+            if any(ord(character) < 32 for character in tenant):
+                raise LangGraphConfigurationError("tenant_id contains control characters")
+            # This is an authorization boundary, not a caller preference.
+            # Always replace a supplied namespace with the trusted tenant.
+            configurable["tenant_id"] = tenant
+            configurable["checkpoint_ns"] = f"tenant:{tenant}"
         try:
             recursion_limit = int(result.get("recursion_limit", self.properties.max_steps))
         except (TypeError, ValueError) as exc:
@@ -174,6 +190,83 @@ class LangGraphWorkflow:
         if len(encoded.encode("utf-8")) > self.properties.max_input_bytes:
             raise LangGraphConfigurationError("graph input exceeds max_input_bytes")
 
+    def _ensure_runtime_controls(self) -> threading.BoundedSemaphore:
+        """Lazily initialize controls for compatibility with lightweight test doubles."""
+        slots = getattr(self, "_execution_slots", None)
+        if slots is None:
+            slots = threading.BoundedSemaphore(
+                int(getattr(self.properties, "max_concurrent_executions", 16))
+            )
+            self._execution_slots = slots
+        return slots
+
+    def _acquire_execution(self) -> None:
+        timeout = float(getattr(self.properties, "acquire_timeout_seconds", 1.0))
+        if not self._ensure_runtime_controls().acquire(timeout=timeout):
+            raise TimeoutError("LangGraph execution capacity is exhausted")
+
+    async def _acquire_execution_async(self) -> None:
+        await asyncio.to_thread(self._acquire_execution)
+
+    def _release_execution(self) -> None:
+        self._ensure_runtime_controls().release()
+
+    def _encoded_output_size(self, value: Any) -> int:
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            raise LangGraphConfigurationError(
+                "graph output must be JSON serializable"
+            ) from exc
+        return len(encoded.encode("utf-8"))
+
+    def _validate_output(self, value: Any) -> None:
+        maximum = int(getattr(
+            self.properties, "max_output_bytes", 10 * 1024 * 1024
+        ))
+        if self._encoded_output_size(value) > maximum:
+            raise LangGraphConfigurationError("graph output exceeds max_output_bytes")
+
+    def _run_sync_bounded(self, operation: Callable[[], Any]) -> Any:
+        """Run one non-cancellable sync operation without unbounded thread growth.
+
+        A timed-out worker retains its concurrency permit until it actually
+        finishes. Repeated timeouts therefore exhaust a bounded capacity
+        instead of creating an unlimited number of daemon threads.
+        """
+        self._acquire_execution()
+        result_holder: Dict[str, Any] = {}
+        error_holder: Dict[str, BaseException] = {}
+
+        def run() -> None:
+            try:
+                result = operation()
+                self._validate_output(result)
+                result_holder["value"] = result
+            except BaseException as exc:
+                error_holder["error"] = exc
+            finally:
+                self._release_execution()
+
+        worker = threading.Thread(
+            target=run,
+            name=f"spring-langgraph-{self.name}",
+            daemon=True,
+        )
+        try:
+            worker.start()
+        except BaseException:
+            self._release_execution()
+            raise
+        worker.join(self.properties.timeout_seconds)
+        if worker.is_alive():
+            raise TimeoutError(
+                f"LangGraph execution timed out after {self.properties.timeout_seconds}s"
+            )
+        if "error" in error_holder:
+            raise error_holder["error"]
+        return result_holder.get("value")
+
     def invoke(
         self,
         input_state: Any,
@@ -189,26 +282,9 @@ class LangGraphWorkflow:
 
     def _invoke_compiled(self, compiled: Any, input_state: Any, run_config: dict) -> Any:
         """Invoke a compiled graph with the same bounded sync policy everywhere."""
-        # Keep a bounded caller wait.  A daemon thread prevents a timed out
-        # provider call from blocking process shutdown; provider-level timeouts
-        # still need to be configured in springbootai.ai for true cancellation.
-        result_holder: Dict[str, Any] = {}
-        error_holder: Dict[str, BaseException] = {}
-
-        def run() -> None:
-            try:
-                result_holder["value"] = compiled.invoke(input_state, config=run_config)
-            except BaseException as exc:  # propagate the original graph error
-                error_holder["error"] = exc
-
-        worker = threading.Thread(target=run, name=f"spring-langgraph-{self.name}", daemon=True)
-        worker.start()
-        worker.join(self.properties.timeout_seconds)
-        if worker.is_alive():
-            raise TimeoutError(f"LangGraph execution timed out after {self.properties.timeout_seconds}s")
-        if "error" in error_holder:
-            raise error_holder["error"]
-        return result_holder.get("value")
+        return self._run_sync_bounded(
+            lambda: compiled.invoke(input_state, config=run_config)
+        )
 
     async def ainvoke(
         self,
@@ -224,9 +300,41 @@ class LangGraphWorkflow:
         method = getattr(compiled, "ainvoke", None)
         if method is None:
             method = lambda state, config: asyncio.to_thread(compiled.invoke, state, config=config)
-        return await asyncio.wait_for(
-            method(input_state, config=run_config), timeout=self.properties.timeout_seconds
-        )
+        await self._acquire_execution_async()
+        try:
+            task = asyncio.ensure_future(method(input_state, config=run_config))
+        except BaseException:
+            self._release_execution()
+            raise
+
+        def release_when_done(completed: asyncio.Future) -> None:
+            try:
+                completed.exception()
+            except BaseException:
+                pass
+            self._release_execution()
+
+        try:
+            done, _ = await asyncio.wait(
+                {task}, timeout=self.properties.timeout_seconds
+            )
+        except BaseException:
+            if task.done():
+                self._release_execution()
+            else:
+                task.add_done_callback(release_when_done)
+            raise
+        if not done:
+            task.add_done_callback(release_when_done)
+            raise TimeoutError(
+                f"LangGraph execution timed out after {self.properties.timeout_seconds}s"
+            )
+        try:
+            result = task.result()
+            self._validate_output(result)
+            return result
+        finally:
+            self._release_execution()
 
     def stream(
         self,
@@ -239,9 +347,91 @@ class LangGraphWorkflow:
     ) -> Generator[Any, None, None]:
         self._validate_input(input_state)
         run_config = self._config(thread_id=thread_id, tenant_id=tenant_id, config=config)
-        yield from self.compile().stream(
-            input_state, config=run_config, stream_mode=stream_mode or self.properties.stream_mode
+        compiled = self.compile()
+        messages: queue.Queue = queue.Queue(maxsize=32)
+        stopped = threading.Event()
+        maximum_events = int(getattr(self.properties, "max_stream_events", 10_000))
+        maximum_bytes = int(getattr(
+            self.properties, "max_output_bytes", 10 * 1024 * 1024
+        ))
+        timeout = float(self.properties.timeout_seconds)
+        started = time.monotonic()
+        self._acquire_execution()
+
+        def publish(kind: str, value: Any = None) -> bool:
+            while not stopped.is_set():
+                try:
+                    messages.put((kind, value), timeout=0.1)
+                    return True
+                except queue.Full:
+                    continue
+            return False
+
+        def produce() -> None:
+            count = 0
+            total_bytes = 0
+            try:
+                iterator = compiled.stream(
+                    input_state,
+                    config=run_config,
+                    stream_mode=stream_mode or self.properties.stream_mode,
+                )
+                for item in iterator:
+                    if stopped.is_set():
+                        break
+                    if time.monotonic() - started > timeout:
+                        raise TimeoutError(
+                            f"LangGraph stream timed out after {timeout}s"
+                        )
+                    count += 1
+                    total_bytes += self._encoded_output_size(item)
+                    if count > maximum_events:
+                        raise LangGraphConfigurationError(
+                            "graph stream exceeds max_stream_events"
+                        )
+                    if total_bytes > maximum_bytes:
+                        raise LangGraphConfigurationError(
+                            "graph stream exceeds max_output_bytes"
+                        )
+                    if not publish("item", item):
+                        break
+            except BaseException as exc:
+                publish("error", exc)
+            finally:
+                publish("done")
+                self._release_execution()
+
+        worker = threading.Thread(
+            target=produce,
+            name=f"spring-langgraph-stream-{self.name}",
+            daemon=True,
         )
+        try:
+            worker.start()
+        except BaseException:
+            self._release_execution()
+            raise
+        try:
+            while True:
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"LangGraph stream timed out after {timeout}s"
+                    )
+                try:
+                    kind, value = messages.get(timeout=remaining)
+                except queue.Empty as exc:
+                    raise TimeoutError(
+                        f"LangGraph stream timed out after {timeout}s"
+                    ) from exc
+                if kind == "item":
+                    yield value
+                elif kind == "error":
+                    raise value
+                else:
+                    break
+        finally:
+            stopped.set()
 
     async def astream(
         self,
@@ -256,18 +446,68 @@ class LangGraphWorkflow:
         run_config = self._config(thread_id=thread_id, tenant_id=tenant_id, config=config)
         compiled = self.compile()
         method = getattr(compiled, "astream", None)
-        if method is not None:
-            async for item in method(
-                input_state, config=run_config, stream_mode=stream_mode or self.properties.stream_mode
-            ):
+        if method is None:
+            # Compatibility fallback delegates to the bounded sync stream.
+            items = await asyncio.to_thread(
+                lambda: list(self.stream(
+                    input_state,
+                    thread_id=thread_id,
+                    tenant_id=tenant_id,
+                    config=config,
+                    stream_mode=stream_mode,
+                ))
+            )
+            for item in items:
                 yield item
             return
-        # Compatibility fallback for a custom compiled graph without astream.
-        items = await asyncio.to_thread(
-            lambda: list(self.stream(input_state, config=run_config, stream_mode=stream_mode))
-        )
-        for item in items:
-            yield item
+
+        await self._acquire_execution_async()
+        iterator = method(
+            input_state,
+            config=run_config,
+            stream_mode=stream_mode or self.properties.stream_mode,
+        ).__aiter__()
+        started = time.monotonic()
+        count = 0
+        total_bytes = 0
+        try:
+            while True:
+                remaining = self.properties.timeout_seconds - (
+                    time.monotonic() - started
+                )
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"LangGraph stream timed out after {self.properties.timeout_seconds}s"
+                    )
+                try:
+                    item = await asyncio.wait_for(
+                        iterator.__anext__(), timeout=remaining
+                    )
+                except StopAsyncIteration:
+                    break
+                count += 1
+                total_bytes += self._encoded_output_size(item)
+                if count > int(getattr(
+                    self.properties, "max_stream_events", 10_000
+                )):
+                    raise LangGraphConfigurationError(
+                        "graph stream exceeds max_stream_events"
+                    )
+                if total_bytes > int(getattr(
+                    self.properties, "max_output_bytes", 10 * 1024 * 1024
+                )):
+                    raise LangGraphConfigurationError(
+                        "graph stream exceeds max_output_bytes"
+                    )
+                yield item
+        finally:
+            closer = getattr(iterator, "aclose", None)
+            if callable(closer):
+                try:
+                    await closer()
+                except Exception:
+                    logger.debug("LangGraph async stream close failed")
+            self._release_execution()
 
     def resume(
         self,
@@ -287,7 +527,8 @@ class LangGraphWorkflow:
 
     def get_state(self, *, thread_id: str, tenant_id: Optional[str] = None, config: Optional[dict] = None) -> Any:
         run_config = self._config(thread_id=thread_id, tenant_id=tenant_id, config=config)
-        return self.compile().get_state(run_config)
+        compiled = self.compile()
+        return self._run_sync_bounded(lambda: compiled.get_state(run_config))
 
 
 class LangGraphRuntime:

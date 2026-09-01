@@ -16,7 +16,8 @@ SpringBootAI AI 模块 - 对齐 Spring AI 的 ChatClient/Advisor/ETL 抽象，
 from springbootai.ai.core import (
     Advisor, AdvisorRequest, ChatClient, ChatClientBuilder, ChatModel,
     ChatResponse, EmbeddingModel, Generation, Message, MessageType,
-    PromptSpec, TokenBudgetExceededError, ToolLoopLimitExceededError,
+    PromptSpec, AIConcurrencyLimitError, TokenBudgetExceededError,
+    ToolLoopLimitExceededError,
 )
 from springbootai.ai.annotations import (
     Agent, AiAdvisor, AiCache, AiClient, AiMemory, AiRetry, ContentModeration,
@@ -57,14 +58,14 @@ from springbootai.ai.observability import AIMetrics, ai_metrics
 from springbootai.ai.autoconfig import AIProperties, bind_ai_config, configure_ai
 from springbootai.ai.annotation_runtime import ContentModerationError
 
-__version__ = "2.3.10"
+__version__ = "2.3.11"
 
 __all__ = [
     # core
     "Advisor", "AdvisorRequest", "ChatClient", "ChatClientBuilder",
     "ChatModel", "ChatResponse", "EmbeddingModel", "Generation", "Message",
     "MessageType", "PromptSpec", "TokenBudgetExceededError",
-    "ToolLoopLimitExceededError",
+    "ToolLoopLimitExceededError", "AIConcurrencyLimitError",
     # annotations
     "AiAdvisor", "AiClient", "AiMemory", "Tool", "Prompt", "RAG",
     "StructuredOutput", "Agent", "Embedding", "VectorStore", "AiRetry",

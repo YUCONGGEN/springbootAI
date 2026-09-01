@@ -11,7 +11,7 @@ import re
 import importlib
 import copy
 from collections.abc import Mapping
-from typing import Any, Dict, List, Optional, Type, Tuple
+from typing import Any, Callable, Dict, List, Optional, Type, Tuple
 
 from ..configuration import Configuration
 from ..dialect import Dialect, get_dialect
@@ -22,7 +22,7 @@ from ..cache import SqlCache, ResultMapCache, GLOBAL_PRECOMPILED_CACHE
 from ..mapper import MapperProxy, MapperRegistry
 from ..transaction import TransactionManager, TransactionIsolationLevel
 from ..security import SQLInjectionDetector, SensitiveDataMasker, PasswordEncoder
-from ..security.access_control import RoleBasedAccessControl
+from ..security.access_control import AccessCondition, RoleBasedAccessControl
 from ..type_handler import TypeHandlerRegistry
 from ..interceptor import InterceptorChain
 
@@ -379,7 +379,12 @@ class SqlSession:
         if self.sql_injection_detector.is_ddl_blocked(sql):
             raise SecurityError(f"DDL语句被阻止: {sql}")
 
-    def _apply_access_control(self, sql: str, params: Dict[str, Any]) -> str:
+    def _apply_access_control(
+        self,
+        sql: str,
+        params: Dict[str, Any],
+        action: str = 'SELECT',
+    ) -> str:
         """
         应用访问控制条件
 
@@ -393,19 +398,989 @@ class SqlSession:
         if not self.configuration.access_control_enabled:
             return sql
 
-        # 提取表名（简化实现）
-        table_name = self._extract_table_name(sql)
+        normalized_action = str(action).strip().upper()
+        if normalized_action not in {'SELECT', 'INSERT', 'UPDATE', 'DELETE'}:
+            raise SecurityError("访问控制收到不支持的SQL操作")
 
-        # 获取行级访问条件
-        condition = self.access_control.get_access_condition(table_name, 'SELECT', self._user_context)
-        if condition:
-            # 检查SQL是否已有WHERE子句
-            if 'WHERE' in sql.upper():
-                sql = f"{sql} AND {condition}"
-            else:
-                sql = f"{sql} WHERE {condition}"
+        if normalized_action == 'SELECT':
+            return self._apply_select_access_control(sql, params)
 
+        table_names = self._extract_table_names(sql, normalized_action)
+        if not table_names:
+            raise SecurityError("访问控制无法确定目标表，已拒绝执行")
+
+        fields = self._extract_statement_fields(sql, normalized_action)
+        return self._apply_access_rules(
+            sql, params, normalized_action, table_names, fields)
+
+    def _apply_select_access_control(
+        self,
+        sql: str,
+        params: Dict[str, Any],
+    ) -> str:
+        """Apply SELECT permissions to every independent query scope.
+
+        A predicate attached only to the final branch of a UNION, or attached
+        outside a scalar/EXISTS subquery, is an authorization bypass.  Rewrite
+        each set-operation branch and each direct subquery recursively before
+        protecting the current SELECT scope.
+        """
+        branches, operators = self._split_top_level_set_operations(sql)
+        if operators:
+            protected = [
+                self._apply_select_access_control(branch, params)
+                for branch in branches
+            ]
+            result = protected[0]
+            for operator, branch in zip(
+                    operators, protected[1:], strict=True):
+                result = (
+                    result.rstrip() + ' ' + operator.strip() + ' '
+                    + branch.lstrip()
+                )
+            return result
+
+        rewritten, subquery_count = self._rewrite_select_subqueries(sql, params)
+        cte_names = self._extract_cte_names(rewritten)
+        all_sources = self._extract_select_sources(rewritten)
+        sources = [
+            source for source in all_sources
+            if source[0].split('.')[-1] not in cte_names
+        ]
+        table_names = list(dict.fromkeys(source[0] for source in sources))
+        if self._has_unresolved_select_source(
+                rewritten, table_names, cte_names):
+            raise SecurityError(
+                "访问控制无法安全解析 SELECT 数据源，已拒绝执行")
+        if not table_names:
+            # Derived-table/count wrappers and tableless SELECTs have no table
+            # in the current scope.  Their nested SELECTs were already secured.
+            if subquery_count or re.match(r'^\s*SELECT\b', rewritten, re.IGNORECASE):
+                return rewritten
+            raise SecurityError("访问控制无法确定目标表，已拒绝执行")
+
+        fields_by_source = self._extract_select_fields_by_source(
+            rewritten, all_sources)
+        return self._apply_select_access_rules(
+            rewritten, params, sources, fields_by_source)
+
+    def _apply_select_access_rules(
+        self,
+        sql: str,
+        params: Dict[str, Any],
+        sources: List[Tuple[str, str, int, int, bool]],
+        fields_by_source: Dict[str, List[str]],
+    ) -> str:
+        """Secure each physical SELECT source in its own derived-table scope.
+
+        Appending every predicate to the outer WHERE clause makes unqualified
+        columns ambiguous in joins and changes LEFT/RIGHT JOIN semantics. A
+        per-source derived table keeps each predicate scoped to the table it
+        authorizes and also protects repeated/self-joined sources independently.
+        """
+        replacements: List[Tuple[int, int, str]] = []
+        for table_name, alias, start, end, has_alias in sources:
+            try:
+                permitted = self.access_control.check_access(
+                    table_name, 'SELECT', self._user_context, params)
+            except Exception as exc:
+                raise SecurityError(
+                    f"访问表 {table_name} 的权限规则执行失败") from exc
+            if not permitted:
+                raise SecurityError(
+                    f"没有对表 {table_name} 执行 SELECT 的权限")
+
+            fields = fields_by_source.get(alias, [])
+            if fields:
+                allowed_fields = self.access_control.check_fields(
+                    table_name, 'SELECT', fields, self._user_context)
+                if set(allowed_fields) != set(fields):
+                    raise SecurityError(
+                        f"没有对表 {table_name} 的全部请求字段执行 SELECT 的权限")
+
+            try:
+                condition = self.access_control.get_access_condition(
+                    table_name, 'SELECT', self._user_context, params)
+            except Exception as exc:
+                raise SecurityError(
+                    f"表 {table_name} 的行级权限规则执行失败") from exc
+            prepared = self._prepare_access_condition(condition, params)
+            if not prepared:
+                continue
+
+            table_sql = sql[start:end]
+            base_table = table_name.split('.')[-1]
+            if len(sources) == 1:
+                # Preserve the established, optimizer-friendly single-table
+                # SQL shape. If the query aliases the table, translate an
+                # optional physical-table qualifier into that visible alias.
+                if alias != base_table:
+                    prepared = re.sub(
+                        rf'(?<![\w$]){re.escape(base_table)}\s*\.',
+                        f'{alias}.',
+                        prepared,
+                        flags=re.IGNORECASE,
+                    )
+                return self._append_where_condition(sql, f"({prepared})")
+            # A rule normally uses an unqualified column or the physical table
+            # name. Also accept a query alias and translate it back into the
+            # inner derived-table scope.
+            if alias != base_table:
+                prepared = re.sub(
+                    rf'(?<![\w$]){re.escape(alias)}\s*\.',
+                    f'{base_table}.',
+                    prepared,
+                    flags=re.IGNORECASE,
+                )
+            replacement = (
+                # Both fragments are framework-generated: ``table_sql`` came
+                # from the strict identifier parser and ``prepared`` passed
+                # the parameterized access-condition validator above.
+                f"(SELECT * FROM {table_sql} WHERE ({prepared}))"  # nosec B608
+            )
+            if not has_alias:
+                replacement += f" AS {self._default_source_alias_sql(table_sql)}"
+            replacements.append((start, end, replacement))
+
+        rewritten = sql
+        for start, end, replacement in sorted(replacements, reverse=True):
+            rewritten = rewritten[:start] + replacement + rewritten[end:]
+        return rewritten
+
+    def _apply_access_rules(
+        self,
+        sql: str,
+        params: Dict[str, Any],
+        action: str,
+        table_names: List[str],
+        fields: List[str],
+    ) -> str:
+        """Validate one SQL scope and append its row predicates."""
+        conditions: List[str] = []
+        for table_name in table_names:
+            try:
+                permitted = self.access_control.check_access(
+                    table_name, action, self._user_context, params)
+            except Exception as exc:
+                raise SecurityError(
+                    f"访问表 {table_name} 的权限规则执行失败") from exc
+            if not permitted:
+                raise SecurityError(
+                    f"没有对表 {table_name} 执行 {action} 的权限")
+
+            if fields:
+                allowed_fields = self.access_control.check_fields(
+                    table_name,
+                    action,
+                    fields,
+                    self._user_context,
+                )
+                if set(allowed_fields) != set(fields):
+                    raise SecurityError(
+                        f"没有对表 {table_name} 的全部请求字段执行 "
+                        f"{action} 的权限")
+
+            if action == 'INSERT':
+                continue
+            try:
+                condition = self.access_control.get_access_condition(
+                    table_name,
+                    action,
+                    self._user_context,
+                    params,
+                )
+            except Exception as exc:
+                raise SecurityError(
+                    f"表 {table_name} 的行级权限规则执行失败") from exc
+            prepared = self._prepare_access_condition(condition, params)
+            if prepared:
+                conditions.append(prepared)
+
+        if conditions:
+            sql = self._append_where_condition(
+                sql, ' AND '.join(f"({item})" for item in conditions))
         return sql
+
+    def _rewrite_select_subqueries(
+        self,
+        sql: str,
+        params: Dict[str, Any],
+    ) -> Tuple[str, int]:
+        spans = self._direct_select_subquery_spans(sql)
+        if not spans:
+            return sql, 0
+        rewritten = sql
+        for start, end in reversed(spans):
+            inner = rewritten[start + 1:end]
+            protected = self._apply_select_access_control(inner, params)
+            rewritten = rewritten[:start + 1] + protected + rewritten[end:]
+        return rewritten, len(spans)
+
+    @staticmethod
+    def _extract_cte_names(sql: str) -> set[str]:
+        """Identify non-recursive CTE aliases whose bodies are secured below."""
+        names: set[str] = set()
+        identifier = r'[A-Za-z_][A-Za-z0-9_$]*'
+        for start, _end in SqlSession._direct_select_subquery_spans(sql):
+            prefix = sql[:start]
+            match = re.search(
+                rf'(?:\bWITH(?:\s+RECURSIVE)?|,)\s*'
+                rf'(?P<name>{identifier})(?:\s*\([^)]*\))?\s+AS\s*$',
+                prefix,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if match:
+                names.add(match.group('name').lower())
+        return names
+
+    @staticmethod
+    def _has_unresolved_select_source(
+        sql: str,
+        table_names: List[str],
+        cte_names: set[str],
+    ) -> bool:
+        """Fail closed when a top-level FROM/JOIN source was not classified."""
+        masked = SqlSession._mask_nested_sql(sql)
+        known = {table.lower() for table in table_names}
+        for match in re.finditer(r'\b(?:FROM|JOIN)\b', masked, re.IGNORECASE):
+            cursor = match.end()
+            while cursor < len(sql) and sql[cursor].isspace():
+                cursor += 1
+            if cursor >= len(sql):
+                return True
+            if sql[cursor] == '(':
+                continue
+            parsed = SqlSession._parse_sql_identifier(sql, cursor)
+            if parsed is None:
+                return True
+            normalized = parsed[0]
+            if normalized in known or normalized.split('.')[-1] in cte_names:
+                continue
+            return True
+        return False
+
+    @staticmethod
+    def _direct_select_subquery_spans(sql: str) -> List[Tuple[int, int]]:
+        """Return outermost parenthesized SELECT/WITH spans in this scope."""
+        stack: List[int] = []
+        candidates: List[Tuple[int, int]] = []
+        quote = ''
+        line_comment = False
+        block_comment = False
+        index = 0
+        while index < len(sql):
+            char = sql[index]
+            following = sql[index + 1] if index + 1 < len(sql) else ''
+            if line_comment:
+                if char in '\r\n':
+                    line_comment = False
+                index += 1
+                continue
+            if block_comment:
+                if char == '*' and following == '/':
+                    block_comment = False
+                    index += 2
+                    continue
+                index += 1
+                continue
+            if quote:
+                if char == quote:
+                    if following == quote:
+                        index += 2
+                        continue
+                    quote = ''
+                index += 1
+                continue
+            if char == '-' and following == '-':
+                line_comment = True
+                index += 2
+                continue
+            if char == '/' and following == '*':
+                block_comment = True
+                index += 2
+                continue
+            if char in {"'", '"', '`'}:
+                quote = char
+            elif char == '(':
+                stack.append(index)
+            elif char == ')' and stack:
+                start = stack.pop()
+                content = sql[start + 1:index].lstrip()
+                if re.match(r'^(?:SELECT|WITH)\b', content, re.IGNORECASE):
+                    candidates.append((start, index))
+            index += 1
+
+        # Recursion handles nested candidates; only replace the outermost ones
+        # here so character offsets remain deterministic.
+        return sorted([
+            candidate for candidate in candidates
+            if not any(
+                outer[0] < candidate[0] and candidate[1] < outer[1]
+                for outer in candidates
+            )
+        ])
+
+    @staticmethod
+    def _split_top_level_set_operations(
+        sql: str,
+    ) -> Tuple[List[str], List[str]]:
+        """Split UNION/INTERSECT/EXCEPT without touching nested queries."""
+        operators: List[Tuple[int, int]] = []
+        depth = 0
+        quote = ''
+        line_comment = False
+        block_comment = False
+        index = 0
+        upper = sql.upper()
+        while index < len(sql):
+            char = sql[index]
+            following = sql[index + 1] if index + 1 < len(sql) else ''
+            if line_comment:
+                if char in '\r\n':
+                    line_comment = False
+                index += 1
+                continue
+            if block_comment:
+                if char == '*' and following == '/':
+                    block_comment = False
+                    index += 2
+                    continue
+                index += 1
+                continue
+            if quote:
+                if char == quote:
+                    if following == quote:
+                        index += 2
+                        continue
+                    quote = ''
+                index += 1
+                continue
+            if char == '-' and following == '-':
+                line_comment = True
+                index += 2
+                continue
+            if char == '/' and following == '*':
+                block_comment = True
+                index += 2
+                continue
+            if char in {"'", '"', '`'}:
+                quote = char
+                index += 1
+                continue
+            if char == '(':
+                depth += 1
+                index += 1
+                continue
+            if char == ')':
+                depth = max(0, depth - 1)
+                index += 1
+                continue
+            if depth == 0:
+                matched = re.match(
+                    r'(?:UNION(?:\s+ALL|\s+DISTINCT)?|INTERSECT|EXCEPT)\b',
+                    upper[index:],
+                )
+                if matched:
+                    end = index + matched.end()
+                    before_ok = index == 0 or not (
+                        upper[index - 1].isalnum() or upper[index - 1] == '_')
+                    if before_ok:
+                        operators.append((index, end))
+                        index = end
+                        continue
+            index += 1
+
+        if not operators:
+            return [sql], []
+        branches: List[str] = []
+        rendered_operators: List[str] = []
+        start = 0
+        for operator_start, operator_end in operators:
+            branches.append(sql[start:operator_start])
+            rendered_operators.append(sql[operator_start:operator_end])
+            start = operator_end
+        branches.append(sql[start:])
+        if any(not branch.strip() for branch in branches):
+            raise SecurityError("访问控制无法解析集合查询")
+        return branches, rendered_operators
+
+    @staticmethod
+    def _prepare_access_condition(condition: Any, params: Dict[str, Any]) -> str:
+        """Validate and parameterize an access-control predicate.
+
+        Raw string predicates remain available for static expressions, but
+        SQL literals and raw substitutions are rejected. Dynamic values must
+        be supplied through ``AccessCondition``/``(sql, params)`` and ``#{}``.
+        """
+        if condition is None or isinstance(condition, bool):
+            return ''
+        condition_params: Mapping[str, Any]
+        if isinstance(condition, AccessCondition):
+            text = condition.sql
+            condition_params = condition.params
+        elif (isinstance(condition, tuple) and len(condition) == 2
+              and isinstance(condition[0], str)
+              and isinstance(condition[1], Mapping)):
+            text = condition[0]
+            condition_params = condition[1]
+        elif isinstance(condition, str):
+            text = condition
+            condition_params = {}
+        else:
+            raise SecurityError("行级访问条件必须是参数化SQL表达式")
+
+        text = text.strip()
+        if not text:
+            return ''
+        if len(text) > 4096 or '\x00' in text:
+            raise SecurityError("行级访问条件超过安全限制")
+        if ('${' in text or ';' in text or '--' in text
+                or '/*' in text or '*/' in text):
+            raise SecurityError("行级访问条件包含不安全SQL结构")
+
+        placeholders = re.findall(r'#\{\s*([A-Za-z_]\w*)\s*\}', text)
+        if condition_params:
+            missing = set(placeholders) - set(condition_params)
+            extra = set(condition_params) - set(placeholders)
+            if missing or extra:
+                raise SecurityError("行级访问条件参数与占位符不一致")
+            for name in dict.fromkeys(placeholders):
+                suffix = len(params)
+                private_name = f"__access_{suffix}_{name}"
+                while private_name in params:
+                    suffix += 1
+                    private_name = f"__access_{suffix}_{name}"
+                params[private_name] = condition_params[name]
+                text = re.sub(
+                    rf'#\{{\s*{re.escape(name)}\s*\}}',
+                    f"#{{{private_name}}}",
+                    text,
+                )
+        else:
+            missing = set(placeholders) - set(params)
+            if missing:
+                raise SecurityError("行级访问条件引用了不存在的参数")
+            # A legacy callback that interpolates a claim into the SQL cannot
+            # be distinguished from trusted SQL. Fail closed for all literal
+            # values and require a bound placeholder instead.
+            without_placeholders = re.sub(r'#\{[^}]+\}', '', text)
+            if ("'" in without_placeholders or '"' in without_placeholders
+                    or re.search(
+                        r'(?<![A-Za-z_])\d+(?:\.\d+)?(?![A-Za-z_])',
+                        without_placeholders,
+                    )):
+                raise SecurityError(
+                    "行级访问条件中的值必须使用 #{} 参数化")
+        return text
+
+    @staticmethod
+    def _append_where_condition(sql: str, condition: str) -> str:
+        statement = sql.rstrip()
+        semicolon = ';' if statement.endswith(';') else ''
+        if semicolon:
+            statement = statement[:-1].rstrip()
+
+        suffix_keywords = (
+            'GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT', 'OFFSET',
+            'FETCH', 'FOR UPDATE', 'RETURNING',
+        )
+        positions = SqlSession._top_level_keyword_positions(statement)
+        suffix_candidates = [
+            index for keyword, index in positions if keyword in suffix_keywords
+        ]
+        split_at = min(suffix_candidates) if suffix_candidates else len(statement)
+        prefix = statement[:split_at].rstrip()
+        suffix = statement[split_at:].lstrip()
+        has_where = any(
+            keyword == 'WHERE' and index < split_at
+            for keyword, index in positions
+        )
+        joiner = ' AND ' if has_where else ' WHERE '
+        result = f"{prefix}{joiner}({condition})"
+        if suffix:
+            result = f"{result} {suffix}"
+        return result + semicolon
+
+    @staticmethod
+    def _top_level_keyword_positions(sql: str) -> List[Tuple[str, int]]:
+        keywords = (
+            'GROUP BY', 'FOR UPDATE', 'ORDER BY', 'RETURNING', 'WHERE',
+            'HAVING', 'LIMIT', 'OFFSET', 'FETCH',
+        )
+        upper = sql.upper()
+        positions: List[Tuple[str, int]] = []
+        depth = 0
+        quote = ''
+        index = 0
+        while index < len(sql):
+            char = sql[index]
+            if quote:
+                if char == quote:
+                    if index + 1 < len(sql) and sql[index + 1] == quote:
+                        index += 2
+                        continue
+                    quote = ''
+                index += 1
+                continue
+            if char in {"'", '"', '`'}:
+                quote = char
+                index += 1
+                continue
+            if char == '(':
+                depth += 1
+                index += 1
+                continue
+            if char == ')':
+                depth = max(0, depth - 1)
+                index += 1
+                continue
+            if depth == 0:
+                for keyword in keywords:
+                    end = index + len(keyword)
+                    before_ok = index == 0 or not (
+                        upper[index - 1].isalnum() or upper[index - 1] == '_')
+                    after_ok = end >= len(sql) or not (
+                        upper[end].isalnum() or upper[end] == '_')
+                    if before_ok and after_ok and upper.startswith(keyword, index):
+                        positions.append((keyword, index))
+                        index = end - 1
+                        break
+            index += 1
+        return positions
+
+    @staticmethod
+    def _extract_table_names(sql: str, action: str) -> List[str]:
+        identifier = r'[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)?'
+        patterns = {
+            'INSERT': rf'\bINSERT\s+INTO\s+({identifier})',
+            'UPDATE': rf'\bUPDATE\s+({identifier})',
+            'DELETE': rf'\bDELETE\s+FROM\s+({identifier})',
+        }
+        matches: List[str]
+        if action == 'SELECT':
+            searchable = SqlSession._mask_nested_sql(sql)
+            matches = []
+            for source_match in re.finditer(
+                    r'\b(?:FROM|JOIN)\b', searchable, re.IGNORECASE):
+                cursor = source_match.end()
+                while cursor < len(sql) and sql[cursor].isspace():
+                    cursor += 1
+                # Derived tables were already secured recursively.
+                if cursor >= len(sql) or sql[cursor] == '(':
+                    continue
+                parsed = SqlSession._parse_sql_identifier(sql, cursor)
+                if parsed is not None:
+                    matches.append(parsed[0])
+        else:
+            matches = re.findall(
+                patterns[action], sql, flags=re.IGNORECASE)
+        result: List[str] = []
+        for match in matches:
+            normalized = match.strip().lower()
+            if normalized not in result:
+                result.append(normalized)
+        return result
+
+    @staticmethod
+    def _extract_select_sources(
+        sql: str,
+    ) -> List[Tuple[str, str, int, int, bool]]:
+        """Return physical/CTE sources with alias and replacement offsets.
+
+        The current-scope mask excludes derived tables and nested SELECTs.
+        Comma joins are included because protecting only explicit FROM/JOIN
+        tokens would leave their later sources unfiltered.
+        """
+        searchable = SqlSession._mask_nested_sql(sql)
+        from_match = re.search(r'\bFROM\b', searchable, re.IGNORECASE)
+        if from_match is None:
+            return []
+
+        suffixes = [
+            index for keyword, index in SqlSession._top_level_keyword_positions(sql)
+            if keyword in {
+                'WHERE', 'GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT',
+                'OFFSET', 'FETCH', 'FOR UPDATE', 'RETURNING',
+            } and index > from_match.end()
+        ]
+        source_end = min(suffixes) if suffixes else len(sql)
+        starts = [
+            match.end() for match in re.finditer(
+                r'\b(?:FROM|JOIN)\b', searchable[:source_end], re.IGNORECASE)
+        ]
+        starts.extend(
+            index + 1
+            for index, char in enumerate(searchable[:source_end])
+            if char == ',' and index > from_match.end()
+        )
+
+        reserved_aliases = {
+            'ON', 'USING', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT',
+            'FULL', 'CROSS', 'NATURAL', 'OUTER', 'GROUP', 'HAVING',
+            'ORDER', 'LIMIT', 'OFFSET', 'FETCH', 'FOR', 'RETURNING',
+            'UNION', 'INTERSECT', 'EXCEPT', 'AS', 'WITH', 'USE',
+            'FORCE', 'IGNORE', 'INDEX', 'TABLESAMPLE',
+        }
+        sources: List[Tuple[str, str, int, int, bool]] = []
+        seen_offsets: set[int] = set()
+        for source_start in sorted(starts):
+            cursor = source_start
+            while cursor < source_end and sql[cursor].isspace():
+                cursor += 1
+            if cursor >= source_end or sql[cursor] == '(':
+                continue
+            parsed = SqlSession._parse_sql_identifier(sql, cursor)
+            if parsed is None:
+                raise SecurityError(
+                    "访问控制无法安全解析 SELECT 数据源，已拒绝执行")
+            table_name, table_end = parsed
+            if cursor in seen_offsets:
+                continue
+            seen_offsets.add(cursor)
+
+            alias = table_name.split('.')[-1]
+            has_alias = False
+            alias_cursor = table_end
+            while alias_cursor < source_end and sql[alias_cursor].isspace():
+                alias_cursor += 1
+            as_match = re.match(r'AS\b', sql[alias_cursor:], re.IGNORECASE)
+            if as_match:
+                alias_cursor += as_match.end()
+                while (alias_cursor < source_end
+                       and sql[alias_cursor].isspace()):
+                    alias_cursor += 1
+                alias_parsed = SqlSession._parse_sql_identifier(
+                    sql, alias_cursor)
+                if alias_parsed is None or '.' in alias_parsed[0]:
+                    raise SecurityError(
+                        "访问控制无法安全解析 SELECT 表别名，已拒绝执行")
+                alias = alias_parsed[0]
+                has_alias = True
+            else:
+                alias_parsed = SqlSession._parse_sql_identifier(
+                    sql, alias_cursor)
+                if (alias_parsed is not None and '.' not in alias_parsed[0]
+                        and alias_parsed[0].upper() not in reserved_aliases):
+                    alias = alias_parsed[0]
+                    has_alias = True
+            sources.append((table_name, alias, cursor, table_end, has_alias))
+        return sources
+
+    @staticmethod
+    def _default_source_alias_sql(table_sql: str) -> str:
+        """Preserve the final quoted identifier when adding a derived alias."""
+        quote = ''
+        last_dot = -1
+        index = 0
+        while index < len(table_sql):
+            char = table_sql[index]
+            if quote:
+                closing = ']' if quote == '[' else quote
+                if char == closing:
+                    if (index + 1 < len(table_sql)
+                            and table_sql[index + 1] == closing):
+                        index += 2
+                        continue
+                    quote = ''
+            elif char in {'"', '`', '['}:
+                quote = char
+            elif char == '.':
+                last_dot = index
+            index += 1
+        return table_sql[last_dot + 1:].strip()
+
+    @staticmethod
+    def _extract_select_fields_by_source(
+        sql: str,
+        sources: List[Tuple[str, str, int, int, bool]],
+    ) -> Dict[str, List[str]]:
+        """Attribute SELECT projection columns to their source aliases.
+
+        Qualified columns are checked only against their owning table. An
+        unqualified column in a multi-table query is deliberately checked
+        against every source because schema metadata is unavailable here and
+        guessing its owner would weaken field authorization.
+        """
+        result: Dict[str, List[str]] = {source[1]: [] for source in sources}
+        if not sources:
+            return result
+
+        masked = SqlSession._mask_nested_sql(sql)
+        match = re.search(
+            r'^\s*SELECT\s+(?:DISTINCT\s+)?(?P<fields>.+?)\s+FROM\b',
+            masked,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if match is None:
+            return result
+        raw_fields = sql[match.start('fields'):match.end('fields')]
+
+        qualifier_map: Dict[str, List[str]] = {}
+        for table_name, alias, _start, _end, has_alias in sources:
+            qualifier_map.setdefault(alias, []).append(alias)
+            if not has_alias:
+                qualifier_map.setdefault(
+                    table_name.split('.')[-1], []).append(alias)
+
+        identifier = (
+            r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+'
+            r'"|`(?:[^`]|``)+`|\[(?:[^\]]|\]\])+\])'
+        )
+        qualified_pattern = re.compile(
+            rf'(?P<owner>{identifier})\s*\.\s*'
+            rf'(?P<field>{identifier}|\*)',
+        )
+        reserved = {
+            'AS', 'AND', 'OR', 'NOT', 'NULL', 'IS', 'IN', 'LIKE',
+            'BETWEEN', 'EXISTS', 'TRUE', 'FALSE', 'CASE', 'WHEN',
+            'THEN', 'ELSE', 'END', 'DISTINCT', 'CAST', 'COLLATE',
+            'ESCAPE', 'CURRENT_DATE', 'CURRENT_TIME',
+            'CURRENT_TIMESTAMP', 'INTERVAL', 'FILTER', 'OVER',
+            'PARTITION', 'BY', 'ASC', 'DESC',
+        }
+
+        def normalize_identifier(value: str) -> str:
+            value = value.strip()
+            if value.startswith('[') and value.endswith(']'):
+                return value[1:-1].replace(']]', ']').lower()
+            if value[:1] in {'"', '`'} and value[-1:] == value[:1]:
+                return value[1:-1].replace(value[0] * 2, value[0]).lower()
+            return value.lower()
+
+        def add(alias: str, field: str) -> None:
+            values = result.setdefault(alias, [])
+            if field not in values:
+                values.append(field)
+
+        for projection in SqlSession._split_top_level_commas(raw_fields):
+            expression = projection.strip()
+            expression = re.sub(
+                rf'\s+AS\s+{identifier}\s*$', '', expression,
+                flags=re.IGNORECASE,
+            )
+            # Support the standard implicit alias form (``o.id order_id``)
+            # without treating the output alias as another protected column.
+            implicit = re.match(
+                rf'^(?P<expr>.+[\w\]\)"`])\s+{identifier}\s*$',
+                expression,
+                flags=re.DOTALL,
+            )
+            if implicit and not re.fullmatch(identifier, expression):
+                expression = implicit.group('expr').rstrip()
+
+            # Nested SELECTs have already been secured recursively. Blank them
+            # so correlated/subquery fields are not attributed to this scope.
+            scan = list(expression)
+            for start, end in SqlSession._direct_select_subquery_spans(expression):
+                for index in range(start, end + 1):
+                    scan[index] = ' '
+            scan_text = ''.join(scan)
+            occupied = [False] * len(scan_text)
+            found_reference = False
+            for reference in qualified_pattern.finditer(scan_text):
+                owner = normalize_identifier(reference.group('owner'))
+                field = normalize_identifier(reference.group('field'))
+                aliases = qualifier_map.get(owner, list(result))
+                for alias in aliases:
+                    add(alias, field)
+                for index in range(reference.start(), reference.end()):
+                    occupied[index] = True
+                found_reference = True
+
+            if '*' in scan_text and not found_reference:
+                for alias in result:
+                    add(alias, '*')
+                continue
+
+            bare_text = ''.join(
+                ' ' if occupied[index] else char
+                for index, char in enumerate(scan_text)
+            )
+            for token in re.finditer(r'[A-Za-z_][A-Za-z0-9_$]*', bare_text):
+                value = token.group(0)
+                if value.upper() in reserved:
+                    continue
+                following = bare_text[token.end():].lstrip()
+                preceding = bare_text[:token.start()].rstrip()
+                if following.startswith('(') or preceding.endswith(('.', '#{')):
+                    continue
+                for alias in result:
+                    add(alias, value.split('.')[-1])
+        return result
+
+    @staticmethod
+    def _parse_sql_identifier(
+        sql: str,
+        start: int,
+    ) -> Optional[Tuple[str, int]]:
+        """Parse a bare or quoted, optionally schema-qualified identifier."""
+        components: List[str] = []
+        cursor = start
+        while cursor < len(sql):
+            char = sql[cursor]
+            if char in {'"', '`', '['}:
+                closing = ']' if char == '[' else char
+                cursor += 1
+                value: List[str] = []
+                while cursor < len(sql):
+                    current = sql[cursor]
+                    if current == closing:
+                        if (cursor + 1 < len(sql)
+                                and sql[cursor + 1] == closing):
+                            value.append(closing)
+                            cursor += 2
+                            continue
+                        cursor += 1
+                        break
+                    value.append(current)
+                    cursor += 1
+                else:
+                    return None
+                if not value:
+                    return None
+                components.append(''.join(value))
+            else:
+                match = re.match(
+                    r'[A-Za-z_][A-Za-z0-9_$]*', sql[cursor:])
+                if match is None:
+                    return None
+                components.append(match.group(0))
+                cursor += match.end()
+            if cursor >= len(sql) or sql[cursor] != '.':
+                break
+            cursor += 1
+        if not components or len(components) > 2:
+            return None
+        return '.'.join(components).lower(), cursor
+
+    @staticmethod
+    def _mask_nested_sql(sql: str) -> str:
+        """Blank nested expressions while retaining the current SQL scope."""
+        result = list(sql)
+        depth = 0
+        quote = ''
+        line_comment = False
+        block_comment = False
+        index = 0
+        while index < len(sql):
+            char = sql[index]
+            following = sql[index + 1] if index + 1 < len(sql) else ''
+            if line_comment:
+                if char in '\r\n':
+                    line_comment = False
+                else:
+                    result[index] = ' '
+                index += 1
+                continue
+            if block_comment:
+                result[index] = ' '
+                if char == '*' and following == '/':
+                    result[index + 1] = ' '
+                    block_comment = False
+                    index += 2
+                    continue
+                index += 1
+                continue
+            if quote:
+                result[index] = ' '
+                if char == quote:
+                    if following == quote:
+                        result[index + 1] = ' '
+                        index += 2
+                        continue
+                    quote = ''
+                index += 1
+                continue
+            if char == '-' and following == '-':
+                line_comment = True
+                result[index] = result[index + 1] = ' '
+                index += 2
+                continue
+            if char == '/' and following == '*':
+                block_comment = True
+                result[index] = result[index + 1] = ' '
+                index += 2
+                continue
+            if char in {"'", '"', '`'}:
+                quote = char
+                result[index] = ' '
+            elif char == '(':
+                depth += 1
+                result[index] = ' '
+            elif char == ')':
+                result[index] = ' '
+                depth = max(0, depth - 1)
+            elif depth:
+                result[index] = ' '
+            index += 1
+        return ''.join(result)
+
+    @staticmethod
+    def _extract_statement_fields(sql: str, action: str) -> List[str]:
+        raw_fields = ''
+        if action == 'SELECT':
+            match = re.search(
+                r'^\s*SELECT\s+(?:DISTINCT\s+)?(.+?)\s+FROM\b',
+                sql,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            raw_fields = match.group(1) if match else '*'
+        elif action == 'INSERT':
+            match = re.search(
+                r'\bINSERT\s+INTO\s+[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?\s*\(([^)]+)\)',
+                sql,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            raw_fields = match.group(1) if match else '*'
+        elif action == 'UPDATE':
+            match = re.search(
+                r'\bSET\s+(.+?)(?:\bWHERE\b|\bORDER\s+BY\b|\bLIMIT\b|\bRETURNING\b|$)',
+                sql,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if not match:
+                raw_fields = '*'
+            else:
+                assignments = SqlSession._split_top_level_commas(match.group(1))
+                return [
+                    item.split('=', 1)[0].strip().strip('`"[]').split('.')[-1]
+                    for item in assignments if '=' in item
+                ] or ['*']
+        else:
+            return []
+
+        fields = []
+        for item in SqlSession._split_top_level_commas(raw_fields):
+            value = re.split(r'\s+AS\s+', item, flags=re.IGNORECASE)[0].strip()
+            value = value.strip('`"[]')
+            if value != '*' and re.fullmatch(
+                    r'[A-Za-z_][\w$]*(?:\.[A-Za-z_*][\w$*]*)?', value):
+                value = value.split('.')[-1]
+            fields.append(value)
+        return fields or ['*']
+
+    @staticmethod
+    def _split_top_level_commas(value: str) -> List[str]:
+        parts: List[str] = []
+        start = 0
+        depth = 0
+        quote = ''
+        for index, char in enumerate(value):
+            if quote:
+                if char == quote:
+                    quote = ''
+                continue
+            if char in {"'", '"', '`'}:
+                quote = char
+            elif char == '(':
+                depth += 1
+            elif char == ')':
+                depth = max(0, depth - 1)
+            elif char == ',' and depth == 0:
+                parts.append(value[start:index].strip())
+                start = index + 1
+        parts.append(value[start:].strip())
+        return [part for part in parts if part]
 
     def _extract_table_name(self, sql: str) -> str:
         """
@@ -428,7 +1403,7 @@ class SqlSession:
         """按映射声明或SQL首关键字分派到对应的执行方法。"""
         resolved_sql, _, statement_type = self._resolve_sql(sql_or_id)
         operation = (statement_type or resolved_sql.lstrip().split(None, 1)[0]).lower()
-        dispatch = {
+        dispatch: Dict[str, Callable[..., Any]] = {
             'select': self.select,
             'insert': self.insert,
             'update': self.update,
@@ -483,22 +1458,20 @@ class SqlSession:
             if statement.flush_cache:
                 self.sql_cache.clear()
         cache_enabled = self.configuration.cache_enabled if use_cache is None else use_cache
-        cache_params = dict(params)
-        if result_map:
-            cache_params['__pymybatis_result_map__'] = result_map
-
         # ``#{}`` values are data, not SQL text.  They are passed separately to
         # the database driver below, so scanning message bodies for SQL syntax
         # only creates false positives (for example when storing code, logs, or
         # an upstream AI-agent message).  ``${}`` substitutions are validated by
         # DynamicSQLProcessor before they can become part of the SQL structure.
+        processed_sql = self._apply_access_control(
+            processed_sql, params, 'SELECT')
+        cache_params = dict(params)
+        if result_map:
+            cache_params['__pymybatis_result_map__'] = result_map
         processed_sql, param_order = self._process_sql(processed_sql, params)
 
         # 验证SQL安全性
         self._validate_sql(processed_sql)
-
-        # 应用访问控制
-        processed_sql = self._apply_access_control(processed_sql, params)
 
         # 检查缓存
         if cache_enabled:
@@ -538,7 +1511,7 @@ class SqlSession:
                     columns = [desc[0] for desc in cursor.description]
                     results = [
                         dict(row) if isinstance(row, Mapping) or hasattr(row, 'keys')
-                        else dict(zip(columns, row))
+                        else dict(zip(columns, row, strict=False))
                         for row in results
                     ]
 
@@ -794,6 +1767,8 @@ class SqlSession:
 
         # Prepared values remain outside the SQL text; raw ``${}`` fragments
         # are checked by DynamicSQLProcessor.
+        processed_sql = self._apply_access_control(
+            processed_sql, params, 'INSERT')
         processed_sql, param_order = self._process_sql(processed_sql, params)
 
         # 验证SQL安全性
@@ -898,6 +1873,8 @@ class SqlSession:
 
         # Prepared values remain outside the SQL text; raw ``${}`` fragments
         # are checked by DynamicSQLProcessor.
+        processed_sql = self._apply_access_control(
+            processed_sql, params, 'UPDATE')
         processed_sql, param_order = self._process_sql(processed_sql, params)
 
         # 验证SQL安全性
@@ -954,6 +1931,8 @@ class SqlSession:
 
         # Prepared values remain outside the SQL text; raw ``${}`` fragments
         # are checked by DynamicSQLProcessor.
+        processed_sql = self._apply_access_control(
+            processed_sql, params, 'DELETE')
         processed_sql, param_order = self._process_sql(processed_sql, params)
 
         # 验证SQL安全性
@@ -1238,7 +2217,7 @@ class SqlSession:
             self._transaction_depth += 1
             try:
                 yield
-            except Exception:
+            except BaseException:
                 cursor = connection.cursor()
                 try:
                     cursor.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
@@ -1278,7 +2257,7 @@ class SqlSession:
         self._transaction_depth += 1
         try:
             yield
-        except Exception:
+        except BaseException:
             self._transaction_rollback_only = True
             if is_outermost:
                 connection.rollback()

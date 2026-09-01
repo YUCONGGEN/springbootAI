@@ -4,8 +4,30 @@ PyMyBatis访问控制模块
 实现防止越权查询的访问控制机制
 """
 
-from typing import Dict, Optional, Any, Callable
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Any, Callable, Mapping, Union
 from abc import ABC, abstractmethod
+
+
+@dataclass(frozen=True)
+class AccessCondition:
+    """Parameterized row-level predicate.
+
+    ``sql`` must use MyBatis ``#{name}`` placeholders. Values are merged into
+    the statement parameter mapping under private names by ``SqlSession`` so
+    user/tenant claims never become SQL text.
+    """
+
+    sql: str
+    params: Mapping[str, Any] = field(default_factory=dict)
+
+
+AccessConditionValue = Union[
+    AccessCondition,
+    tuple[str, Mapping[str, Any]],
+    str,
+    bool,
+]
 
 
 class AccessControlRule:
@@ -44,9 +66,22 @@ class AccessControlRule:
         if self.condition is None:
             return True
 
-        return self.condition(user_context, params)
+        result = self.condition(user_context, params)
+        if isinstance(result, bool):
+            return result
+        if isinstance(result, AccessCondition):
+            return bool(result.sql.strip())
+        if (isinstance(result, tuple) and len(result) == 2
+                and isinstance(result[0], str)
+                and isinstance(result[1], Mapping)):
+            return bool(result[0].strip())
+        return isinstance(result, str) and bool(result.strip())
 
-    def get_access_condition(self, user_context: Dict[str, Any]) -> Optional[str]:
+    def get_access_condition(
+        self,
+        user_context: Dict[str, Any],
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[AccessConditionValue]:
         """
         获取访问条件
 
@@ -59,7 +94,7 @@ class AccessControlRule:
         if self.condition is None:
             return None
 
-        return self.condition(user_context, {})
+        return self.condition(user_context, params or {})
 
     def check_fields(self, fields: list) -> list:
         """
@@ -101,7 +136,13 @@ class AccessControl(ABC):
         pass
 
     @abstractmethod
-    def get_access_condition(self, table: str, action: str, user_context: Dict[str, Any]) -> Optional[str]:
+    def get_access_condition(
+        self,
+        table: str,
+        action: str,
+        user_context: Dict[str, Any],
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[AccessConditionValue]:
         """
         获取访问条件
 
@@ -116,7 +157,8 @@ class AccessControl(ABC):
         pass
 
     @abstractmethod
-    def check_fields(self, table: str, action: str, fields: list) -> list:
+    def check_fields(self, table: str, action: str, fields: list,
+                     user_context: Optional[Dict[str, Any]] = None) -> list:
         """
         检查字段访问权限
 
@@ -149,6 +191,10 @@ class RoleBasedAccessControl(AccessControl):
         self.rules: Dict[str, Dict[str, AccessControlRule]] = {}
         self.default_rules: Dict[str, AccessControlRule] = {}
 
+    @staticmethod
+    def _rule_key(table: str, action: str) -> str:
+        return f"{str(table).strip().lower()}_{str(action).strip().upper()}"
+
     def add_rule(self, role: str, table: str, action: str, condition: Optional[Callable] = None, fields: Optional[list] = None) -> None:
         """
         添加角色访问规则
@@ -163,7 +209,7 @@ class RoleBasedAccessControl(AccessControl):
         if role not in self.rules:
             self.rules[role] = {}
 
-        key = f"{table}_{action}"
+        key = self._rule_key(table, action)
         self.rules[role][key] = AccessControlRule(table, action, condition, fields)
 
     def set_default_rule(self, table: str, action: str, condition: Optional[Callable] = None, fields: Optional[list] = None) -> None:
@@ -176,7 +222,7 @@ class RoleBasedAccessControl(AccessControl):
             condition: 访问条件
             fields: 允许访问的字段
         """
-        key = f"{table}_{action}"
+        key = self._rule_key(table, action)
         self.default_rules[key] = AccessControlRule(table, action, condition, fields)
 
     def _get_rule(self, role: str, table: str, action: str) -> Optional[AccessControlRule]:
@@ -194,7 +240,7 @@ class RoleBasedAccessControl(AccessControl):
         if not self.enabled:
             return None
 
-        key = f"{table}_{action}"
+        key = self._rule_key(table, action)
 
         # 先查找角色特定规则
         if role in self.rules and key in self.rules[role]:
@@ -231,7 +277,13 @@ class RoleBasedAccessControl(AccessControl):
 
         return rule.check_access(user_context, params)
 
-    def get_access_condition(self, table: str, action: str, user_context: Dict[str, Any]) -> Optional[str]:
+    def get_access_condition(
+        self,
+        table: str,
+        action: str,
+        user_context: Dict[str, Any],
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[AccessConditionValue]:
         """
         获取访问条件
 
@@ -252,9 +304,10 @@ class RoleBasedAccessControl(AccessControl):
         if rule is None:
             return None
 
-        return rule.get_access_condition(user_context)
+        return rule.get_access_condition(user_context, params)
 
-    def check_fields(self, table: str, action: str, fields: list) -> list:
+    def check_fields(self, table: str, action: str, fields: list,
+                     user_context: Optional[Dict[str, Any]] = None) -> list:
         """
         检查字段访问权限
 
@@ -269,30 +322,15 @@ class RoleBasedAccessControl(AccessControl):
         if not self.enabled:
             return fields
 
-        # 对于SELECT操作，检查字段访问权限
-        if action.upper() != 'SELECT':
-            return fields
-
-        # 获取用户角色
-        # 这里需要从上下文中获取角色，但在字段检查时可能没有用户上下文
-        # 因此默认检查所有规则中对该表的字段限制
-        allowed_fields = set(fields)
-
-        for role_rules in self.rules.values():
-            key = f"{table}_{action}"
-            if key in role_rules:
-                rule = role_rules[key]
-                if rule.fields:
-                    allowed_fields = allowed_fields.intersection(set(rule.fields))
-
-        # 检查默认规则
-        key = f"{table}_{action}"
-        if key in self.default_rules:
-            rule = self.default_rules[key]
-            if rule.fields:
-                allowed_fields = allowed_fields.intersection(set(rule.fields))
-
-        return list(allowed_fields)
+        # Field authorization is principal-specific.  Without a user context
+        # there is no safe role to infer, so fail closed.
+        if user_context is None:
+            return []
+        role = user_context.get('role', 'guest')
+        rule = self._get_rule(role, table, action)
+        if rule is None:
+            return []
+        return rule.check_fields(fields)
 
 
 class RowLevelAccessControl(AccessControl):
@@ -320,7 +358,7 @@ class RowLevelAccessControl(AccessControl):
             table: 表名
             filter_func: 过滤函数，接收用户上下文返回WHERE条件
         """
-        self.row_filters[table] = filter_func
+        self.row_filters[str(table).strip().lower()] = filter_func
 
     def check_access(self, table: str, action: str, user_context: Dict[str, Any], params: Dict[str, Any]) -> bool:
         """
@@ -338,10 +376,28 @@ class RowLevelAccessControl(AccessControl):
         if not self.enabled:
             return True
 
-        # 行级访问控制主要通过条件过滤实现，这里默认允许
-        return True
+        key = str(table).strip().lower()
+        if key not in self.row_filters:
+            return False
+        try:
+            condition = self.row_filters[key](user_context)
+        except Exception:
+            return False
+        if isinstance(condition, AccessCondition):
+            return bool(condition.sql.strip())
+        if (isinstance(condition, tuple) and len(condition) == 2
+                and isinstance(condition[0], str)
+                and isinstance(condition[1], Mapping)):
+            return bool(condition[0].strip())
+        return isinstance(condition, str) and bool(condition.strip())
 
-    def get_access_condition(self, table: str, action: str, user_context: Dict[str, Any]) -> Optional[str]:
+    def get_access_condition(
+        self,
+        table: str,
+        action: str,
+        user_context: Dict[str, Any],
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[AccessConditionValue]:
         """
         获取访问条件
 
@@ -356,12 +412,23 @@ class RowLevelAccessControl(AccessControl):
         if not self.enabled:
             return None
 
-        if table in self.row_filters:
-            return self.row_filters[table](user_context)
+        key = str(table).strip().lower()
+        if key in self.row_filters:
+            condition = self.row_filters[key](user_context)
+            if isinstance(condition, AccessCondition) and condition.sql.strip():
+                return condition
+            if (isinstance(condition, tuple) and len(condition) == 2
+                    and isinstance(condition[0], str)
+                    and isinstance(condition[1], Mapping)
+                    and condition[0].strip()):
+                return condition
+            if isinstance(condition, str) and condition.strip():
+                return condition
 
         return None
 
-    def check_fields(self, table: str, action: str, fields: list) -> list:
+    def check_fields(self, table: str, action: str, fields: list,
+                     user_context: Optional[Dict[str, Any]] = None) -> list:
         """
         检查字段访问权限
 
@@ -400,7 +467,12 @@ def check_table_access(table: str, action: str, user_context: Dict[str, Any], pa
     return DEFAULT_ACCESS_CONTROL.check_access(table, action, user_context, params)
 
 
-def get_row_level_condition(table: str, action: str, user_context: Dict[str, Any]) -> Optional[str]:
+def get_row_level_condition(
+    table: str,
+    action: str,
+    user_context: Dict[str, Any],
+    params: Optional[Dict[str, Any]] = None,
+) -> Optional[AccessConditionValue]:
     """
     便捷函数：获取行级访问条件
 
@@ -412,4 +484,5 @@ def get_row_level_condition(table: str, action: str, user_context: Dict[str, Any
     Returns:
         WHERE条件字符串
     """
-    return DEFAULT_ACCESS_CONTROL.get_access_condition(table, action, user_context)
+    return DEFAULT_ACCESS_CONTROL.get_access_condition(
+        table, action, user_context, params)

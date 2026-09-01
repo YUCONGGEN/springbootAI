@@ -232,7 +232,7 @@ def _version() -> str:
         from springbootai import __version__
         return __version__
     except Exception:
-        return "2.3.10"
+        return "2.3.11"
 
 
 def _replace(template: str, **values: object) -> str:
@@ -558,6 +558,10 @@ _APPLICATION_YML_TEMPLATE = '''# __PROJECT_NAME__ 的 SpringBootAI 配置文件
 server:
   port: __PORT__                         # 可用 SERVER_PORT 覆盖
   host: "${SERVER_HOST:0.0.0.0}"         # 容器中通常使用 0.0.0.0
+  max-request-body-size: 10485760         # 10 MiB；0 表示显式禁用
+  uvicorn:
+    timeout_keep_alive: 5
+    ws_max_size: 1048576
   debug: false
   shutdown: graceful
   request-id:

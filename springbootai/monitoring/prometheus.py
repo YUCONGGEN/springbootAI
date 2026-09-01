@@ -13,6 +13,7 @@ from prometheus_client import (
 from prometheus_client.exposition import start_http_server, CONTENT_TYPE_LATEST
 import logging
 import os
+from typing import Optional
 
 logger = logging.getLogger("Spring.Monitoring.Prometheus")
 
@@ -52,7 +53,10 @@ class PrometheusMetrics:
         self.namespace = namespace
         self.subsystem = subsystem
     
-    def create_counter(self, name: str, documentation: str, labelnames: list = None) -> Counter:
+    def create_counter(
+        self, name: str, documentation: str,
+        labelnames: Optional[list] = None,
+    ) -> Counter:
         """
         创建计数器指标
         
@@ -76,7 +80,10 @@ class PrometheusMetrics:
             )
         return self._metrics[key]
     
-    def create_gauge(self, name: str, documentation: str, labelnames: list = None) -> Gauge:
+    def create_gauge(
+        self, name: str, documentation: str,
+        labelnames: Optional[list] = None,
+    ) -> Gauge:
         """
         创建仪表盘指标
         
@@ -100,8 +107,11 @@ class PrometheusMetrics:
             )
         return self._metrics[key]
     
-    def create_histogram(self, name: str, documentation: str, labelnames: list = None, 
-                         buckets: list = None) -> Histogram:
+    def create_histogram(
+        self, name: str, documentation: str,
+        labelnames: Optional[list] = None,
+        buckets: Optional[list] = None,
+    ) -> Histogram:
         """
         创建直方图指标
         
@@ -127,8 +137,11 @@ class PrometheusMetrics:
             )
         return self._metrics[key]
     
-    def create_summary(self, name: str, documentation: str, labelnames: list = None,
-                       objectives: dict = None) -> Summary:
+    def create_summary(
+        self, name: str, documentation: str,
+        labelnames: Optional[list] = None,
+        objectives: Optional[dict] = None,
+    ) -> Summary:
         """
         创建摘要指标
         
@@ -141,13 +154,17 @@ class PrometheusMetrics:
         Returns:
             Summary对象
         """
+        if objectives:
+            raise ValueError(
+                "prometheus-client Summary does not support client-side "
+                "quantile objectives; use Histogram buckets instead"
+            )
         key = f"{self.namespace}_{self.subsystem}_{name}"
         if key not in self._metrics:
             self._metrics[key] = Summary(
                 name=name,
                 documentation=documentation,
                 labelnames=labelnames or [],
-                objectives=objectives or Summary.DEFAULT_OBJECTIVES,
                 namespace=self.namespace,
                 subsystem=self.subsystem,
                 registry=self._metric_registry,

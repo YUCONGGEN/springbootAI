@@ -34,6 +34,7 @@ from springbootai.annotations.core import (
 from springbootai.web.result import Result
 from springbootai.logging.context import (
     get_request_id, normalize_request_id, reset_request_id, set_request_id,
+    sanitize_exception_value,
 )
 import os
 import inspect
@@ -54,6 +55,73 @@ class _JsonEncoder(json.JSONEncoder):
 
 class _SyncHandlerOverloaded(RuntimeError):
     """Raised when the bounded synchronous-handler queue cannot accept work."""
+
+
+class _RequestBodyTooLarge(RuntimeError):
+    """Internal signal raised before an oversized body reaches a controller."""
+
+
+class RequestBodyLimitMiddleware:
+    """ASGI request-body limiter that also covers chunked uploads."""
+
+    def __init__(self, app, max_body_size: int):
+        self.app = app
+        self.max_body_size = max(0, int(max_body_size))
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or self.max_body_size <= 0:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            key.lower(): value for key, value in scope.get("headers", [])
+        }
+        declared = headers.get(b"content-length")
+        if declared:
+            try:
+                if int(declared) > self.max_body_size:
+                    await self._reject(send)
+                    return
+            except (TypeError, ValueError):
+                pass
+
+        consumed = 0
+        response_started = False
+
+        async def limited_receive():
+            nonlocal consumed
+            message = await receive()
+            if message.get("type") == "http.request":
+                consumed += len(message.get("body", b""))
+                if consumed > self.max_body_size:
+                    raise _RequestBodyTooLarge
+            return message
+
+        async def tracked_send(message):
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracked_send)
+        except _RequestBodyTooLarge:
+            if response_started:
+                raise
+            await self._reject(send)
+
+    @staticmethod
+    async def _reject(send) -> None:
+        body = b'{"detail":"Request body too large"}'
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
 
 
 class WebApplicationContext:
@@ -125,6 +193,7 @@ class WebApplicationContext:
         self._register_interceptors()
         self._register_exception_handlers()
         self._register_cors_middleware()
+        self._register_request_body_limit()
         # Starlette 后添加的 middleware 位于外层；请求上下文必须包住 CORS，
         # 才能让预检/拒绝响应同样获得关联 ID。
         self._register_request_context_middleware()
@@ -173,6 +242,24 @@ class WebApplicationContext:
             finally:
                 reset_request_id(token)
         self._request_context_registered = True
+
+    def _register_request_body_limit(self) -> None:
+        try:
+            config = self.application_context.get_config()
+        except (AttributeError, TypeError):
+            config = {}
+        server = config.get("server", {}) if isinstance(config, dict) else {}
+        if not isinstance(server, dict):
+            server = {}
+        raw = server.get(
+            "max-request-body-size",
+            server.get("max_request_body_size", 10 * 1024 * 1024),
+        )
+        limit = self._safe_int(raw, 10 * 1024 * 1024)
+        if limit < 0:
+            raise ValueError("server.max-request-body-size must not be negative")
+        self.fastapi_app.add_middleware(
+            RequestBodyLimitMiddleware, max_body_size=limit)
 
     def _move_wildcard_static_route_to_end(self) -> None:
         """将 ``/{full_path:path}`` 通配路由移到路由表末尾。
@@ -262,7 +349,9 @@ class WebApplicationContext:
                 registry.add_interceptor(metrics_interceptor)
                 self._logger.info("Built-in request metrics enabled")
         except Exception as exc:
-            self._logger.warning("Built-in request metrics unavailable: %s", exc)
+            self._logger.warning(
+                "Built-in request metrics unavailable error_type=%s",
+                type(exc).__name__)
         if self._interceptor_registry is None:
             for bean_name in self.application_context.get_bean_names():
                 try:
@@ -275,7 +364,8 @@ class WebApplicationContext:
 
         @self.fastapi_app.middleware("http")
         async def interceptor_middleware(request: Request, call_next):
-            handler = request.scope.get("endpoint") or (lambda: None)
+            handler, route_template = self._resolve_request_handler(request.scope)
+            request.state.springbootai_route_template = route_template
             response = Response(status_code=500)
             error = None
             try:
@@ -297,6 +387,26 @@ class WebApplicationContext:
 
         self._interceptors_registered = True
 
+    def _resolve_request_handler(self, scope: Dict[str, Any]):
+        """Resolve the endpoint before Starlette's router mutates the scope."""
+        from starlette.routing import Match
+        for route in self.fastapi_app.router.routes:
+            matcher = getattr(route, "matches", None)
+            if not callable(matcher):
+                continue
+            try:
+                match, child_scope = matcher(scope)
+            except Exception:
+                continue
+            if match == Match.FULL:
+                handler = (
+                    child_scope.get("endpoint")
+                    or getattr(route, "endpoint", None)
+                    or (lambda: None)
+                )
+                return handler, getattr(route, "path", scope.get("path", ""))
+        return (lambda: None), "<unmatched>"
+
     def refresh_runtime_configuration(self) -> None:
         """应用 Nacos/环境热更新后的 Web 配置，不重复注册 FastAPI 路由或中间件。"""
         config = self.application_context.get_config()
@@ -304,7 +414,9 @@ class WebApplicationContext:
             from springbootai.web.actuator import configure_actuator
             configure_actuator(self.application_context)
         except Exception as exc:
-            self._logger.warning("Actuator runtime configuration refresh skipped: %s", exc)
+            self._logger.warning(
+                "Actuator runtime configuration refresh skipped error_type=%s",
+                type(exc).__name__)
 
         try:
             from springbootai.web.request_metrics import configure_request_metrics
@@ -328,7 +440,9 @@ class WebApplicationContext:
                 if replacement is not None:
                     registry.add_interceptor(replacement)
         except Exception as exc:
-            self._logger.warning("Request metrics runtime configuration refresh skipped: %s", exc)
+            self._logger.warning(
+                "Request metrics runtime configuration refresh skipped "
+                "error_type=%s", type(exc).__name__)
 
     def _register_controllers(self) -> None:
         self._logger.info(f"Registering controllers, found {len(self.application_context.get_bean_names())} beans")
@@ -701,11 +815,16 @@ class WebApplicationContext:
                             type(e).__name__, get_request_id(),
                         )
                     else:
-                        self._logger.exception(
+                        safe_error = sanitize_exception_value(e)
+                        self._logger.error(
                             "Request processing failed method=%s path=%s "
                             "error_type=%s request_id=%s",
                             request.method, request.url.path,
                             type(e).__name__, get_request_id(),
+                            exc_info=(
+                                type(safe_error), safe_error,
+                                safe_error.__traceback__,
+                            ),
                         )
                     if handler is not None:
                         try:
@@ -717,13 +836,20 @@ class WebApplicationContext:
                             return self._result_response(
                                 Result.error(message="Internal server error", code=500)
                             )
-                        except Exception:
+                        except Exception as handler_exc:
                             # An exception handler is application code; a bug in
                             # it must not escape the endpoint and take down the
                             # request task.  Preserve the original failure in logs
                             # while returning the same generic response policy.
-                            self._logger.exception(
-                                "Exception handler failed for %s", type(e).__name__
+                            safe_handler_error = sanitize_exception_value(
+                                handler_exc)
+                            self._logger.error(
+                                "Exception handler failed for %s error_type=%s",
+                                type(e).__name__, type(handler_exc).__name__,
+                                exc_info=(
+                                    type(safe_handler_error), safe_handler_error,
+                                    safe_handler_error.__traceback__,
+                                ),
                             )
                             return self._result_response(
                                 Result.error(message="Internal server error", code=500)
@@ -939,7 +1065,9 @@ class WebApplicationContext:
                             "max_age": cors_annotation.maxAge,
                         })
                     except Exception as e:
-                        self._logger.error(f"Failed to parse CORS configuration: {str(e)}")
+                        self._logger.error(
+                            "Failed to parse CORS configuration: "
+                            f"error_type={type(e).__name__}")
                 
                 break
 
@@ -1023,7 +1151,9 @@ class WebApplicationContext:
             except ImportError:
                 pass
             except Exception as exc:
-                self._logger.warning("RabbitMQ cleanup failed during shutdown: %s", exc)
+                self._logger.warning(
+                    "RabbitMQ cleanup failed during shutdown error_type=%s",
+                    type(exc).__name__)
 
             try:
                 from springbootai.cloud.feign import FeignClientFactory
@@ -1031,7 +1161,9 @@ class WebApplicationContext:
             except ImportError:
                 pass
             except Exception as exc:
-                self._logger.warning("Feign cleanup failed during shutdown: %s", exc)
+                self._logger.warning(
+                    "Feign cleanup failed during shutdown error_type=%s",
+                    type(exc).__name__)
 
             # ApplicationContext owns more than BeanFactory instances: it also
             # owns scheduled tasks, event listeners, and the active-context
@@ -1056,7 +1188,12 @@ class WebApplicationContext:
             # 覆盖 SpringLogger._intercept_third_party_loggers 的 LoguruHandler 拦截。
             # 拦截由 init_logging → _setup_loguru → _intercept_third_party_loggers 完成，
             # 使访问日志（GET /api/xxx 200 OK）和启动日志也写入配置的日志文件。
-            uvicorn.run(self.fastapi_app, host=host, port=port, log_config=None)
+            run_options = dict(kwargs)
+            run_options.pop("host", None)
+            run_options.pop("port", None)
+            run_options.setdefault("log_config", None)
+            uvicorn.run(
+                self.fastapi_app, host=host, port=port, **run_options)
         except ImportError:
             try:
                 from a2wsgi import ASGIMiddleware, WSGIServer

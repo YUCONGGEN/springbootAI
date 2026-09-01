@@ -13,6 +13,8 @@ import re
 import logging
 import inspect
 import json
+import contextvars
+import weakref
 from springbootai.annotations.core import (
     RateLimit,
     CircuitBreaker,
@@ -63,7 +65,9 @@ _idempotent_local_cache: Dict[str, Any] = {}
 _idempotent_expire_times: Dict[str, float] = {}
 _IDEMPOTENT_PROCESSING = object()
 _metrics_local_cache: Dict[str, dict] = {}
-_trace_context = threading.local()
+_trace_id_context: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "springbootai_trace_id", default=None
+)
 
 # 本地缓存刷新间隔（秒）
 _LOCAL_CACHE_TTL = 5
@@ -78,6 +82,38 @@ def _get_segment_lock(key: str) -> threading.Lock:
     if isinstance(key, str):
         return _segment_locks[hash(key) % _NUM_SEGMENTS]
     return _segment_locks[0]
+
+
+def _get_distributed_guard_client():
+    """Get Redis without silently crossing a configured distributed boundary."""
+    client = redis_client.get_client()
+    if client is None and getattr(redis_client, "distributed_required", False):
+        raise DistributedGuardError("Configured Redis guard is unavailable")
+    return client
+
+
+def _canonical_call_key(func: Callable, args: tuple, kwargs: dict) -> str:
+    """Create a stable idempotency key without object repr or process addresses."""
+    try:
+        bound = inspect.signature(func).bind(*args, **kwargs)
+        bound.apply_defaults()
+        arguments = dict(bound.arguments)
+        arguments.pop("self", None)
+        arguments.pop("cls", None)
+        payload = json.dumps(
+            arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise DistributedGuardError(
+            f"@Idempotent on {func.__qualname__} requires an explicit key "
+            "for non-JSON arguments"
+        ) from exc
+    identity = f"{func.__module__}.{func.__qualname__}\n{payload}"
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
 def _resolve_dynamic_key(key_template: str, func: Callable, args: tuple, kwargs: dict) -> str:
@@ -122,7 +158,7 @@ def rate_limit_decorator(annotation: RateLimit):
         def reserve(args, kwargs):
             key = build_key(args, kwargs)
             now = time.time()
-            redis = redis_client.get_client()
+            redis = _get_distributed_guard_client()
             if redis is None:
                 with _get_segment_lock(key):
                     entries = [
@@ -278,7 +314,7 @@ def circuit_breaker_decorator(annotation: CircuitBreaker):
         if inspect.iscoroutinefunction(func):
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs):
-                redis = redis_client.get_client()
+                redis = _get_distributed_guard_client()
                 allowed, failures = await asyncio.to_thread(before_call, redis)
                 if not allowed:
                     value = fallback(args, kwargs) if annotation.fallback_method else None
@@ -296,7 +332,7 @@ def circuit_breaker_decorator(annotation: CircuitBreaker):
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            redis = redis_client.get_client()
+            redis = _get_distributed_guard_client()
             allowed, failures = before_call(redis)
             if not allowed:
                 return fallback(args, kwargs) if annotation.fallback_method else fallback(args, kwargs)
@@ -318,7 +354,7 @@ def idempotent_decorator(annotation: Idempotent):
             if annotation.key:
                 value = _resolve_dynamic_key(annotation.key, func, args, kwargs)
                 return f"idempotent:{annotation.prefix}:{value}"
-            params_hash = hashlib.sha256(f"{args}{kwargs}".encode()).hexdigest()
+            params_hash = _canonical_call_key(func, args, kwargs)
             return f"idempotent:{annotation.prefix}:{params_hash}"
 
         def deserialize(value):
@@ -332,7 +368,7 @@ def idempotent_decorator(annotation: Idempotent):
 
         def claim(key):
             now = time.time()
-            redis = redis_client.get_client()
+            redis = _get_distributed_guard_client()
             if redis is None:
                 with _get_segment_lock(key):
                     if _idempotent_expire_times.get(key, 0) <= now:
@@ -483,48 +519,85 @@ def idempotent_decorator(annotation: Idempotent):
 
 
 # ==================== AuditLog 审计日志切面 ====================
+_SENSITIVE_AUDIT_NAME = re.compile(
+    r"password|passwd|secret|token|authorization|cookie|api[_-]?key|credential",
+    re.IGNORECASE,
+)
+
+
+def _safe_log_text(value: Any, maximum: int = 256) -> str:
+    text = str(value).replace("\r", "\\r").replace("\n", "\\n")
+    return text if len(text) <= maximum else text[:maximum] + "…"
+
+
+def _audit_detail(annotation: AuditLog, func: Callable, args: tuple, kwargs: dict) -> str:
+    detail = _safe_log_text(annotation.detail or "")
+    if not detail:
+        return detail
+    try:
+        bound = inspect.signature(func).bind(*args, **kwargs)
+        bound.apply_defaults()
+        safe_params = {}
+        for name, value in bound.arguments.items():
+            if name in {"self", "cls"}:
+                continue
+            if _SENSITIVE_AUDIT_NAME.search(name):
+                safe_params[name] = "***"
+            elif isinstance(value, (str, int, float, bool, type(None))):
+                safe_params[name] = _safe_log_text(value, 128)
+            else:
+                safe_params[name] = f"<{type(value).__name__}>"
+        return _safe_log_text(detail.format(**safe_params))
+    except (KeyError, IndexError, ValueError, TypeError):
+        return detail
+
+
 def audit_log_decorator(annotation: AuditLog):
     def decorator(func: Callable) -> Callable:
+        def record(args, kwargs, started, failed):
+            log_level = {
+                "debug": logger.debug,
+                "info": logger.info,
+                "warning": logger.warning,
+                "error": logger.error,
+                "critical": logger.critical,
+            }.get(str(annotation.level).lower(), logger.info)
+            log_level(
+                "[AuditLog] Action=%s, Target=%s, Detail=%s, Method=%s, "
+                "Status=%s, Duration=%.4fs",
+                _safe_log_text(annotation.action),
+                _safe_log_text(annotation.target),
+                _audit_detail(annotation, func, args, kwargs),
+                func.__name__,
+                "FAILED" if failed else "SUCCESS",
+                time.monotonic() - started,
+            )
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                started = time.monotonic()
+                failed = False
+                try:
+                    return await func(*args, **kwargs)
+                except BaseException:
+                    failed = True
+                    raise
+                finally:
+                    record(args, kwargs, started, failed)
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            start_time = time.time()
-            result = None
-            exception = None
-            
+            started = time.monotonic()
+            failed = False
             try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
-                exception = e
+                return func(*args, **kwargs)
+            except BaseException:
+                failed = True
                 raise
             finally:
-                end_time = time.time()
-                execution_time = end_time - start_time
-                
-                # 格式化详情（支持位置参数和命名参数）
-                detail = annotation.detail
-                if detail:
-                    try:
-                        sig = inspect.signature(func)
-                        bound_args = sig.bind(*args, **kwargs)
-                        bound_args.apply_defaults()
-                        all_params = dict(bound_args.arguments)
-                        all_params.pop('self', None)
-                        detail = detail.format(**all_params)
-                    except:
-                        pass
-                
-                log_msg = (
-                    f"[AuditLog] Action={annotation.action}, "
-                    f"Target={annotation.target}, "
-                    f"Detail={detail}, "
-                    f"Method={func.__name__}, "
-                    f"Status={'SUCCESS' if exception is None else 'FAILED'}, "
-                    f"Duration={execution_time:.4f}s"
-                )
-                
-                log_level = getattr(logger, annotation.level.lower(), logger.info)
-                log_level(log_msg)
+                record(args, kwargs, started, failed)
         return wrapper
     return decorator
 
@@ -570,7 +643,7 @@ def lock_decorator(annotation: Lock):
             return f"{annotation.prefix}:{func.__module__}.{func.__name__}"
 
         def acquire(lock_key):
-            redis = redis_client.get_client()
+            redis = _get_distributed_guard_client()
             if redis is None:
                 lock = _get_segment_lock(lock_key)
                 lock.acquire()
@@ -622,72 +695,80 @@ def lock_decorator(annotation: Lock):
 # ==================== Metrics 指标监控切面（Redis持久化） ====================
 def metrics_decorator(annotation: Metrics):
     def decorator(func: Callable) -> Callable:
+        name = annotation.name or f"{func.__module__}.{func.__name__}"
+        key = f"metrics:{name}"
+
+        def record(duration: float, has_error: bool) -> None:
+            with _get_segment_lock(key):
+                metrics = _metrics_local_cache.setdefault(name, {
+                    "count": 0,
+                    "total_time": 0,
+                    "errors": 0,
+                    "min_time": float('inf'),
+                    "max_time": float('-inf'),
+                })
+                metrics["count"] += 1
+                metrics["total_time"] += duration
+                if has_error:
+                    metrics["errors"] += 1
+                metrics["min_time"] = min(metrics["min_time"], duration)
+                metrics["max_time"] = max(metrics["max_time"], duration)
+                snapshot = dict(metrics)
+
+            if snapshot["count"] % 100 == 0:
+                logger.info(
+                    "[Metrics] %s - Count=%d, AvgTime=%.4fs, Min=%.4fs, "
+                    "Max=%.4fs, Errors=%d",
+                    name,
+                    snapshot["count"],
+                    snapshot["total_time"] / snapshot["count"],
+                    snapshot["min_time"],
+                    snapshot["max_time"],
+                    snapshot["errors"],
+                )
+            redis = redis_client.get_client()
+            if redis is not None:
+                try:
+                    redis.hset(key, mapping={
+                        "count": str(snapshot["count"]),
+                        "total_time": str(snapshot["total_time"]),
+                        "errors": str(snapshot["errors"]),
+                        "min_time": str(snapshot["min_time"]),
+                        "max_time": str(snapshot["max_time"]),
+                        "last_update": str(time.time()),
+                    })
+                except Exception as exc:
+                    logger.warning(
+                        "Redis metrics sync failed (%s)", type(exc).__name__
+                    )
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                started = time.monotonic()
+                has_error = False
+                try:
+                    return await func(*args, **kwargs)
+                except BaseException:
+                    has_error = True
+                    raise
+                finally:
+                    await asyncio.to_thread(
+                        record, time.monotonic() - started, has_error
+                    )
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            name = annotation.name or f"{func.__module__}.{func.__name__}"
-            key = f"metrics:{name}"
-            
-            start_time = time.time()
-            result = None
+            started = time.monotonic()
             has_error = False
-            
             try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
+                return func(*args, **kwargs)
+            except BaseException:
                 has_error = True
                 raise
             finally:
-                duration = time.time() - start_time
-                
-                # 更新本地缓存
-                with _get_segment_lock(key):
-                    if name not in _metrics_local_cache:
-                        _metrics_local_cache[name] = {
-                            "count": 0,
-                            "total_time": 0,
-                            "errors": 0,
-                            "min_time": float('inf'),
-                            "max_time": float('-inf'),
-                        }
-                    
-                    _metrics_local_cache[name]["count"] += 1
-                    _metrics_local_cache[name]["total_time"] += duration
-                    if has_error:
-                        _metrics_local_cache[name]["errors"] += 1
-                    _metrics_local_cache[name]["min_time"] = min(_metrics_local_cache[name]["min_time"], duration)
-                    _metrics_local_cache[name]["max_time"] = max(_metrics_local_cache[name]["max_time"], duration)
-                
-                # 每 100 次调用同步到 Redis
-                with _get_segment_lock(key):
-                    if _metrics_local_cache[name]["count"] % 100 == 0:
-                        avg_time = _metrics_local_cache[name]["total_time"] / _metrics_local_cache[name]["count"]
-                        logger.info(
-                            f"[Metrics] {name} - "
-                            f"Count={_metrics_local_cache[name]['count']}, "
-                            f"AvgTime={avg_time:.4f}s, "
-                            f"Min={_metrics_local_cache[name]['min_time']:.4f}s, "
-                            f"Max={_metrics_local_cache[name]['max_time']:.4f}s, "
-                            f"Errors={_metrics_local_cache[name]['errors']}"
-                        )
-                
-                # 同步到 Redis
-                redis = redis_client.get_client()
-                if redis is not None:
-                    try:
-                        # 使用 Hash 存储指标
-                        metrics_data = {
-                            "count": str(_metrics_local_cache[name]["count"]),
-                            "total_time": str(_metrics_local_cache[name]["total_time"]),
-                            "errors": str(_metrics_local_cache[name]["errors"]),
-                            "min_time": str(_metrics_local_cache[name]["min_time"]),
-                            "max_time": str(_metrics_local_cache[name]["max_time"]),
-                            "last_update": str(time.time()),
-                        }
-                        redis.hset(key, mapping=metrics_data)
-                    except Exception as e:
-                        logger.warning(f"Redis metrics sync failed: {e}")
-        
+                record(time.monotonic() - started, has_error)
         return wrapper
     return decorator
 
@@ -695,14 +776,34 @@ def metrics_decorator(annotation: Metrics):
 # ==================== Synchronized 方法同步切面 ====================
 def synchronized_decorator(annotation: Synchronized):
     def decorator(func: Callable) -> Callable:
+        lock_name = annotation.lock_name or f"{func.__module__}.{func.__name__}"
+        if inspect.iscoroutinefunction(func):
+            # asyncio locks become bound to the event loop that first contends
+            # on them.  Keep one weakly-held lock per loop so test runners,
+            # reloaders and multi-loop embeddings can reuse the decorated bean.
+            async_lock_refs = weakref.WeakKeyDictionary()
+            async_lock_guard = threading.Lock()
+
+            def get_async_lock():
+                loop = asyncio.get_running_loop()
+                with async_lock_guard:
+                    lock_ref = async_lock_refs.get(loop)
+                    lock = lock_ref() if lock_ref is not None else None
+                    if lock is None:
+                        lock = asyncio.Lock()
+                        async_lock_refs[loop] = weakref.ref(lock)
+                    return lock
+
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                async with get_async_lock():
+                    return await func(*args, **kwargs)
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            lock_name = annotation.lock_name or f"{func.__module__}.{func.__name__}"
-            
-            # 使用分段锁
             with _get_segment_lock(lock_name):
                 return func(*args, **kwargs)
-        
         return wrapper
     return decorator
 
@@ -756,30 +857,56 @@ def validate_decorator(annotation: Validate):
 # ==================== Trace 分布式追踪切面 ====================
 def trace_decorator(annotation: Trace):
     def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # 获取或生成 trace_id
-            trace_id = getattr(_trace_context, 'trace_id', None)
+        span_name = _safe_log_text(annotation.span_name or func.__name__, 128)
+
+        def start_span():
+            trace_id = _trace_id_context.get()
+            token = None
             if not trace_id:
                 trace_id = secrets.token_hex(16)
-            
-            _trace_context.trace_id = trace_id
-            
-            span_name = annotation.span_name or func.__name__
-            
-            logger.info(f"[Trace] Start span={span_name}, trace_id={trace_id}")
-            
-            start_time = time.time()
-            
+                token = _trace_id_context.set(trace_id)
+            logger.info("[Trace] Start span=%s, trace_id=%s", span_name, trace_id)
+            return trace_id, token, time.monotonic()
+
+        def finish_span(trace_id, token, started, error=None):
+            duration = time.monotonic() - started
+            if error is None:
+                logger.info(
+                    "[Trace] End span=%s, trace_id=%s, duration=%.4fs",
+                    span_name, trace_id, duration,
+                )
+            else:
+                logger.error(
+                    "[Trace] Error span=%s, trace_id=%s, duration=%.4fs, "
+                    "error_type=%s",
+                    span_name, trace_id, duration, type(error).__name__,
+                )
+            if token is not None:
+                _trace_id_context.reset(token)
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                trace_id, token, started = start_span()
+                try:
+                    result = await func(*args, **kwargs)
+                except BaseException as exc:
+                    finish_span(trace_id, token, started, exc)
+                    raise
+                finish_span(trace_id, token, started)
+                return result
+            return async_wrapper
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            trace_id, token, started = start_span()
             try:
                 result = func(*args, **kwargs)
-                duration = time.time() - start_time
-                logger.info(f"[Trace] End span={span_name}, trace_id={trace_id}, duration={duration:.4f}s")
-                return result
-            except Exception as e:
-                duration = time.time() - start_time
-                logger.error(f"[Trace] Error span={span_name}, trace_id={trace_id}, duration={duration:.4f}s, error={str(e)}")
+            except BaseException as exc:
+                finish_span(trace_id, token, started, exc)
                 raise
+            finish_span(trace_id, token, started)
+            return result
         return wrapper
     return decorator
 
@@ -875,7 +1002,11 @@ def _retryable_decorator(annotation: Retryable):
                     
                     # 判断是否需要继续重试
                     if retry_count >= max_retries:
-                        logger.warning(f"[Retry] Max retries ({max_retries}) exceeded for {func.__name__}: {str(e)}")
+                        logger.warning(
+                            "[Retry] Max retries (%d) exceeded for %s "
+                            "error_type=%s",
+                            max_retries, func.__name__, type(e).__name__,
+                        )
                         break
                     
                     # 计算退避时间
@@ -994,10 +1125,13 @@ def get_metrics() -> Dict[str, dict]:
     redis = redis_client.get_client()
     if redis is not None:
         try:
-            # 扫描所有 metrics 键
-            keys = redis.keys("metrics:*")
             result = {}
-            for key in keys:
+            for index, key in enumerate(
+                redis.scan_iter(match="metrics:*", count=200), start=1
+            ):
+                if index > 10_000:
+                    logger.warning("Metrics key scan truncated at 10000 entries")
+                    break
                 data = redis.hgetall(key)
                 if data:
                     name = key.replace("metrics:", "")
@@ -1013,7 +1147,8 @@ def get_metrics() -> Dict[str, dict]:
             pass
     
     # 回退到本地缓存
-    return dict(_metrics_local_cache)
+    # Values are copied as well so callers cannot mutate live counters.
+    return {name: dict(values) for name, values in _metrics_local_cache.items()}
 
 
 def reset_circuit_breaker(key: str) -> None:

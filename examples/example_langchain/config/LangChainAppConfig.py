@@ -48,7 +48,11 @@ class LangChainAppConfig:
             lg_beans = configure_langgraph(registry=registry, config=config_loader)
         except Exception as exc:
             logger.error("springbootai.langgraph auto-configuration failed: %s", exc)
-            lg_config = config_loader.get_prefix_config("springbootai.langgraph") or {}
+            lg_config = (
+                config_loader.get_prefix_config("spring.langgraph")
+                or config_loader.get_prefix_config("springbootai.langgraph")
+                or {}
+            )
             enabled = str(lg_config.get("enabled", False)).strip().lower() in {
                 "true", "1", "yes", "on"
             }

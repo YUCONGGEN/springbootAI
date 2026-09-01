@@ -281,7 +281,9 @@ class GracefulShutdown:
         try:
             worker.start()
         except Exception as exc:
-            logger.error("Shutdown hook '%s' could not start: %s", name, exc)
+            logger.error(
+                "Shutdown hook '%s' could not start error_type=%s",
+                name, type(exc).__name__)
             return
 
         if not done.wait(timeout=max(0.001, timeout)):

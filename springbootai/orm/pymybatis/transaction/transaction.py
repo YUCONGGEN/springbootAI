@@ -94,10 +94,19 @@ class Transaction:
         """提交事务"""
         if self.nested_count <= 0 or not self.is_active():
             raise RuntimeError("没有可提交的活动事务")
-        self.nested_count -= 1
-        if self.nested_count == 0:
+        if self.nested_count > 1:
+            self.nested_count -= 1
+            return
+        try:
             self.connection.commit()
-            self.status = TransactionStatus.COMMITTED
+        except Exception:
+            # The server-side outcome may be unknown.  Preserve nesting so a
+            # caller can still roll back/clean up, but do not present the
+            # transaction as active or retry-safe.
+            self.status = TransactionStatus.FAILED
+            raise
+        self.nested_count = 0
+        self.status = TransactionStatus.COMMITTED
 
     def rollback(self, savepoint: Optional[str] = None) -> None:
         """
@@ -169,7 +178,16 @@ class Transaction:
         if exc_type is not None:
             self.rollback()
             return False
-        self.commit()
+        try:
+            self.commit()
+        except Exception:
+            try:
+                self.rollback()
+            except Exception:
+                # Preserve the commit exception; it best describes the
+                # uncertain transaction outcome.
+                pass
+            raise
         return False
 
 
@@ -217,12 +235,20 @@ class TransactionManager:
             self.current_transaction.begin()
             try:
                 yield self.current_transaction
-            except Exception:
+            except BaseException:
                 self.current_transaction.rollback()
                 self.current_transaction = None
                 raise
             else:
-                self.current_transaction.commit()
+                try:
+                    self.current_transaction.commit()
+                except Exception:
+                    try:
+                        self.current_transaction.rollback()
+                    except Exception:
+                        pass
+                    self.current_transaction = None
+                    raise
         else:
             # 新事务
             raise ValueError("事务必须在SqlSession上下文中使用")
@@ -250,7 +276,15 @@ class TransactionManager:
     def commit(self) -> None:
         """提交当前事务"""
         if self.current_transaction is not None:
-            self.current_transaction.commit()
+            try:
+                self.current_transaction.commit()
+            except Exception:
+                try:
+                    self.current_transaction.rollback()
+                except Exception:
+                    pass
+                self.current_transaction = None
+                raise
             if self.current_transaction.nested_count == 0:
                 self.current_transaction = None
 

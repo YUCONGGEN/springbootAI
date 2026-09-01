@@ -96,11 +96,18 @@ class _ListenerSynchronization(TransactionSynchronization):
     @staticmethod
     def _finish_awaitable(awaitable) -> None:
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             asyncio.run(awaitable)
         else:
-            loop.create_task(awaitable)
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise RuntimeError(
+                "transactional async listeners cannot be detached from an "
+                "active event loop; execute the transaction boundary in a "
+                "worker thread or use a synchronous listener"
+            )
 
     def before_commit(self) -> None:
         if self._phase == TransactionPhase.BEFORE_COMMIT:
@@ -163,6 +170,25 @@ class TransactionalEventPublisher:
                 if inspect.isawaitable(result):
                     _ListenerSynchronization._finish_awaitable(result)
             # 否则丢弃（对齐 Spring 默认：无事务不执行）
+        return event
+
+    async def publish_event_async(self, event: Any) -> Any:
+        """Await fallback listeners; transaction-phase callbacks stay registered."""
+        if not isinstance(event, ApplicationEvent):
+            event = ApplicationEvent(source=event)
+
+        tx_active = TransactionSynchronizationManager.is_synchronization_active()
+        for event_type, callback, phase, fallback, order in list(self._listeners):
+            if event_type is not None and not isinstance(event, event_type):
+                continue
+            if tx_active:
+                TransactionSynchronizationManager.register_synchronization(
+                    _ListenerSynchronization(callback, event, phase, order)
+                )
+            elif fallback:
+                result = callback(event)
+                if inspect.isawaitable(result):
+                    await result
         return event
 
 

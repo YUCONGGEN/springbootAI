@@ -1,6 +1,6 @@
 # 企业级注解驱动模块
 
-> SpringBootAI 2.3.10
+> SpringBootAI 2.3.11
 >
 > 对齐 Java Spring Boot 的 `@EnableXxx` 系列注解，通过注解驱动方式启用企业级功能，替代繁琐的 YAML 配置。
 

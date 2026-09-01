@@ -43,6 +43,11 @@ def test_logging_context_redacts_secrets_and_adds_request_id():
         'password="top secret" Authorization: Basic basic-secret')
     assert "top secret" not in quoted
     assert "basic-secret" not in quoted
+    connection_secrets = redact_sensitive(
+        "secret=hunter2 dsn=postgresql://admin:db-pass@db.test/app "
+        "redis://default:redis-pass@cache.test:6379/0")
+    for secret in ("hunter2", "db-pass", "redis-pass"):
+        assert secret not in connection_secrets
 
     record = logging.LogRecord(
         "Spring.Test", logging.INFO, __file__, 1,
@@ -311,6 +316,23 @@ def test_feign_fallback_factory_runs_after_response_is_closed(monkeypatch):
         proxy.close()
 
 
+def test_feign_pool_capacity_times_out_instead_of_blocking_forever(monkeypatch):
+    session = _FeignSession()
+    monkeypatch.setattr("requests.Session", lambda: session)
+    proxy = FeignClientProxy(
+        "inventory", url="https://inventory.test", pool_maxsize=1,
+        pool_acquire_timeout=0.02,
+    )
+    assert proxy._pool_capacity.acquire(timeout=0.1)
+    try:
+        with pytest.raises(FeignRequestError, match="connection_pool_timeout"):
+            proxy.get("/items")
+        assert session.calls == []
+    finally:
+        proxy._pool_capacity.release()
+        proxy.close()
+
+
 def test_declared_feign_percent_encodes_path_values(monkeypatch):
     from springbootai.annotations import FeignClient, GetMapping, PathVariable
     from springbootai.cloud.feign import create_declared_feign_client
@@ -365,6 +387,33 @@ def test_declared_feign_rejects_omitted_marker_arguments(monkeypatch):
         with pytest.raises(TypeError, match="required Feign argument"):
             client.search()
         assert calls == []
+    finally:
+        client.destroy()
+
+
+def test_declared_async_feign_awaits_async_fallback():
+    from springbootai.annotations import FeignClient, GetMapping
+    from springbootai.cloud.feign import create_declared_feign_client
+
+    class AsyncFallback:
+        async def item(self):
+            await asyncio.sleep(0)
+            return {"source": "fallback"}
+
+    @FeignClient(
+        "catalog", url="https://catalog.test", fallback=AsyncFallback)
+    class CatalogClient:
+        @GetMapping("/item")
+        async def item(self):
+            raise NotImplementedError
+
+    annotation = CatalogClient.__spring_annotations__[0]
+    client = create_declared_feign_client(CatalogClient, annotation)
+    proxy = client.__feign_proxy__
+    proxy.request = lambda *_args, **_kwargs: proxy._call_fallback(
+        "item", RuntimeError("offline"), (), {})
+    try:
+        assert asyncio.run(client.item()) == {"source": "fallback"}
     finally:
         client.destroy()
 
@@ -451,14 +500,40 @@ def test_gateway_auth_exclusions_require_a_path_segment_boundary():
             request_headers={}, request_method="GET", request_query={},
         )
 
-    assert auth.pre_filter(context("/login")) is True
-    assert auth.pre_filter(context("/login/callback")) is True
+    assert asyncio.run(auth.pre_filter(context("/login"))) is True
+    assert asyncio.run(auth.pre_filter(context("/login/callback"))) is True
     bypass = context("/login-evil")
-    assert auth.pre_filter(bypass) is False
+    assert asyncio.run(auth.pre_filter(bypass)) is False
     assert bypass.response_status == 401
-    assert auth.pre_filter(context("/healthcheck")) is False
+    assert asyncio.run(auth.pre_filter(context("/healthcheck"))) is False
     authenticate_every_path = AuthenticationFilter(exclude_paths=[])
-    assert authenticate_every_path.pre_filter(context("/login")) is False
+    assert asyncio.run(
+        authenticate_every_path.pre_filter(context("/login"))) is False
+
+
+def test_gateway_auth_validates_bearer_and_rejects_garbage():
+    def validator(token):
+        if token != "valid-token":
+            raise ValueError("invalid")
+        return {"sub": "gateway-user"}
+
+    auth = AuthenticationFilter(exclude_paths=[], validator=validator)
+    valid = FilterContext(
+        route=SimpleNamespace(id="auth"), request_path="/private",
+        request_headers={"authorization": "Bearer valid-token"},
+        request_method="GET", request_query={},
+    )
+    assert asyncio.run(auth.pre_filter(valid)) is True
+    assert valid.attributes["principal"]["sub"] == "gateway-user"
+
+    invalid = FilterContext(
+        route=SimpleNamespace(id="auth"), request_path="/private",
+        request_headers={"Authorization": "Bearer garbage"},
+        request_method="GET", request_query={},
+    )
+    assert asyncio.run(auth.pre_filter(invalid)) is False
+    assert invalid.response_status == 401
+    assert "invalid_token" in invalid.response_headers["WWW-Authenticate"]
 
 
 def test_gateway_applies_route_predicates_and_route_level_filters():
@@ -605,6 +680,79 @@ def test_gateway_weighted_load_balancer_tolerates_bad_weights():
     LoadBalancerStrategy._round_robin_counters.clear()
     assert LoadBalancerStrategy.weighted(instances) == instances[0]
     assert LoadBalancerStrategy.weighted(instances) == instances[1]
+
+
+def test_gateway_weighted_never_selects_zero_weight_boundary(monkeypatch):
+    monkeypatch.setattr("springbootai.cloud.gateway.random.uniform", lambda _a, _b: 0)
+    instances = [
+        {"ip": "disabled", "weight": 0},
+        {"ip": "healthy", "weight": 1},
+    ]
+    assert LoadBalancerStrategy.weighted(instances) == instances[1]
+
+
+def test_gateway_returns_stream_before_upstream_finishes():
+    from starlette.requests import Request
+
+    class DelayedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"first"
+            await asyncio.sleep(0.12)
+            yield b"second"
+
+    async def upstream(_request: httpx.Request):
+        return httpx.Response(200, stream=DelayedStream())
+
+    received = False
+
+    async def receive():
+        nonlocal received
+        if not received:
+            received = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.disconnect"}
+
+    request = Request({
+        "type": "http", "asgi": {"version": "3.0"},
+        "http_version": "1.1", "method": "GET", "scheme": "http",
+        "path": "/files/a", "raw_path": b"/files/a", "query_string": b"",
+        "headers": [], "client": ("127.0.0.1", 1),
+        "server": ("gateway", 80),
+    }, receive)
+    post_statuses = []
+
+    class Recorder(GatewayFilter):
+        def post_filter(self, ctx):
+            post_statuses.append(ctx.response_status)
+
+    gateway = GatewayRouter(
+        default_filters=[Recorder()], max_response_size=0,
+        transport=httpx.MockTransport(upstream))
+    gateway.route("/files/**", uri="https://upstream.test")
+
+    async def scenario():
+        started = asyncio.get_running_loop().time()
+        response = await gateway.handle_asgi(request)
+        returned_after = asyncio.get_running_loop().time() - started
+        try:
+            assert post_statuses == []
+            first = await anext(response.body_iterator)
+            assert post_statuses == []
+            second = await anext(response.body_iterator)
+            with pytest.raises(StopAsyncIteration):
+                await anext(response.body_iterator)
+        finally:
+            await gateway.aclose()
+        return response, returned_after, first, second
+
+    response, returned_after, first, second = asyncio.run(scenario())
+    # 其他测试会 reload starlette 模块，不能依赖类对象身份；验证流式接口。
+    assert response.__class__.__name__ == "StreamingResponse"
+    assert hasattr(response, "body_iterator")
+    assert returned_after < 0.06
+    assert first == b"first"
+    assert second == b"second"
+    assert post_statuses == [200]
 
 
 def test_gateway_rate_limit_filter_completes_sentinel_entry(monkeypatch):

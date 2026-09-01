@@ -14,6 +14,7 @@
 """
 import os
 import sys
+import threading
 
 import pytest
 
@@ -73,6 +74,29 @@ class TestDatabaseManagerConfigure:
         })
         from springbootai.orm.database import db_manager
         assert db_manager.db_url == 'sqlite:///:memory:'
+
+    def test_sessions_are_isolated_between_threads_and_released(self):
+        from springbootai.orm.database import DatabaseManager
+
+        manager = DatabaseManager(db_url="sqlite:///:memory:")
+        barrier = threading.Barrier(2)
+        session_ids = []
+
+        def worker():
+            session = manager.get_session()
+            session_ids.append(id(session))
+            barrier.wait(timeout=2)
+            manager._release_session(session)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+        manager.close()
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert len(set(session_ids)) == 2
 
 
 # ==================== Bug 2: profile 配置文件加载 ====================

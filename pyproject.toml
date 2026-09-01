@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # Distribution name: springbootAI (pip install springbootAI); import package: springbootai.
 name = "springbootAI"
-version = "2.3.10"
+version = "2.3.11"
 description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
 readme = "README.md"
 license = "MIT"
@@ -32,7 +32,7 @@ classifiers = [
     "Topic :: Database",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 
 # ========================================
 # 核心依赖——类似 Spring Boot Starter Web/Core
@@ -199,6 +199,7 @@ all = [
 dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
+    "mypy==1.18.2",
     "redis==8.1.0",
     "sqlglot==27.28.1",
 ]
@@ -278,6 +279,43 @@ markers = [
     "seata_integration: requires a compatible Seata SDK and real Seata Server",
 ]
 
+[tool.coverage.run]
+branch = true
+source = ["springbootai"]
+
+[tool.coverage.report]
+fail_under = 68
+show_missing = true
+
+[tool.mypy]
+python_version = "3.10"
+files = [
+    "springbootai/ai/annotation_runtime.py",
+    "springbootai/ai/advisors.py",
+    "springbootai/ai/vectorstore.py",
+    "springbootai/cloud/gateway.py",
+    "springbootai/websocket/router.py",
+    "springbootai/messaging/kafka.py",
+    "springbootai/messaging/rabbitmq.py",
+    "springbootai/data/repository.py",
+    "springbootai/retry/retry_decorator.py",
+    "springbootai/ai/tools.py",
+    "springbootai/cloud/bus.py",
+    "springbootai/cloud/tracer.py",
+    "springbootai/mcp/client.py",
+    "springbootai/mcp/config.py",
+    "springbootai/monitoring/prometheus.py",
+    "springbootai/orm/pymybatis/core/sql_session.py",
+    "springbootai/orm/pymybatis/security/access_control.py",
+    "springbootai/tx/synchronization.py",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
+allow_untyped_defs = true
+allow_incomplete_defs = true
+check_untyped_defs = true
+show_error_codes = true
+
 [project.urls]
 Homepage = "https://github.com/YUCONGGEN/springbootAI"
 Repository = "https://github.com/YUCONGGEN/springbootAI.git"
@@ -296,4 +334,4 @@ include = ["springbootai*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-springbootai = ["*.py", "**/*.py", "**/*.xml", "**/*.yml", "**/*.yaml"]
+springbootai = ["*.py", "py.typed", "**/*.py", "**/*.xml", "**/*.yml", "**/*.yaml"]

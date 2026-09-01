@@ -179,7 +179,9 @@ class ConfigurationPropertiesBinder:
         try:
             return cls()
         except Exception as exc:
-            logger.warning("构造嵌套配置类 %s 失败: %s", cls.__name__, exc)
+            logger.warning(
+                "构造嵌套配置类 %s 失败 error_type=%s",
+                cls.__name__, type(exc).__name__)
             return None
 
 

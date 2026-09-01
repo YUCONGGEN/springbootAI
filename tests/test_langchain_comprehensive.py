@@ -545,7 +545,9 @@ class TestDocumentLoaderRegistryExtended:
             f.write("Hello World")
             fname = f.name
         try:
-            loader = DocumentLoaderRegistry.create("text", fname)
+            loader = DocumentLoaderRegistry.create(
+                "text", fname, allowed_roots=[os.path.dirname(fname)]
+            )
             assert loader is not None
         finally:
             os.unlink(fname)

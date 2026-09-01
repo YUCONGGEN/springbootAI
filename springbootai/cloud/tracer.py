@@ -15,9 +15,13 @@ import random
 import threading
 import logging
 import functools
-from typing import Dict, List, Optional, Any, Callable
+import inspect
+from collections import deque
+from typing import Deque, Dict, List, Optional, Any, Callable
 from contextvars import ContextVar
 from enum import Enum
+
+from springbootai.logging.context import redact_log_data, safe_log_field
 
 logger = logging.getLogger("Spring.Cloud.Tracer")
 
@@ -61,28 +65,31 @@ class Span:
         self._ended = False
 
     def set_attribute(self, key: str, value: Any):
-        self.attributes[key] = value
+        safe_key = safe_log_field(key, limit=128)
+        self.attributes[safe_key] = redact_log_data({safe_key: value})[safe_key]
         return self
 
     def set_status(self, status: SpanStatus, description: str = ""):
         self.status = status
-        self.status_description = description
+        self.status_description = safe_log_field(description, limit=512)
         return self
 
-    def add_event(self, name: str, attributes: Dict[str, Any] = None):
+    def add_event(
+        self, name: str, attributes: Optional[Dict[str, Any]] = None
+    ):
         self.events.append({
-            'name': name,
+            'name': safe_log_field(name, limit=128),
             'timestamp_ns': time.time_ns(),
-            'attributes': attributes or {},
+            'attributes': redact_log_data(attributes or {}),
         })
         return self
 
     def record_exception(self, exception: Exception):
         self.add_event("exception", {
             'exception.type': type(exception).__name__,
-            'exception.message': str(exception),
+            'exception.message': safe_log_field(exception, limit=512),
         })
-        self.set_status(SpanStatus.ERROR, str(exception))
+        self.set_status(SpanStatus.ERROR, safe_log_field(exception, limit=512))
         return self
 
     def end(self):
@@ -98,6 +105,14 @@ class Span:
         return (end - self.start_time_ns) / 1_000_000
 
     def to_dict(self) -> dict:
+        tags = {
+            **redact_log_data(self.attributes),
+            'otel.status_code': self.status.value,
+            'error': (
+                safe_log_field(self.status_description, limit=512)
+                if self.status == SpanStatus.ERROR else ''
+            ),
+        }
         return {
             'traceId': self.trace_id,
             'id': self.span_id,
@@ -107,12 +122,8 @@ class Span:
             'timestamp': self.start_time_ns // 1000,  # microseconds for OTLP
             'duration': (self.end_time_ns - self.start_time_ns) // 1000 if self.end_time_ns else 0,
             'localEndpoint': {'serviceName': self.service_name},
-            'tags': self.attributes,
             'annotations': [{'timestamp': e['timestamp_ns'] // 1000, 'value': e['name']} for e in self.events],
-            'tags': {**self.attributes, **{
-                'otel.status_code': self.status.value,
-                'error': self.status_description if self.status == SpanStatus.ERROR else '',
-            }},
+            'tags': tags,
         }
 
 
@@ -130,15 +141,24 @@ def _parse_traceparent(header: str) -> Optional[tuple]:
     """解析 W3C traceparent header: 00-traceid-spanid-flags"""
     try:
         parts = header.strip().split('-')
-        if len(parts) >= 4:
-            version = parts[0]
-            trace_id = parts[1]
-            span_id = parts[2]
-            flags = parts[3]
-            if len(trace_id) == 32 and len(span_id) == 16:
-                return trace_id, span_id, flags
-    except Exception:
-        pass
+        if len(parts) < 4:
+            return None
+        version, trace_id, span_id, flags = parts[:4]
+        if version == "00" and len(parts) != 4:
+            return None
+        if (len(version) != 2 or version.lower() == "ff"
+                or len(trace_id) != 32 or len(span_id) != 16
+                or len(flags) != 2):
+            return None
+        int(version, 16)
+        int(trace_id, 16)
+        int(span_id, 16)
+        int(flags, 16)
+        if trace_id == "0" * 32 or span_id == "0" * 16:
+            return None
+        return trace_id.lower(), span_id.lower(), flags.lower()
+    except (AttributeError, TypeError, ValueError):
+        return None
     return None
 
 
@@ -158,14 +178,20 @@ class Tracer:
             ...
     """
     def __init__(self, service_name: str = "springpy-app", enabled: bool = True,
-                 sample_rate: float = 1.0, export_to_log: bool = True):
+                 sample_rate: float = 1.0, export_to_log: bool = True,
+                 max_finished_spans: int = 10_000):
+        if not isinstance(max_finished_spans, int) or not (
+                1 <= max_finished_spans <= 1_000_000):
+            raise ValueError("max_finished_spans must be in [1, 1000000]")
         self.service_name = service_name
         self.enabled = enabled
         self.sample_rate = sample_rate
         self.export_to_log = export_to_log
-        self._spans: List[Span] = []
+        self.max_finished_spans = max_finished_spans
+        self._spans: Deque[Span] = deque(maxlen=max_finished_spans)
         self._lock = threading.Lock()
-        self._span_stack: ContextVar[List[Span]] = ContextVar('span_stack', default=[])
+        self._span_stack: ContextVar[Optional[List[Span]]] = ContextVar(
+            'span_stack', default=None)
 
     def _should_sample(self) -> bool:
         if self.sample_rate >= 1.0:
@@ -175,8 +201,8 @@ class Tracer:
         return random.random() < self.sample_rate
 
     def start_span(self, name: str, kind: SpanKind = SpanKind.INTERNAL,
-                   attributes: Dict[str, Any] = None,
-                   traceparent: str = None) -> Span:
+                   attributes: Optional[Dict[str, Any]] = None,
+                   traceparent: Optional[str] = None) -> Span:
         if not self.enabled or not self._should_sample():
             # 返回一个空span（disabled）
             span = Span("0" * 32, "0" * 16, None, name, kind, self.service_name)
@@ -184,7 +210,7 @@ class Tracer:
             return span
 
         # 从context或traceparent获取父span
-        stack = self._span_stack.get()
+        stack = self._span_stack.get() or []
         parent_trace_id = None
         parent_span_id = None
 
@@ -204,7 +230,8 @@ class Tracer:
         span_id = _generate_span_id()
         span = Span(parent_trace_id, span_id, parent_span_id, name, kind, self.service_name)
         if attributes:
-            span.attributes.update(attributes)
+            for key, value in attributes.items():
+                span.set_attribute(key, value)
 
         new_stack = list(stack) + [span]
         self._span_stack.set(new_stack)
@@ -215,24 +242,31 @@ class Tracer:
             return
         span.end()
         # 从栈中移除
-        stack = self._span_stack.get()
+        stack = self._span_stack.get() or []
         if stack and stack[-1] is span:
             self._span_stack.set(stack[:-1])
         with self._lock:
             self._spans.append(span)
         if self.export_to_log and span.status == SpanStatus.ERROR:
-            logger.error(f"[Trace] {span.trace_id[:16]}... {span.name} "
-                         f"status={span.status.value} duration={span.duration_ms:.2f}ms error={span.status_description}")
+            logger.error(
+                "[Trace] %s... %s status=%s duration=%.2fms error=%s",
+                span.trace_id[:16], safe_log_field(span.name),
+                span.status.value, span.duration_ms,
+                safe_log_field(span.status_description),
+            )
         elif self.export_to_log:
-            logger.debug(f"[Trace] {span.trace_id[:16]}... {span.name} "
-                         f"duration={span.duration_ms:.2f}ms")
+            logger.debug(
+                "[Trace] %s... %s duration=%.2fms",
+                span.trace_id[:16], safe_log_field(span.name), span.duration_ms,
+            )
 
     def span(self, name: str, kind: SpanKind = SpanKind.INTERNAL,
-             attributes: Dict[str, Any] = None, traceparent: str = None):
+             attributes: Optional[Dict[str, Any]] = None,
+             traceparent: Optional[str] = None):
         return _SpanContext(self, name, kind, attributes, traceparent)
 
     def get_current_span(self) -> Optional[Span]:
-        stack = self._span_stack.get()
+        stack = self._span_stack.get() or []
         return stack[-1] if stack else None
 
     def get_traceparent_header(self) -> str:
@@ -244,26 +278,33 @@ class Tracer:
     def inject_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
         """将traceparent注入HTTP headers（用于Feign跨服务调用）"""
         tp = self.get_traceparent_header()
-        if tp:
+        current_span = self.get_current_span()
+        if tp and current_span is not None:
             headers['traceparent'] = tp
-            headers['X-B3-TraceId'] = self.get_current_span().trace_id
-            headers['X-B3-SpanId'] = self.get_current_span().span_id
+            headers['X-B3-TraceId'] = current_span.trace_id
+            headers['X-B3-SpanId'] = current_span.span_id
         return headers
 
     def extract_from_headers(self, headers: Dict[str, str]) -> Optional[str]:
         """从HTTP headers提取traceparent"""
         if not headers:
             return None
-        tp = headers.get('traceparent') or headers.get('Traceparent')
+        lowered = {str(key).lower(): str(value) for key, value in headers.items()}
+        tp = lowered.get('traceparent')
         if not tp:
-            # 尝试 B3 格式
-            tid = headers.get('X-B3-TraceId')
-            sid = headers.get('X-B3-SpanId')
+            # B3 支持 64/128-bit trace ID；W3C 只接受 128-bit，64-bit 左侧补零。
+            tid = lowered.get('x-b3-traceid', '').strip()
+            sid = lowered.get('x-b3-spanid', '').strip()
             if tid and sid:
-                tp = f"00-{tid}-sid-01"
-        return tp
+                if len(tid) == 16:
+                    tid = "0" * 16 + tid
+                sampled = lowered.get('x-b3-sampled', '1').strip().lower()
+                flags = '00' if sampled in {'0', 'false'} else '01'
+                candidate = f"00-{tid}-{sid}-{flags}"
+                tp = candidate if _parse_traceparent(candidate) else None
+        return tp if tp and _parse_traceparent(tp) else None
 
-    def get_spans(self, trace_id: str = None) -> List[Span]:
+    def get_spans(self, trace_id: Optional[str] = None) -> List[Span]:
         with self._lock:
             if trace_id:
                 return [s for s in self._spans if s.trace_id == trace_id]
@@ -277,13 +318,14 @@ class Tracer:
 class _SpanContext:
     """Span 上下文管理器"""
     def __init__(self, tracer: Tracer, name: str, kind: SpanKind,
-                 attributes: Dict[str, Any], traceparent: str):
+                 attributes: Optional[Dict[str, Any]],
+                 traceparent: Optional[str]):
         self.tracer = tracer
         self.name = name
         self.kind = kind
         self.attributes = attributes
         self.traceparent = traceparent
-        self.span = None
+        self.span: Optional[Span] = None
 
     def __enter__(self):
         self.span = self.tracer.start_span(self.name, self.kind,
@@ -291,6 +333,8 @@ class _SpanContext:
         return self.span
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.span is None:
+            return False
         if exc_val is not None:
             self.span.record_exception(exc_val)
         self.tracer.end_span(self.span)
@@ -323,15 +367,18 @@ def trace_span(name: str = "", kind: SpanKind = SpanKind.INTERNAL):
     def decorator(func: Callable) -> Callable:
         span_name = name or f"{func.__module__}.{func.__qualname__}"
 
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                tracer = get_tracer()
+                with tracer.span(span_name, kind):
+                    return await func(*args, **kwargs)
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             tracer = get_tracer()
-            with tracer.span(span_name, kind) as span:
-                try:
-                    result = func(*args, **kwargs)
-                    return result
-                except Exception as e:
-                    span.record_exception(e)
-                    raise
+            with tracer.span(span_name, kind):
+                return func(*args, **kwargs)
         return wrapper
     return decorator

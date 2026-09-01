@@ -9,16 +9,20 @@ from springbootai.web.actuator import actuator_router
 @pytest.fixture
 def client():
     """构建带 actuator 路由的 TestClient（关闭鉴权以便测试端点功能）"""
-    # 临时关闭鉴权：prometheus/sysmetrics 等敏感端点在生产环境需要 JWT，
-    # 但本测试套件验证端点行为而非鉴权逻辑
-    original_secured = actuator_module._actuator_secured
-    actuator_module._actuator_secured = False
     app = FastAPI()
     app.include_router(actuator_router, prefix="/actuator")
-    try:
-        yield TestClient(app)
-    finally:
-        actuator_module._actuator_secured = original_secured
+    # 只为这个测试应用显式开放可选端点，避免修改进程全局状态。
+    app.state.springbootai_actuator_state = {
+        "context": None,
+        "secured": False,
+        "roles": frozenset({"ADMIN", "ACTUATOR"}),
+        "dashboard": dict(actuator_module._admin_dashboard_config),
+        "endpoints": {
+            name: True for name in actuator_module._OPTIONAL_ACTUATOR_ENDPOINTS
+        },
+        "configured": True,
+    }
+    yield TestClient(app)
 
 
 # ==================== /actuator/prometheus 测试 ====================

@@ -39,7 +39,19 @@ jobs:
         pip install -r requirements-ai.txt
         pip install -r requirements-langgraph.txt
         pip install -r requirements-mcp.txt
-        pip install bandit==1.9.4 pip-audit==2.10.1
+        pip install bandit==1.9.4 pip-audit==2.10.1 ruff==0.16.2
+
+    - name: Static correctness check
+      run: |
+        ruff check springbootai --select E9,F63,F7,F82,F601
+        ruff check \
+          springbootai/ai/tools.py springbootai/cloud/bus.py \
+          springbootai/cloud/tracer.py springbootai/mcp/client.py \
+          springbootai/mcp/config.py springbootai/monitoring/prometheus.py \
+          springbootai/orm/pymybatis/core/sql_session.py \
+          springbootai/orm/pymybatis/security/access_control.py \
+          springbootai/tx/synchronization.py \
+          --select E9,F63,F7,F82,F601,B,ASYNC
 
     - name: pip-audit vulnerability scan (core + AI deps)
       run: |
@@ -53,9 +65,9 @@ jobs:
 
     - name: Bandit security static analysis
       run: |
-        echo "Running bandit security scan (only high severity issues will block)..."
+        echo "Running bandit security scan (medium/high severity issues block)..."
         bandit -r springbootai/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ \
-          -lll -f json -o bandit-report.json
+          -ll -f json -o bandit-report.json
         echo "Bandit scan completed"
 
     - name: Check for hardcoded secrets

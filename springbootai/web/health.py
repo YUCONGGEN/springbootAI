@@ -9,7 +9,8 @@ import concurrent.futures
 import platform
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Mapping
-from fastapi import APIRouter
+from typing import Optional
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from springbootai.utils.redis_client import redis_client
 from springbootai.cloud.discovery import nacos_client
@@ -23,14 +24,31 @@ logger = logging.getLogger("Spring.Web.Health")
 
 health_router = APIRouter()
 _application_context = None
+_HEALTH_CONTEXT_ATTRIBUTE = "springbootai_health_context"
 
 
 def configure_health_checks(application_context) -> None:
     global _application_context
     _application_context = application_context
+    try:
+        web_context = getattr(application_context, "web_context", None)
+        app = web_context.get_app() if web_context is not None else None
+        if app is not None:
+            setattr(app.state, _HEALTH_CONTEXT_ATTRIBUTE, application_context)
+    except Exception:
+        logger.debug("Unable to bind per-application health context", exc_info=True)
 
 
-def _config_section(name: str) -> dict:
+def _context_for_request(request: Optional[Request] = None):
+    if request is not None:
+        try:
+            return getattr(request.app.state, _HEALTH_CONTEXT_ATTRIBUTE)
+        except (AttributeError, RuntimeError):
+            pass
+    return _application_context
+
+
+def _config_section(name: str, context=None) -> dict:
     """Read a config section defensively for health probes.
 
     Health endpoints must remain available while configuration is incomplete or
@@ -38,7 +56,8 @@ def _config_section(name: str) -> dict:
     letting an incidental ``AttributeError`` turn the probe itself into 500.
     """
     try:
-        config = _application_context.get_config() if _application_context is not None else {}
+        active_context = context if context is not None else _application_context
+        config = active_context.get_config() if active_context is not None else {}
     except Exception:
         return {}
     if not isinstance(config, Mapping):
@@ -52,11 +71,11 @@ def _config_section(name: str) -> dict:
 _CHECK_TIMEOUT_SECONDS = 2.0
 
 _COMPONENT_CHECKS = {
-    'redis': lambda: _check_redis(),
-    'database': lambda: _check_database(),
-    'nacos': lambda: _check_nacos(),
-    'rabbitmq': lambda: _check_rabbitmq(),
-    'seata': lambda: _check_seata(),
+    'redis': lambda context=None: _check_redis(context),
+    'database': lambda context=None: _check_database(context),
+    'nacos': lambda context=None: _check_nacos(context),
+    'rabbitmq': lambda context=None: _check_rabbitmq(context),
+    'seata': lambda context=None: _check_seata(context),
 }
 
 # 模块级有界线程池：限制健康检查的总线程数，防止组件卡死时线程无限增长。
@@ -69,7 +88,7 @@ _COMPONENT_CHECKS = {
 # 新版本使用模块级有界线程池：
 # - max_workers 限制总线程数（组件数 × 2，留出并发余量）
 # - 卡住的 worker 占用槽位但不会新增线程
-# - future.result(timeout=...) 保证响应不阻塞
+# - concurrent.futures.wait 使用一个共享截止时间，避免组件超时串行累加
 # - 超时的 future 调用 cancel() 清理队列中的待运行任务
 # - 进程退出时 atexit 注册 shutdown(wait=False) 不等待卡住的任务
 _HEALTH_CHECK_WORKERS = max(len(_COMPONENT_CHECKS) * 2, 10)
@@ -108,35 +127,58 @@ def _run_with_timeout(func, timeout: float = _CHECK_TIMEOUT_SECONDS):
             'enabled': True,
             'reason': f'health check timeout after {timeout}s'
         }
-    except Exception as e:
-        return {'status': 'DOWN', 'enabled': True, 'reason': str(e)}
+    except Exception as exc:
+        return _failed_health_result("component", exc)
 
 
-def _collect_component_health() -> dict:
+def _failed_health_result(component: str, exc: BaseException) -> dict:
+    """Return a stable public failure without exposing credentials/topology."""
+    logger.warning(
+        "%s health check failed error_type=%s",
+        component, type(exc).__name__,
+    )
+    return {
+        'status': 'DOWN',
+        'enabled': True,
+        'reason': f'{component} health check failed ({type(exc).__name__})',
+    }
+
+
+def _collect_component_health(context=None) -> dict:
     """并发执行各组件检查，复用模块级有界线程池，探针耗时接近单个检查的最大超时。
 
     修复线程泄漏：旧版本每次调用创建新的 ``ThreadPoolExecutor``（with 块退出时
     ``shutdown(wait=True)`` 阻塞等待卡住任务，反而让超时失效），并在每个
     ``_run_with_timeout`` 内再创建 daemon 线程，导致线程数 = 组件数 × 2 每次调用。
-    新版本直接提交到共享有界池，``future.result(timeout=...)`` 保证不阻塞。
+    新版本直接提交到共享有界池，并以一个共享截止时间等待全部组件。
     """
     futures = {
-        name: _HEALTH_CHECK_POOL.submit(check)
+        name: (
+            _HEALTH_CHECK_POOL.submit(check, context)
+            if context is not None else
+            _HEALTH_CHECK_POOL.submit(check)
+        )
         for name, check in _COMPONENT_CHECKS.items()
     }
+    # 所有组件共享同一截止时间，避免线程池饱和时逐个 future 的 timeout
+    # 累加为 ``组件数 × timeout``。
+    done, _ = concurrent.futures.wait(
+        futures.values(), timeout=_CHECK_TIMEOUT_SECONDS,
+    )
     results = {}
     for name, future in futures.items():
-        try:
-            results[name] = future.result(timeout=_CHECK_TIMEOUT_SECONDS)
-        except concurrent.futures.TimeoutError:
+        if future not in done:
             future.cancel()
             results[name] = {
                 'status': 'DOWN',
                 'enabled': True,
                 'reason': f'health check timeout after {_CHECK_TIMEOUT_SECONDS}s'
             }
-        except Exception as e:
-            results[name] = {'status': 'DOWN', 'enabled': True, 'reason': str(e)}
+            continue
+        try:
+            results[name] = future.result()
+        except Exception as exc:
+            results[name] = _failed_health_result(name, exc)
     return results
 
 
@@ -150,7 +192,7 @@ def _enabled_down_components(components: dict) -> list:
 
 
 @health_router.get('/health')
-def health_check():
+def health_check(request: Request = None):
     """
     健康检查端点
     返回所有组件的健康状态
@@ -164,7 +206,11 @@ def health_check():
         'components': {}
     }
     
-    health_status['components'] = _collect_component_health()
+    if request is None:
+        health_status['components'] = _collect_component_health()
+    else:
+        health_status['components'] = _collect_component_health(
+            _context_for_request(request))
     if _enabled_down_components(health_status['components']):
         health_status['status'] = 'DEGRADED'
     
@@ -188,7 +234,7 @@ def liveness_check():
 
 
 @health_router.get('/health/readiness')
-def readiness_check():
+def readiness_check(request: Request = None):
     """
     就绪检查端点
     检查应用是否准备好处理请求
@@ -196,7 +242,11 @@ def readiness_check():
     Returns:
         JSON格式的就绪状态
     """
-    components = _collect_component_health()
+    components = (
+        _collect_component_health()
+        if request is None else
+        _collect_component_health(_context_for_request(request))
+    )
     unavailable = _enabled_down_components(components)
     if unavailable:
         return JSONResponse(content={
@@ -214,9 +264,10 @@ def readiness_check():
 
 
 @health_router.get('/info')
-def info_check():
+def info_check(request: Request = None):
     """返回不包含密钥和连接凭据的应用基本信息。"""
-    spring_config = _config_section('spring')
+    spring_config = _config_section(
+        'spring', _context_for_request(request))
     application_config = (
         dict(spring_config.get('application', {}))
         if isinstance(spring_config.get('application', {}), Mapping) else {}
@@ -243,13 +294,13 @@ def info_check():
     }, status_code=200)
 
 
-def _check_redis() -> dict:
+def _check_redis(context=None) -> dict:
     """检查Redis健康状态"""
     try:
         # 尊重 application.yml 的 redis.enabled 配置：
         # 未启用时不尝试连接，直接返回 DISABLED，避免拖累整体健康状态
         try:
-            redis_cfg = _config_section('redis')
+            redis_cfg = _config_section('redis', context)
             if not redis_cfg.get('enabled', False):
                 return {
                     'status': 'DISABLED',
@@ -263,12 +314,9 @@ def _check_redis() -> dict:
         client = redis_client.get_client()
         if client:
             client.ping()
-            info = client.info()
             return {
                 'status': 'UP',
                 'enabled': True,
-                'version': info.get('redis_version', 'unknown'),
-                'used_memory': info.get('used_memory_human', 'unknown')
             }
         else:
             return {
@@ -276,19 +324,16 @@ def _check_redis() -> dict:
                 'enabled': False,
                 'reason': 'Redis not configured'
             }
-    except Exception as e:
-        return {
-            'status': 'DOWN',
-            'enabled': True,
-            'reason': str(e)
-        }
+    except Exception as exc:
+        return _failed_health_result("redis", exc)
 
 
-def _check_database() -> dict:
+def _check_database(context=None) -> dict:
     """检查数据库健康状态"""
     try:
-        if _application_context is not None:
-            database_config = _config_section('database')
+        active_context = context if context is not None else _application_context
+        if active_context is not None:
+            database_config = _config_section('database', active_context)
             if not database_config.get('enabled', False):
                 return {
                     'status': 'DISABLED',
@@ -296,17 +341,16 @@ def _check_database() -> dict:
                     'reason': 'Database not configured (database.enabled=false)',
                 }
 
-        if _application_context is not None and _application_context.contains_bean(
+        if active_context is not None and active_context.contains_bean(
             'sqlSessionFactory'
         ):
-            factory = _application_context.get_bean('sqlSessionFactory')
+            factory = active_context.get_bean('sqlSessionFactory')
             pooled_connection = factory.connection_pool.get_connection()
             factory.connection_pool.return_connection(pooled_connection)
             return {
                 'status': 'UP',
                 'enabled': True,
                 'type': 'mybatis',
-                'pool': factory.connection_pool.get_pool_stats(),
             }
 
         engine = db_manager.get_engine() if db_manager is not None else None
@@ -316,7 +360,7 @@ def _check_database() -> dict:
             return {
                 'status': 'UP',
                 'enabled': True,
-                'url': db_manager.db_url
+                'type': 'sqlalchemy',
             }
         else:
             return {
@@ -324,45 +368,33 @@ def _check_database() -> dict:
                 'enabled': False,
                 'reason': 'Database not configured'
             }
-    except Exception as e:
-        return {
-            'status': 'DOWN',
-            'enabled': True,
-            'reason': str(e)
-        }
+    except Exception as exc:
+        return _failed_health_result("database", exc)
 
 
-def _check_nacos() -> dict:
+def _check_nacos(context=None) -> dict:
     """检查Nacos健康状态"""
     try:
-        if not _config_section('discovery').get('enabled', False):
+        if not _config_section('discovery', context).get('enabled', False):
             return {'status': 'DISABLED', 'enabled': False, 'reason': 'Nacos not configured'}
         if nacos_client.is_healthy():
-            services = nacos_client.get_services()
             return {
                 'status': 'UP',
                 'enabled': True,
-                'server_addr': nacos_client.server_addr,
-                'service_count': len(services) if services else 0
             }
         return {
             'status': 'DOWN',
             'enabled': True,
-            'server_addr': nacos_client.server_addr,
             'reason': 'Nacos liveness check failed'
         }
-    except Exception as e:
-        return {
-            'status': 'DOWN',
-            'enabled': True,
-            'reason': str(e)
-        }
+    except Exception as exc:
+        return _failed_health_result("nacos", exc)
 
 
-def _check_rabbitmq() -> dict:
+def _check_rabbitmq(context=None) -> dict:
     """检查RabbitMQ健康状态"""
     try:
-        if not _config_section('rabbitmq').get('enabled', False):
+        if not _config_section('rabbitmq', context).get('enabled', False):
             return {'status': 'DISABLED', 'enabled': False, 'reason': 'RabbitMQ not configured'}
         from springbootai.messaging.rabbitmq import rabbitmq_client
         channel = rabbitmq_client._channel
@@ -373,8 +405,6 @@ def _check_rabbitmq() -> dict:
             return {
                 'status': 'UP',
                 'enabled': True,
-                'host': rabbitmq_client.host,
-                'port': rabbitmq_client.port
             }
         return {'status': 'DOWN', 'enabled': True, 'reason': 'RabbitMQ channel is unavailable'}
     except ImportError:
@@ -383,19 +413,15 @@ def _check_rabbitmq() -> dict:
             'enabled': False,
             'reason': 'RabbitMQ not available (pika not installed)'
         }
-    except Exception as e:
-        return {
-            'status': 'DOWN',
-            'enabled': True,
-            'reason': str(e)
-        }
+    except Exception as exc:
+        return _failed_health_result("rabbitmq", exc)
 
 
-def _check_seata() -> dict:
+def _check_seata(context=None) -> dict:
     """检查Seata健康状态"""
     from springbootai.cloud.seata import seata_manager
     try:
-        seata_config = _config_section('seata')
+        seata_config = _config_section('seata', context)
         if not seata_config.get('enabled', False):
             return {'status': 'DISABLED', 'enabled': False, 'reason': 'Seata not configured'}
         mode = str(seata_config.get('mode', 'local')).lower()
@@ -405,14 +431,10 @@ def _check_seata() -> dict:
                     'status': 'DOWN', 'enabled': True,
                     'reason': 'HTTP compensation coordinator is not initialized',
                 }
-            counts = seata_manager._ensure_transaction_store().active_counts()
             return {
                 'status': 'UP', 'enabled': True,
                 'mode': 'http-compensation',
-                'active_global_tx': counts['active_global_tx'],
-                'active_branches': counts['active_branches'],
                 'warning': 'Persistent compensation only; no Seata AT consistency',
-                'store_path': seata_manager._transaction_store_path,
             }
         if mode == 'local':
             return {
@@ -420,16 +442,14 @@ def _check_seata() -> dict:
                 'reason': 'Local mode does not provide distributed transaction guarantees',
             }
         health = seata_manager.check_health()
-        return {
-            **health,
+        status = health.get('status', 'DOWN') if isinstance(health, Mapping) else 'DOWN'
+        result = {
+            'status': status,
             'enabled': True,
-            'bridge_url': seata_manager.bridge_url,
-            'application_id': seata_manager.application_id,
-            'transaction_group': seata_manager.transaction_group,
+            'mode': 'distributed',
         }
-    except Exception as e:
-        return {
-            'status': 'DOWN',
-            'enabled': True,
-            'reason': str(e)
-        }
+        if status != 'UP':
+            result['reason'] = 'Seata bridge health check failed'
+        return result
+    except Exception as exc:
+        return _failed_health_result("seata", exc)

@@ -9,6 +9,7 @@
 这样 springbootAI 的 @Tool 注解与 langchain Agent 生态完全互通。
 """
 import logging
+import asyncio
 from typing import Any, Callable, List, Optional
 
 
@@ -53,14 +54,41 @@ class ToolFactory:
         if spring_registry is None or not hasattr(spring_registry, "names"):
             return []
         tools = []
+        policy = getattr(spring_registry, "policy", None)
+        allowed_tools = getattr(policy, "allowed_tools", None)
+        allow_dangerous = bool(getattr(policy, "allow_dangerous", False))
         for name in spring_registry.names():
             td = spring_registry.get(name)
             if td is None:
                 continue
-            func = td.func
-            desc = td.description or (func.__doc__ or "").strip().split("\n")[0]
-            tools.append(ToolFactory.from_function(func, name=name,
-                                                   description=desc))
+            # Do not expose a tool the native registry would reject. More
+            # importantly, never hand LangChain the raw function: doing so
+            # bypasses argument validation, authorization, approval, timeout,
+            # dangerous-tool and output-size policies in ToolRegistry.execute.
+            if allowed_tools is not None and name not in allowed_tools:
+                continue
+            if bool(getattr(td, "dangerous", False)) and not allow_dangerous:
+                continue
+
+            def guarded_call(_tool_name=name, **arguments):
+                return spring_registry.execute(_tool_name, arguments)
+
+            async def guarded_acall(_tool_name=name, **arguments):
+                return await asyncio.to_thread(
+                    spring_registry.execute, _tool_name, arguments
+                )
+
+            desc = td.description or (td.func.__doc__ or "").strip().split("\n")[0]
+            schema = td.to_schema()["function"]["parameters"]
+            from langchain_core.tools import StructuredTool
+            tools.append(StructuredTool.from_function(
+                func=guarded_call,
+                coroutine=guarded_acall,
+                name=name,
+                description=desc,
+                args_schema=schema,
+                infer_schema=False,
+            ))
         return tools
 
 

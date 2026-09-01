@@ -726,7 +726,7 @@ class Cacheable(SpringAnnotation):
 
     def __init__(
         self,
-        value: str,
+        value: str = "",
         key: Optional[str] = None,
         condition: Optional[str] = None,
     ):

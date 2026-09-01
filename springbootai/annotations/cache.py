@@ -83,7 +83,8 @@ class CacheConfig(SpringAnnotation):
 
     Args:
         cache_names:    默认缓存名列表（方法注解未指定 ``value`` 时取第一个）。
-        key_generator:  key 生成器名（保留字段，当前未实现自定义生成器，仅元数据）。
+        key_generator:  IoC 容器中的 key 生成器 Bean 名。Bean 可实现
+                        ``generate(target, method, params)``，或直接作为同签名 callable。
     """
 
     _annotation_type = "aop"

@@ -19,6 +19,7 @@ from springbootai.context.registry import BeanRegistry
 from springbootai.mcp import (
     MCPCall,
     MCPClientConnection,
+    MCPClientError,
     MCPClient,
     MCPClientProperties,
     MCPConfigurationError,
@@ -77,6 +78,57 @@ def _client(server, **overrides):
     values.update(overrides)
     props = MCPClientProperties(**values).validate()
     return MCPClientConnection(props, server=server.native_server)
+
+
+def test_timed_out_request_cancels_local_execution_task():
+    connection = MCPClientConnection(MCPClientProperties(
+        name="cancel", transport="stdio", command="unused",
+        timeout_seconds=0.02,
+    ))
+
+    async def scenario():
+        connection._requests = asyncio.Queue()
+        cancelled = asyncio.Event()
+
+        async def connected():
+            return connection
+
+        connection.connect = connected
+
+        async def consume_request():
+            request = await connection._requests.get()
+            result_future = request[3]
+
+            async def remote_operation():
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+            task = asyncio.create_task(remote_operation())
+            connection._active_tasks[result_future] = task
+            try:
+                result = await task
+                if not result_future.done():
+                    result_future.set_result(result)
+            except BaseException as exc:
+                if not result_future.done():
+                    result_future.set_exception(exc)
+            finally:
+                connection._active_tasks.pop(result_future, None)
+
+        consumer = asyncio.create_task(consume_request())
+        started = time.perf_counter()
+        with pytest.raises(MCPClientError, match="timed out"):
+            await connection._request("call_tool")
+        elapsed = time.perf_counter() - started
+        await consumer
+        return elapsed, cancelled.is_set()
+
+    elapsed, cancelled = _run(scenario())
+    assert elapsed < 0.2
+    assert cancelled is True
 
 
 def test_disabled_config_is_dependency_free_and_defaults_closed():

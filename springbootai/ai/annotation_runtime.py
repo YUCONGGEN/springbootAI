@@ -441,6 +441,64 @@ def _moderate(value: Any, annotation: ContentModeration) -> None:
             raise ContentModerationError("内容审核未通过")
 
 
+def _trusted_request_context(values: dict[str, Any]) -> dict[str, Any]:
+    """Build AI authorization context from the authenticated execution context.
+
+    Method arguments are often populated directly from an HTTP request.  Treating
+    an argument named ``tenant_id`` or ``user_id`` as an authenticated identity
+    would therefore let callers select another tenant.  Identity is copied only
+    from ``SecurityContextHolder``.  A caller-supplied conversation id remains a
+    session selector, but is accepted only when it is scoped by a trusted user or
+    tenant identity.
+    """
+    try:
+        from springbootai.security.security_context import SecurityContextHolder
+        authentication = SecurityContextHolder.get_authentication()
+    except (ImportError, AttributeError):
+        authentication = None
+    if not isinstance(authentication, dict):
+        return {}
+
+    details = authentication.get("details")
+    if not isinstance(details, dict):
+        details = {}
+    principal = authentication.get("principal")
+    principal_data = principal if isinstance(principal, dict) else {}
+
+    def first(*candidates: Any) -> Any:
+        return next((value for value in candidates
+                     if value is not None and str(value).strip()), None)
+
+    tenant_id = first(
+        details.get("tenant_id"), details.get("tenant"),
+        authentication.get("tenant_id"), authentication.get("tenant"),
+        principal_data.get("tenant_id"), principal_data.get("tenant"),
+    )
+    user_id = first(
+        details.get("user_id"), details.get("sub"), details.get("id"),
+        authentication.get("user_id"), authentication.get("sub"),
+        principal_data.get("user_id"), principal_data.get("sub"),
+        principal_data.get("id"),
+        None if isinstance(principal, dict) else principal,
+    )
+    context = {}
+    if tenant_id is not None:
+        context["tenant_id"] = tenant_id
+    if user_id is not None:
+        context["user_id"] = user_id
+    if context:
+        conversation_id = first(details.get("conversation_id"),
+                                values.get("conversation_id"))
+        if conversation_id is not None:
+            context["conversation_id"] = conversation_id
+    return context
+
+
+def _apply_trusted_request_context(spec: Any, values: dict[str, Any]) -> None:
+    for key, value in _trusted_request_context(values).items():
+        spec.param(key, value)
+
+
 def _invoke_chat(factory: Any, annotation: Prompt, query: str, values: dict[str, Any]) -> Any:
     client = _resolve(factory, annotation.client)
     if client is None:
@@ -450,10 +508,24 @@ def _invoke_chat(factory: Any, annotation: Prompt, query: str, values: dict[str,
     if system:
         spec.system(system)
     spec.user(query)
-    for key in ("tenant_id", "user_id", "conversation_id"):
-        if values.get(key) is not None:
-            spec.param(key, values[key])
+    _apply_trusted_request_context(spec, values)
     return spec.call()
+
+
+async def _invoke_chat_async(factory: Any, annotation: Prompt, query: str,
+                             values: dict[str, Any]) -> Any:
+    client = _resolve(factory, annotation.client)
+    if client is None:
+        raise RuntimeError(f"未找到 ChatClient Bean: {annotation.client}")
+    spec = client.prompt()
+    system = _render(annotation.system, values)
+    if system:
+        spec.system(system)
+    spec.user(query)
+    _apply_trusted_request_context(spec, values)
+    if hasattr(spec, "acall"):
+        return await spec.acall()
+    return await asyncio.to_thread(spec.call)
 
 
 def _invoke_rag(factory: Any, annotation: RAG, query: str,
@@ -467,15 +539,33 @@ def _invoke_rag(factory: Any, annotation: RAG, query: str,
     advisor = QuestionAnswerAdvisor(
         store, prompt_template=annotation.prompt_template,
         top_k=annotation.top_k, embedding_model=embedding,
+        max_context_chars=annotation.max_context_chars,
+        max_document_chars=annotation.max_document_chars,
     )
     spec = client.prompt().advisors(advisor).user(query)
-    # Carry only identity/session fields into AdvisorRequest. Arbitrary method
-    # arguments must never become trusted authorization context implicitly.
-    values = values or {}
-    for key in ("tenant_id", "user_id", "conversation_id"):
-        if values.get(key) is not None:
-            spec.param(key, values[key])
+    _apply_trusted_request_context(spec, values or {})
     return spec.call()
+
+
+async def _invoke_rag_async(factory: Any, annotation: RAG, query: str,
+                            values: Optional[dict[str, Any]] = None) -> Any:
+    client = _resolve(factory, annotation.client)
+    store = _resolve(factory, annotation.vector_store)
+    embedding = _resolve(factory, annotation.embedding)
+    if client is None or store is None:
+        raise RuntimeError("@RAG 需要 aiChatClient 和 aiVectorStore Bean")
+    from springbootai.ai.advisors import QuestionAnswerAdvisor
+    advisor = QuestionAnswerAdvisor(
+        store, prompt_template=annotation.prompt_template,
+        top_k=annotation.top_k, embedding_model=embedding,
+        max_context_chars=annotation.max_context_chars,
+        max_document_chars=annotation.max_document_chars,
+    )
+    spec = client.prompt().advisors(advisor).user(query)
+    _apply_trusted_request_context(spec, values or {})
+    if hasattr(spec, "acall"):
+        return await spec.acall()
+    return await asyncio.to_thread(spec.call)
 
 
 def _invoke_agent(factory: Any, annotation: Agent, query: str) -> Any:
@@ -487,6 +577,28 @@ def _invoke_agent(factory: Any, annotation: Agent, query: str) -> Any:
     if client is None:
         raise RuntimeError("@Agent 需要 lcAgentService 或 aiChatClient Bean")
     return client.prompt().user(query).call()
+
+
+async def _invoke_agent_async(factory: Any, annotation: Agent, query: str) -> Any:
+    service = _resolve(factory, annotation.service)
+    if service is not None and hasattr(service, "run_agent"):
+        callback = service.run_agent
+        result = callback(
+            annotation.tools, query, agent_type=annotation.agent_type,
+            max_iterations=annotation.max_iterations,
+        ) if inspect.iscoroutinefunction(callback) else await asyncio.to_thread(
+            callback, annotation.tools, query,
+            agent_type=annotation.agent_type,
+            max_iterations=annotation.max_iterations,
+        )
+        return await result if inspect.isawaitable(result) else result
+    client = _resolve(factory, annotation.client)
+    if client is None:
+        raise RuntimeError("@Agent 需要 lcAgentService 或 aiChatClient Bean")
+    spec = client.prompt().user(query)
+    if hasattr(spec, "acall"):
+        return await spec.acall()
+    return await asyncio.to_thread(spec.call)
 
 
 def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Callable:
@@ -516,11 +628,13 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
                 query = _render(prompt_ann.template, values)
                 result = _invoke_chat(factory, prompt_ann, query, values)
             elif rag_ann:
-                query = _render(prompt_ann.template, values) if prompt_ann and prompt_ann.template else None
-                if query is None:
+                rag_query: Optional[str] = (
+                    _render(prompt_ann.template, values)
+                    if prompt_ann and prompt_ann.template else None)
+                if rag_query is None:
                     original = method(*args, **kwargs)
-                    query = _content(original)
-                result = _invoke_rag(factory, rag_ann, query, values)
+                    rag_query = _content(original)
+                result = _invoke_rag(factory, rag_ann, rag_query, values)
             elif agent_ann:
                 original = method(*args, **kwargs)
                 result = _invoke_agent(factory, agent_ann, _content(original))
@@ -554,16 +668,20 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
         values = _arguments(method, args, kwargs)
         if prompt_ann or rag_ann or agent_ann:
             if prompt_ann and prompt_ann.template:
-                result = _invoke_chat(factory, prompt_ann, _render(prompt_ann.template, values), values)
+                result = await _invoke_chat_async(
+                    factory, prompt_ann, _render(prompt_ann.template, values), values)
             elif rag_ann:
                 original = await method(*args, **kwargs)
-                result = _invoke_rag(factory, rag_ann, _content(original), values)
+                result = await _invoke_rag_async(
+                    factory, rag_ann, _content(original), values)
             elif agent_ann:
                 original = await method(*args, **kwargs)
-                result = _invoke_agent(factory, agent_ann, _content(original))
+                result = await _invoke_agent_async(
+                    factory, agent_ann, _content(original))
             else:
                 original = await method(*args, **kwargs)
-                result = _invoke_chat(factory, prompt_ann, _content(original), values)
+                result = await _invoke_chat_async(
+                    factory, prompt_ann, _content(original), values)
         else:
             result = await method(*args, **kwargs)
         if inspect.isawaitable(result):
@@ -623,7 +741,9 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
                             last = exc
                             if attempt + 1 < retry_ann.attempts:
                                 await asyncio.sleep(retry_ann.delay_ms / 1000)
-                    raise last
+                    if last is not None:
+                        raise last
+                    raise RuntimeError("@AiRetry requires at least one attempt")
                 return await execute_async(*args, **kwargs)
             if cache_ann:
                 key = _make_cache_key(method, cache_ann, values)

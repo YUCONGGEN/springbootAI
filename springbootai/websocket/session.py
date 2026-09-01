@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import uuid
@@ -30,7 +31,8 @@ class WebSocketSession:
     每个会话有唯一 ``id``；``attributes`` 用于在生命周期钩子间传递用户态数据。
     """
 
-    def __init__(self, websocket, user: Optional[str] = None):
+    def __init__(self, websocket, user: Optional[str] = None,
+                 send_timeout: float = 10.0):
         # 延迟导入以避免顶层依赖 FastAPI/Starlette（仅类型注解需要）
         self._ws = websocket
         self._id: str = uuid.uuid4().hex
@@ -38,6 +40,8 @@ class WebSocketSession:
         self._user: Optional[str] = user
         self._closed: bool = False
         self._lock = threading.Lock()
+        self._send_lock = asyncio.Lock()
+        self._send_timeout = max(0.001, float(send_timeout))
 
     # ==================== 属性 ====================
 
@@ -79,21 +83,29 @@ class WebSocketSession:
     # ==================== 发送 ====================
 
     async def send_text(self, message: str) -> None:
-        if self._closed:
-            logger.debug("send_text on closed session %s, ignored", self._id)
-            return
-        await self._ws.send_text(message)
+        await self._send(self._ws.send_text, message)
 
     async def send_bytes(self, data: bytes) -> None:
-        if self._closed:
-            return
-        await self._ws.send_bytes(data)
+        await self._send(self._ws.send_bytes, data)
 
     async def send_json(self, data: Any) -> None:
         """发送 JSON 消息。Starlette ``send_json`` 内部用 ``json.dumps``。"""
+        await self._send(self._ws.send_json, data)
+
+    async def _send(self, callback, value: Any) -> None:
         if self._closed:
+            logger.debug("send on closed session %s, ignored", self._id)
             return
-        await self._ws.send_json(data)
+        async with self._send_lock:
+            if self._closed:
+                return
+            try:
+                await asyncio.wait_for(
+                    callback(value), timeout=self._send_timeout)
+            except asyncio.TimeoutError:
+                self.mark_closed()
+                raise TimeoutError(
+                    f"WebSocket send timed out for session {self._id}") from None
 
     # ==================== 关闭 ====================
 
@@ -103,9 +115,16 @@ class WebSocketSession:
                 return
             self._closed = True
         try:
-            await self._ws.close(code=code, reason=reason)
+            async with self._send_lock:
+                await asyncio.wait_for(
+                    self._ws.close(code=code, reason=reason),
+                    timeout=self._send_timeout,
+                )
         except Exception as exc:
-            logger.debug("close session %s failed: %s", self._id, exc)
+            logger.debug(
+                "close session %s failed error_type=%s",
+                self._id, type(exc).__name__,
+            )
 
     def mark_closed(self) -> None:
         """标记会话已关闭（不主动发 close 帧，用于异常分支）。"""
@@ -132,9 +151,12 @@ class WebSocketSessionRegistry:
     推送方法自动跳过已关闭的会话；推送是 ``async`` 的，需要事件循环驱动。
     """
 
-    def __init__(self):
+    def __init__(self, send_timeout: float = 10.0,
+                 broadcast_concurrency: int = 100):
         self._sessions: Dict[str, WebSocketSession] = {}
         self._lock = threading.RLock()
+        self.send_timeout = max(0.001, float(send_timeout))
+        self.broadcast_concurrency = max(1, int(broadcast_concurrency))
 
     def register(self, session: WebSocketSession) -> None:
         with self._lock:
@@ -162,45 +184,76 @@ class WebSocketSessionRegistry:
 
     async def send_to_user(self, user: str, message: Any, as_json: bool = True) -> int:
         """向指定用户的所有会话推送消息；返回成功推送的会话数。"""
-        sent = 0
-        for session in self.all():
-            if session.user != user or not session.is_open:
-                continue
-            try:
-                if as_json:
-                    await session.send_json(message)
-                else:
-                    await session.send_text(message if isinstance(message, str) else str(message))
-                sent += 1
-            except Exception as exc:
-                logger.warning("send_to_user failed for session %s: %s", session.id, exc)
-        return sent
+        targets = [
+            session for session in self.all()
+            if session.user == user and session.is_open
+        ]
+        return await self._dispatch(targets, message, as_json, "send_to_user")
 
     async def broadcast(self, message: Any, as_json: bool = True,
                         exclude: Optional[Iterable[str]] = None) -> int:
         """向所有会话广播；``exclude`` 是要排除的 session_id 列表。返回推送数。"""
         excluded = set(exclude or [])
+        targets = [
+            session for session in self.all()
+            if session.id not in excluded and session.is_open
+        ]
+        return await self._dispatch(targets, message, as_json, "broadcast")
+
+    async def _dispatch(self, targets: List[WebSocketSession], message: Any,
+                        as_json: bool, operation: str) -> int:
+        queue: asyncio.Queue = asyncio.Queue()
+        for session in targets:
+            queue.put_nowait(session)
         sent = 0
-        for session in self.all():
-            if session.id in excluded or not session.is_open:
-                continue
-            try:
-                if as_json:
-                    await session.send_json(message)
-                else:
-                    await session.send_text(message if isinstance(message, str) else str(message))
-                sent += 1
-            except Exception as exc:
-                logger.warning("broadcast failed for session %s: %s", session.id, exc)
+        stale: List[str] = []
+
+        async def worker() -> None:
+            nonlocal sent
+            while True:
+                try:
+                    session = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    callback = session.send_json if as_json else session.send_text
+                    payload = (message if as_json or isinstance(message, str)
+                               else str(message))
+                    await asyncio.wait_for(
+                        callback(payload), timeout=self.send_timeout)
+                    if session.is_open:
+                        sent += 1
+                except Exception as exc:
+                    session.mark_closed()
+                    stale.append(session.id)
+                    logger.warning(
+                        "%s failed for session %s error_type=%s",
+                        operation, session.id, type(exc).__name__)
+
+        workers = [
+            asyncio.create_task(worker())
+            for _ in range(min(len(targets), self.broadcast_concurrency))
+        ]
+        if workers:
+            await asyncio.gather(*workers)
+        for session_id in stale:
+            self.unregister(session_id)
         return sent
 
     async def close_all(self, code: int = 1001, reason: str = "server shutdown") -> None:
         """关闭所有会话（优雅退出）。"""
-        for session in self.all():
+        async def close_one(session: WebSocketSession) -> None:
             try:
-                await session.close(code=code, reason=reason)
+                await asyncio.wait_for(
+                    session.close(code=code, reason=reason),
+                    timeout=self.send_timeout,
+                )
             except Exception as exc:
-                logger.debug("close_all session %s failed: %s", session.id, exc)
+                logger.debug(
+                    "close_all session %s failed error_type=%s",
+                    session.id, type(exc).__name__)
+
+        await asyncio.gather(*(close_one(session) for session in self.all()))
         self.clear()
 
 

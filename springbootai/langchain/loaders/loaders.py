@@ -1,207 +1,440 @@
+"""Bounded, policy-aware LangChain document loader registry.
+
+Local sources are restricted to ``AI_LOADER_ALLOWED_ROOTS`` (``os.pathsep``
+separated); when unset, the process working directory is the only allowed
+root. Callers may pass ``allowed_roots`` explicitly. Every loader accepts the
+security-only keyword arguments ``max_source_bytes``, ``max_content_bytes``
+and ``max_documents``. Web loading permits only a directly connected public
+HTTP(S) response: redirects, environment proxies, private DNS answers and
+unverifiable/private connected peers are rejected by default.
 """
-文档加载器注册表 - 封装 langchain classic 的 DocumentLoader，作为 @Component Bean。
+from __future__ import annotations
 
-封装的加载器：
-- text: TextLoader（纯文本）
-- csv: CSVLoader（CSV，逐行成 Document）
-- pdf: PyPDFLoader / UnstructuredPDFLoader（PDF，需 pypdf）
-- html/web: WebBaseLoader（URL 抓取，需 beautifulsoup4）
-- directory: DirectoryLoader（目录批量加载）
-- json: JSONLoader（JSON 文件）
-- markdown: UnstructuredMarkdownLoader
-- word: UnstructuredWordDocumentLoader（需 python-docx）
-
-安全设计（OWASP SSRF / 本地文件读取）：
-- WebBaseLoader 加载 URL 前检查协议（仅 http/https）和目的地址（拒绝
-  私网/回环/链路本地/元数据地址），防止 SSRF 攻击。
-- 文件类加载器限制根目录（``_ALLOWED_ROOTS``），禁止访问系统敏感路径。
-- 可通过环境变量 ``AI_LOADER_ALLOW_PRIVATE_NETWORK=true`` 放行私网
-  （仅面向可信内网环境的服务），默认 false。
-
-所有加载器懒加载对应依赖，缺失时抛带安装提示的 ImportError。
-"""
+import importlib
 import ipaddress
+import json
 import logging
-import os as _os
+import os
+import socket
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Iterable, List, Optional, Sequence
 from urllib.parse import urlparse
 
 
 logger = logging.getLogger("Spring.LangChain")
 
+DEFAULT_MAX_SOURCE_BYTES = 10 * 1024 * 1024
+DEFAULT_MAX_CONTENT_BYTES = 20 * 1024 * 1024
+DEFAULT_MAX_DOCUMENTS = 1000
+DEFAULT_WEB_TIMEOUT = 10.0
 
-# ==================== SSRF / 文件路径安全 ====================
 
-# 禁止加载的文件系统根目录（黑名单）
-_BLOCKED_ROOTS: List[Path] = [
-    Path("/etc"),
-    Path("/proc"),
-    Path("/sys"),
-    Path("/dev"),
-    Path("/root"),
-    Path("/var/run"),
-    Path("/run"),
-    Path("C:\\Windows"),
-]
+def _allow_private_network() -> bool:
+    return os.environ.get(
+        "AI_LOADER_ALLOW_PRIVATE_NETWORK", "false"
+    ).strip().lower() in {"true", "1", "yes", "on"}
+
+
+def _is_unsafe_address(address: str) -> bool:
+    try:
+        parsed = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return True
+    return not parsed.is_global
 
 
 def _is_private_url(url_str: str) -> bool:
-    """判断 URL 是否指向私网/回环/链路本地/元数据地址。"""
+    """Resolve every answer and reject if any destination is not public."""
     try:
         parsed = urlparse(url_str)
         hostname = parsed.hostname or ""
         if not hostname:
-            return True  # 拒绝无法解析的主机名
-        # 元数据地址（云环境 SSRF）
-        if hostname in ("169.254.169.254", "metadata.google.internal",
-                        "metadata", "100.100.100.200"):
             return True
-        addr = ipaddress.ip_address(hostname)
-        return (addr.is_private or addr.is_loopback or addr.is_link_local
-                or addr.is_multicast or addr.is_unspecified)
-    except ValueError:
-        # hostname 不是 IP（如域名），允许 DNS 解析后由网络层控制
-        hostname_lower = (urlparse(url_str).hostname or "").lower()
-        if hostname_lower in ("localhost", "metadata.google.internal",
-                              "169.254.169.254"):
+        if hostname.lower().rstrip(".") in {
+            "localhost", "metadata", "metadata.google.internal",
+        }:
             return True
-        return False
-
-
-def _validate_file_path(file_path: str) -> str:
-    """验证文件路径不在禁止的根目录下，防止任意文件读取。"""
-    try:
-        resolved = Path(file_path).resolve()
-        for blocked in _BLOCKED_ROOTS:
-            try:
-                resolved.relative_to(blocked.resolve())
-                raise PermissionError(
-                    f"文件路径位于禁止目录: {blocked}。请将文档放在应用数据目录下。")
-            except ValueError:
-                continue  # 不在该 blocked root 下，OK
-        return str(resolved)
-    except OSError as exc:
-        raise PermissionError(f"无法解析文件路径: {file_path}") from exc
+        try:
+            addresses = {str(ipaddress.ip_address(hostname))}
+        except ValueError:
+            addresses = {
+                item[4][0]
+                for item in socket.getaddrinfo(
+                    hostname,
+                    parsed.port or (443 if parsed.scheme == "https" else 80),
+                    type=socket.SOCK_STREAM,
+                )
+            }
+        return not addresses or any(
+            _is_unsafe_address(address) for address in addresses
+        )
+    except (OSError, ValueError):
+        return True
 
 
 def _validate_url(url_str: str) -> None:
-    """验证 URL 的安全性（协议 + 私网检查）。"""
+    if not isinstance(url_str, str) or not url_str or len(url_str) > 2048 or "\x00" in url_str:
+        raise PermissionError("URL 无效或超过 2048 字符")
     parsed = urlparse(url_str)
-    if parsed.scheme not in ("http", "https"):
+    if parsed.scheme not in {"http", "https"}:
+        raise PermissionError("仅允许 http/https URL")
+    if not parsed.hostname or parsed.username is not None or parsed.password is not None:
+        raise PermissionError("URL 必须包含主机且不能包含凭据")
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise PermissionError("URL 端口无效") from exc
+    if parsed.fragment:
+        raise PermissionError("URL 不允许包含片段")
+    if not _allow_private_network() and _is_private_url(url_str):
         raise PermissionError(
-            f"不允许的 URL 协议: {parsed.scheme}。仅支持 http/https。")
-
-    allow_private = _os.environ.get(
-        "AI_LOADER_ALLOW_PRIVATE_NETWORK", "false").strip().lower() in (
-            "true", "1", "yes", "on")
-    if not allow_private and _is_private_url(url_str):
-        raise PermissionError(
-            f"拒绝加载私网/回环地址: {url_str}。"
-            "设置 AI_LOADER_ALLOW_PRIVATE_NETWORK=true 可放行（仅可信内网环境）。")
+            "拒绝私网、回环、保留、元数据或无法解析的 URL 地址"
+        )
 
 
-# ==================== 注册表 ====================
+def _configured_roots(explicit: Optional[Sequence[str]] = None) -> List[Path]:
+    if isinstance(explicit, (str, os.PathLike)):
+        explicit = [str(explicit)]
+    if explicit:
+        values = list(explicit)
+    else:
+        configured = os.environ.get("AI_LOADER_ALLOWED_ROOTS", "")
+        values = (
+            [item for item in configured.split(os.pathsep) if item]
+            if configured else [os.getcwd()]
+        )
+    roots = []
+    for value in values:
+        try:
+            root = Path(value).resolve(strict=True)
+        except OSError as exc:
+            raise PermissionError("配置的文档允许根目录不存在") from exc
+        if not root.is_dir():
+            raise PermissionError("文档允许根目录必须是目录")
+        roots.append(root)
+    return roots
+
+
+def _under_root(path: Path, roots: Sequence[Path]) -> bool:
+    for root in roots:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _validate_file_path(
+    file_path: str,
+    *,
+    allowed_roots: Optional[Sequence[str]] = None,
+    expect_directory: bool = False,
+    max_source_bytes: int = DEFAULT_MAX_SOURCE_BYTES,
+    max_documents: int = DEFAULT_MAX_DOCUMENTS,
+) -> str:
+    """Resolve symlinks and enforce an application-data directory allowlist."""
+    if not isinstance(file_path, str) or not file_path or "\x00" in file_path:
+        raise PermissionError("文件路径不能为空")
+    try:
+        resolved = Path(file_path).resolve(strict=True)
+        roots = _configured_roots(allowed_roots)
+        if not _under_root(resolved, roots):
+            raise PermissionError("文件路径不在 AI_LOADER_ALLOWED_ROOTS 允许目录内")
+        if expect_directory and not resolved.is_dir():
+            raise PermissionError("文档源必须是目录")
+        if not expect_directory and not resolved.is_file():
+            raise PermissionError("文档源必须是普通文件")
+
+        maximum = max(1, int(max_source_bytes))
+        document_limit = max(1, int(max_documents))
+        if not expect_directory:
+            if resolved.stat().st_size > maximum:
+                raise PermissionError("文档源超过 max_source_bytes")
+        else:
+            count = 0
+            total = 0
+            for candidate in resolved.rglob("*"):
+                if not candidate.is_file():
+                    continue
+                target = candidate.resolve(strict=True)
+                if not _under_root(target, roots):
+                    raise PermissionError("目录包含指向允许根目录之外的文件")
+                size = target.stat().st_size
+                if size > maximum:
+                    raise PermissionError("目录内文件超过 max_source_bytes")
+                count += 1
+                total += size
+                if count > document_limit:
+                    raise PermissionError("目录文件数超过 max_documents")
+                if total > maximum * min(document_limit, 1000):
+                    raise PermissionError("目录输入总量过大")
+        return str(resolved)
+    except PermissionError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise PermissionError("无法安全解析文档路径") from exc
+
+
+def _peer_address(response: Any) -> Optional[str]:
+    candidates = [
+        getattr(getattr(response.raw, "connection", None), "sock", None),
+        getattr(getattr(response.raw, "_connection", None), "sock", None),
+    ]
+    try:
+        candidates.append(response.raw._fp.fp.raw._sock)
+    except AttributeError:
+        pass
+    for sock in candidates:
+        if sock is not None:
+            try:
+                return str(sock.getpeername()[0])
+            except OSError:
+                continue
+    return None
+
+
+class _SafeWebLoader:
+    """Fetch one public web page with peer validation and streaming limits."""
+
+    def __init__(
+        self,
+        source: str,
+        *,
+        max_source_bytes: int,
+        timeout: float = DEFAULT_WEB_TIMEOUT,
+        headers: Optional[dict] = None,
+        encoding: Optional[str] = None,
+        bs_kwargs: Optional[dict] = None,
+    ):
+        self.source = source
+        self.max_source_bytes = max(1, int(max_source_bytes))
+        self.timeout = min(DEFAULT_WEB_TIMEOUT, max(0.1, float(timeout)))
+        self.headers = dict(headers or {})
+        self.encoding = encoding
+        self.bs_kwargs = dict(bs_kwargs or {})
+
+    def load(self) -> List[Any]:
+        _validate_url(self.source)
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+            from langchain_core.documents import Document
+        except ImportError as exc:
+            raise ImportError(
+                "web 加载器需要 requests、beautifulsoup4 和 langchain-core"
+            ) from exc
+
+        session = requests.Session()
+        session.trust_env = False
+        response = None
+        try:
+            response = session.get(
+                self.source,
+                headers=self.headers,
+                timeout=(self.timeout, self.timeout),
+                stream=True,
+                allow_redirects=False,
+                verify=True,
+            )
+            if 300 <= response.status_code < 400:
+                raise PermissionError("网页重定向被拒绝；请显式校验最终 URL")
+            response.raise_for_status()
+            peer = _peer_address(response)
+            if not _allow_private_network() and (
+                peer is None or _is_unsafe_address(peer)
+            ):
+                raise PermissionError("实际网络连接对端不是可验证的公网地址")
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > self.max_source_bytes:
+                raise PermissionError("网页响应超过 max_source_bytes")
+            content_type = response.headers.get("Content-Type", "").lower()
+            if content_type and not any(
+                allowed in content_type
+                for allowed in ("text/html", "application/xhtml+xml", "text/plain")
+            ):
+                raise PermissionError("网页响应 Content-Type 不受支持")
+            chunks = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > self.max_source_bytes:
+                    raise PermissionError("网页响应超过 max_source_bytes")
+                chunks.append(chunk)
+            charset = self.encoding or response.encoding or "utf-8"
+            html = b"".join(chunks).decode(charset, errors="replace")
+            soup = BeautifulSoup(html, "html.parser", **self.bs_kwargs)
+            title = soup.title.get_text(strip=True) if soup.title else ""
+            return [Document(
+                page_content=soup.get_text("\n", strip=True),
+                metadata={"source": self.source, "title": title},
+            )]
+        finally:
+            if response is not None:
+                response.close()
+            session.close()
+
+
+class _BoundedLoader:
+    def __init__(self, loader: Any, max_documents: int, max_content_bytes: int):
+        self._loader = loader
+        self._max_documents = max(1, int(max_documents))
+        self._max_content_bytes = max(1, int(max_content_bytes))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._loader, name)
+
+    def _bounded(self, documents: Iterable[Any]):
+        total = 0
+        for count, document in enumerate(documents, start=1):
+            if count > self._max_documents:
+                raise PermissionError("加载结果超过 max_documents")
+            content = getattr(document, "page_content", "")
+            total += len(str(content).encode("utf-8"))
+            metadata = getattr(document, "metadata", {})
+            total += len(json.dumps(
+                metadata, ensure_ascii=False, default=str
+            ).encode("utf-8"))
+            if total > self._max_content_bytes:
+                raise PermissionError("加载结果超过 max_content_bytes")
+            yield document
+
+    def load(self) -> List[Any]:
+        return list(self._bounded(self._loader.load()))
+
+    def lazy_load(self):
+        method = getattr(self._loader, "lazy_load", None)
+        documents = method() if callable(method) else self._loader.load()
+        yield from self._bounded(documents)
+
 
 class DocumentLoaderRegistry:
-    """文档加载器注册表 Bean - 统一创建与调用各类 DocumentLoader。
+    """Create loaders behind URL, path, count, and byte safety boundaries."""
 
-    安全：create() 方法会检查 URL 的网络安全性（SSRF 防护）和
-    文件路径的目录限制（防止任意文件读取）。
-    """
-
-    # 加载器名 -> (模块, 类名, 是否需要可选依赖)
     _LOADER_MAP = {
-        "text":     ("langchain_community.document_loaders", "TextLoader", False),
-        "csv":      ("langchain_community.document_loaders", "CSVLoader", False),
-        "pdf":      ("langchain_community.document_loaders", "PyPDFLoader", True),
+        "text": ("langchain_community.document_loaders", "TextLoader", False),
+        "csv": ("langchain_community.document_loaders", "CSVLoader", False),
+        "pdf": ("langchain_community.document_loaders", "PyPDFLoader", True),
         "pdf-unstructured": ("langchain_community.document_loaders", "UnstructuredPDFLoader", True),
-        "html":     ("langchain_community.document_loaders", "UnstructuredHTMLLoader", True),
-        "web":      ("langchain_community.document_loaders", "WebBaseLoader", True),
-        "directory":("langchain_community.document_loaders", "DirectoryLoader", False),
-        "json":     ("langchain_community.document_loaders", "JSONLoader", False),
+        "html": ("langchain_community.document_loaders", "UnstructuredHTMLLoader", True),
+        "web": ("langchain_community.document_loaders", "WebBaseLoader", True),
+        "directory": ("langchain_community.document_loaders", "DirectoryLoader", False),
+        "json": ("langchain_community.document_loaders", "JSONLoader", False),
         "markdown": ("langchain_community.document_loaders", "UnstructuredMarkdownLoader", True),
-        "word":     ("langchain_community.document_loaders", "UnstructuredWordDocumentLoader", True),
+        "word": ("langchain_community.document_loaders", "UnstructuredWordDocumentLoader", True),
     }
 
     @classmethod
-    def create(cls, loader_type: str, source: str, **kwargs) -> Any:
-        """
-        创建加载器实例。
-
-        Args:
-            loader_type: 见 _LOADER_MAP 的 key
-            source: 文件路径 / URL / 目录
-            kwargs: 透传给加载器构造器
-
-        Raises:
-            PermissionError: URL 指向私网/回环地址或文件路径位于禁止目录
-        """
-        # SSRF 防护：web/html loader 的 source 是 URL
-        if loader_type in ("web", "html") or source.startswith(("http://", "https://")):
-            _validate_url(source)
-        # 文件路径防护：文件类 loader 限制目录
-        if loader_type not in ("web", "html") and not source.startswith(("http://", "https://")):
-            source = _validate_file_path(source)
+    def _loader_class(cls, loader_type: str):
         spec = cls._LOADER_MAP.get(loader_type)
         if not spec:
             raise ValueError(
-                f"未知 loader_type: {loader_type}。支持: {list(cls._LOADER_MAP.keys())}"
+                f"未知 loader_type: {loader_type}。支持: {list(cls._LOADER_MAP)}"
             )
         module_name, class_name, optional = spec
         try:
-            import importlib
-            module = importlib.import_module(module_name)
-            loader_cls = getattr(module, class_name)
-        except ImportError as exc:
+            return getattr(importlib.import_module(module_name), class_name)
+        except (ImportError, AttributeError) as exc:
+            hint = " 及对应可选依赖" if optional else ""
             raise ImportError(
-                f"加载器 {loader_type} 依赖未安装（{exc}）。"
-                f"请 pip install langchain-community"
-                + (" 及对应可选依赖（如 pypdf/beautifulsoup4/python-docx）" if optional else "")
+                f"加载器 {loader_type} 依赖未安装；请安装 langchain-community{hint}"
             ) from exc
-        return loader_cls(source, **kwargs)
+
+    @classmethod
+    def create(cls, loader_type: str, source: str, **kwargs) -> Any:
+        """Create a bounded loader.
+
+        Security kwargs are consumed by this registry and are not forwarded:
+        ``allowed_roots``, ``max_source_bytes``, ``max_content_bytes`` and
+        ``max_documents``. The ``web`` loader additionally accepts only
+        ``timeout``, ``headers``, ``encoding`` and ``bs_kwargs``.
+        """
+        if loader_type not in cls._LOADER_MAP:
+            raise ValueError(
+                f"未知 loader_type: {loader_type}。支持: {list(cls._LOADER_MAP)}"
+            )
+        allowed_roots = kwargs.pop("allowed_roots", None)
+        max_source_bytes = int(kwargs.pop(
+            "max_source_bytes", DEFAULT_MAX_SOURCE_BYTES
+        ))
+        max_documents = int(kwargs.pop("max_documents", DEFAULT_MAX_DOCUMENTS))
+        max_content_bytes = int(kwargs.pop(
+            "max_content_bytes", DEFAULT_MAX_CONTENT_BYTES
+        ))
+        if min(max_source_bytes, max_documents, max_content_bytes) <= 0:
+            raise ValueError("loader limits must be positive")
+
+        if loader_type == "web":
+            _validate_url(source)
+            supported = {"timeout", "headers", "encoding", "bs_kwargs"}
+            unexpected = set(kwargs) - supported
+            if unexpected:
+                raise ValueError(
+                    "web loader 不支持参数: " + ", ".join(sorted(unexpected))
+                )
+            loader = _SafeWebLoader(
+                source, max_source_bytes=max_source_bytes, **kwargs
+            )
+        else:
+            source = _validate_file_path(
+                source,
+                allowed_roots=allowed_roots,
+                expect_directory=loader_type == "directory",
+                max_source_bytes=max_source_bytes,
+                max_documents=max_documents,
+            )
+            loader = cls._loader_class(loader_type)(source, **kwargs)
+        return _BoundedLoader(loader, max_documents, max_content_bytes)
 
     @classmethod
     def load(cls, loader_type: str, source: str, **kwargs) -> List[Any]:
-        """
-        创建加载器并立即加载文档。
-
-        Returns:
-            langchain_core.documents.Document 列表
-        """
-        loader = cls.create(loader_type, source, **kwargs)
-        return loader.load()
+        return cls.create(loader_type, source, **kwargs).load()
 
     @classmethod
-    def load_text(cls, file_path: str, encoding: str = "utf-8") -> List[Any]:
-        """便捷：加载纯文本文件。"""
-        return cls.load("text", file_path, encoding=encoding)
+    def load_text(cls, file_path: str, encoding: str = "utf-8", **kwargs) -> List[Any]:
+        return cls.load("text", file_path, encoding=encoding, **kwargs)
 
     @classmethod
     def load_csv(cls, file_path: str, **kwargs) -> List[Any]:
-        """便捷：加载 CSV。"""
         return cls.load("csv", file_path, **kwargs)
 
     @classmethod
     def load_pdf(cls, file_path: str, **kwargs) -> List[Any]:
-        """便捷：加载 PDF（需 pypdf）。"""
         return cls.load("pdf", file_path, **kwargs)
 
     @classmethod
     def load_web(cls, url: str, **kwargs) -> List[Any]:
-        """便捷：抓取网页（需 beautifulsoup4）。"""
         return cls.load("web", url, **kwargs)
 
     @classmethod
-    def load_directory(cls, dir_path: str, glob: str = "**/[!.]*",
-                       loader_type: str = "text", **kwargs) -> List[Any]:
-        """便捷：批量加载目录（默认递归加载所有非隐藏文本文件）。"""
-        inner_loader_cls = type(cls.create(loader_type, "", **kwargs))
-        loader = cls.create("directory", dir_path, glob=glob,
-                            loader_cls=inner_loader_cls)
+    def load_directory(
+        cls,
+        dir_path: str,
+        glob: str = "**/[!.]*",
+        loader_type: str = "text",
+        **kwargs,
+    ) -> List[Any]:
+        if loader_type in {"web", "directory"}:
+            raise ValueError("directory 内部 loader_type 必须是文件加载器")
+        security_names = {
+            "allowed_roots", "max_source_bytes", "max_documents",
+            "max_content_bytes",
+        }
+        security = {
+            name: kwargs.pop(name) for name in list(kwargs) if name in security_names
+        }
+        loader = cls.create(
+            "directory",
+            dir_path,
+            glob=glob,
+            loader_cls=cls._loader_class(loader_type),
+            loader_kwargs=kwargs,
+            **security,
+        )
         return loader.load()
 
     @classmethod
     def supported_types(cls) -> list:
-        """返回支持的加载器类型。"""
-        return list(cls._LOADER_MAP.keys())
+        return list(cls._LOADER_MAP)

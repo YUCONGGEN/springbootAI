@@ -13,6 +13,7 @@ PyMyBatis熔断降级模块
 import time
 import threading
 import logging
+import inspect
 from enum import Enum
 from typing import Callable, Optional, Any, Dict
 
@@ -185,6 +186,7 @@ class CircuitBreaker:
                 return self.fallback(*args, **kwargs)
             raise CircuitBreakerError(f"熔断器[{self.name}]并发请求数已达上限")
 
+        release_slot = True
         try:
             # 根据状态处理请求
             if state == CircuitBreakerState.OPEN:
@@ -205,10 +207,21 @@ class CircuitBreaker:
                 # 熔断器闭合，正常执行
                 result = self._execute_with_closed(func, *args, **kwargs)
 
+            if inspect.isawaitable(result):
+                release_slot = False
+
+                async def await_and_release():
+                    try:
+                        return await result
+                    finally:
+                        self._release_concurrent_slot()
+
+                return await_and_release()
             return result
 
         finally:
-            self._release_concurrent_slot()
+            if release_slot:
+                self._release_concurrent_slot()
 
     def _execute_with_closed(self, func: Callable[..., Any], *args, **kwargs) -> Any:
         """
@@ -224,9 +237,21 @@ class CircuitBreaker:
         """
         try:
             result = func(*args, **kwargs)
+            if inspect.isawaitable(result):
+                async def await_result():
+                    try:
+                        value = await result
+                    except Exception:
+                        self._on_failure()
+                        raise
+                    else:
+                        self._on_success()
+                        return value
+
+                return await_result()
             self._on_success()
             return result
-        except Exception as e:
+        except Exception:
             self._on_failure()
             raise
 
@@ -252,28 +277,46 @@ class CircuitBreaker:
 
             try:
                 result = func(*args, **kwargs)
-                self._success_count += 1
-                self._total_successes += 1
-                self._total_requests += 1
-
-                # 检查是否达到成功阈值
-                if self._success_count >= self.success_threshold:
-                    self._state = CircuitBreakerState.CLOSED
-                    self._failure_count = 0
-                    self._success_count = 0
-                    self._last_state_change_time = time.time()
-                    logger.info(f"熔断器[{self.name}]恢复正常，转换为CLOSED状态")
-
-                return result
-            except Exception as e:
-                self._total_failures += 1
-                self._total_requests += 1
-
-                # 半开状态下任何失败都会立即打开熔断器
-                logger.warning(f"熔断器[{self.name}]HALF_OPEN状态下请求失败，立即打开")
-                self._state = CircuitBreakerState.OPEN
-                self._last_state_change_time = time.time()
+            except Exception:
+                self._on_half_open_failure()
                 raise
+
+        if inspect.isawaitable(result):
+            async def await_result():
+                try:
+                    value = await result
+                except Exception:
+                    self._on_half_open_failure()
+                    raise
+                else:
+                    self._on_half_open_success()
+                    return value
+
+            return await_result()
+        self._on_half_open_success()
+        return result
+
+    def _on_half_open_success(self) -> None:
+        with self._state_lock:
+            self._success_count += 1
+            self._total_successes += 1
+            self._total_requests += 1
+            if self._success_count >= self.success_threshold:
+                self._state = CircuitBreakerState.CLOSED
+                self._failure_count = 0
+                self._success_count = 0
+                self._last_state_change_time = time.time()
+                logger.info(
+                    "熔断器[%s]恢复正常，转换为CLOSED状态", self.name)
+
+    def _on_half_open_failure(self) -> None:
+        with self._state_lock:
+            self._total_failures += 1
+            self._total_requests += 1
+            logger.warning(
+                "熔断器[%s]HALF_OPEN状态下请求失败，立即打开", self.name)
+            self._state = CircuitBreakerState.OPEN
+            self._last_state_change_time = time.time()
 
     def _on_success(self):
         """处理成功请求"""
@@ -414,6 +457,13 @@ def with_circuit_breaker(circuit_breaker: CircuitBreaker = None):
 
     def decorator(func: Callable[..., Any]):
         import functools
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                return await cb.call(func, *args, **kwargs)
+
+            return async_wrapper
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):

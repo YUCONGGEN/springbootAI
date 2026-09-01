@@ -499,6 +499,35 @@ class TestAICircuitBreakerStateMachine:
             cb.call(fail)
         assert cb.state == CircuitState.OPEN
 
+    def test_half_open_allows_only_one_probe(self):
+        from springbootai.ai.resilience import AICircuitBreaker, CircuitState
+
+        cb = AICircuitBreaker(failure_threshold=1, recovery_timeout=0.001)
+        cb.record_failure()
+        time.sleep(0.01)
+        assert cb.state == CircuitState.HALF_OPEN
+
+        assert cb.allow() is True
+        assert cb.allow() is False
+        assert cb.allow() is False
+
+        cb.record_success()
+        assert cb.state == CircuitState.CLOSED
+        assert cb.allow() is True
+
+    def test_half_open_releases_probe_after_unclassified_error(self):
+        from springbootai.ai.resilience import AICircuitBreaker
+
+        cb = AICircuitBreaker(failure_threshold=1, recovery_timeout=0.001)
+        cb.record_failure()
+        time.sleep(0.01)
+
+        with pytest.raises(ValueError):
+            cb.call(lambda: (_ for _ in ()).throw(ValueError("bad request")))
+
+        assert cb.allow() is True
+        cb.record_success()
+
     def test_non_transient_error_no_count(self):
         from springbootai.ai.resilience import AICircuitBreaker, TransientError
         cb = AICircuitBreaker(failure_threshold=3)
@@ -884,3 +913,79 @@ class TestRedisChatMemory:
         mem = RedisChatMemory()
         key = mem._key("c1")
         assert "global" in key
+
+
+class TestEnterpriseModelBounds:
+    def test_missing_provider_usage_cannot_bypass_token_budget(self):
+        from springbootai.ai.core import (
+            ChatModel, ChatResponse, Generation, Message,
+            TokenBudgetExceededError,
+        )
+
+        class NoUsageModel(ChatModel):
+            def _raw_call(self, messages, tool_registry=None, options=None):
+                return ChatResponse(generations=[Generation(
+                    output=Message.assistant("x" * 400))])
+
+        model = NoUsageModel()
+        with pytest.raises(TokenBudgetExceededError):
+            model.call([Message.user("small")], options={"max_total_tokens": 20})
+
+    def test_provider_concurrency_is_bounded(self):
+        from springbootai.ai.core import (
+            AIConcurrencyLimitError, ChatModel, ChatResponse, Generation, Message,
+        )
+
+        started = threading.Event()
+        release = threading.Event()
+
+        class BlockingModel(ChatModel):
+            max_concurrent_requests = 1
+            concurrency_acquire_timeout = 0.03
+
+            def _raw_call(self, messages, tool_registry=None, options=None):
+                started.set()
+                release.wait(timeout=2)
+                return ChatResponse(generations=[Generation(
+                    output=Message.assistant("ok"))])
+
+        model = BlockingModel()
+        worker = threading.Thread(
+            target=lambda: model.call([Message.user("first")]))
+        worker.start()
+        assert started.wait(timeout=1)
+        try:
+            with pytest.raises(AIConcurrencyLimitError):
+                model.call([Message.user("second")])
+        finally:
+            release.set()
+            worker.join(timeout=2)
+        assert not worker.is_alive()
+
+    def test_in_memory_conversations_are_lru_bounded(self):
+        from springbootai.ai.core import Message
+        from springbootai.ai.memory import InMemoryChatMemory
+
+        memory = InMemoryChatMemory(max_messages=5, max_conversations=2)
+        memory.add("a", Message.user("a"))
+        memory.add("b", Message.user("b"))
+        assert memory.get("a")
+        memory.add("c", Message.user("c"))
+        assert memory.get("a")
+        assert memory.get("b") == []
+        assert memory.get("c")
+
+    def test_tool_result_is_rechecked_before_next_provider_call(self):
+        from springbootai.ai.core import Message, TokenBudgetExceededError
+        from springbootai.ai.providers import FakeChatModel
+        from springbootai.ai.tools import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register("large_result", lambda: "x" * 5000)
+        model = FakeChatModel(simulate_tool_call=True)
+        with pytest.raises(TokenBudgetExceededError, match="byte limit"):
+            model.call(
+                [Message.user("请调用工具")],
+                tool_registry=registry,
+                options={"max_input_bytes": 1000},
+            )

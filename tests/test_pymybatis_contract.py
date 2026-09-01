@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, List, Optional
 from collections.abc import Mapping
+import asyncio
 import unittest
 
 from springbootai.orm.pymybatis import build_session_factory
@@ -247,6 +248,42 @@ class PyMyBatisContractTests(unittest.TestCase):
 
         rows = self.session.select("SELECT name FROM tasks ORDER BY id")
         self.assertEqual(["outer-before", "outer-after"], [row["name"] for row in rows])
+
+    def test_cancelled_nested_transaction_rolls_back_to_savepoint(self):
+        with self.session.transaction():
+            self.session.insert(
+                "INSERT INTO tasks(name, created_at) VALUES (#{name}, #{created_at})",
+                {"name": "outer", "created_at": "2026-08-07 12:00:00"},
+            )
+            try:
+                with self.session.transaction(propagation="NESTED"):
+                    self.session.insert(
+                        "INSERT INTO tasks(name, created_at) VALUES (#{name}, #{created_at})",
+                        {"name": "cancelled", "created_at": "2026-08-07 12:01:00"},
+                    )
+                    raise asyncio.CancelledError()
+            except asyncio.CancelledError:
+                pass
+
+        rows = self.session.select("SELECT name FROM tasks ORDER BY id")
+        self.assertEqual(["outer"], [row["name"] for row in rows])
+
+    def test_cancelled_outer_transaction_rolls_back_and_remains_reusable(self):
+        with self.assertRaises(asyncio.CancelledError):
+            with self.session.transaction():
+                self.session.insert(
+                    "INSERT INTO tasks(name, created_at) VALUES (#{name}, #{created_at})",
+                    {"name": "cancelled", "created_at": "2026-08-07 12:00:00"},
+                )
+                raise asyncio.CancelledError()
+
+        with self.session.transaction():
+            self.session.insert(
+                "INSERT INTO tasks(name, created_at) VALUES (#{name}, #{created_at})",
+                {"name": "after", "created_at": "2026-08-07 12:01:00"},
+            )
+        rows = self.session.select("SELECT name FROM tasks ORDER BY id")
+        self.assertEqual(["after"], [row["name"] for row in rows])
 
     def test_all_transaction_propagations(self):
         # An on-disk database is required because REQUIRES_NEW obtains a

@@ -3,11 +3,18 @@
 
 生产环境可替换为 PGVector / Milvus / Chroma 等实现（实现同一 VectorStore 接口）。
 """
+import asyncio
 import json
+import logging
 import math
+import threading
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+
+logger = logging.getLogger("Spring.AI.VectorStore")
 
 
 @dataclass
@@ -29,6 +36,25 @@ class SearchRequest:
     filter_expression: Optional[str] = None
     filter_metadata: Optional[Dict[str, Any]] = None
 
+    def __post_init__(self) -> None:
+        if isinstance(self.top_k, bool) or not isinstance(self.top_k, int):
+            raise TypeError("SearchRequest top_k must be an integer")
+        if self.top_k <= 0:
+            raise ValueError("SearchRequest top_k must be greater than zero")
+        if self.top_k > 1000:
+            raise ValueError("SearchRequest top_k must not exceed 1000")
+        try:
+            threshold = float(self.similarity_threshold)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "SearchRequest similarity_threshold must be a finite number"
+            ) from exc
+        if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
+            raise ValueError(
+                "SearchRequest similarity_threshold must be between -1 and 1"
+            )
+        self.similarity_threshold = threshold
+
 
 class VectorStore(ABC):
     """向量存储抽象"""
@@ -42,13 +68,61 @@ class VectorStore(ABC):
         """相似度检索"""
 
 
+def _parse_filter_expression(filter_expression: str) -> tuple[str, str]:
+    """Parse the public ``key:value`` filter syntax without fail-open cases."""
+    expression = str(filter_expression)
+    if ":" not in expression:
+        raise ValueError("filter_expression must use non-empty 'key:value' syntax")
+    key, _, value = expression.partition(":")
+    key = key.strip()
+    value = value.strip()
+    if not key or not value:
+        raise ValueError("filter_expression key and value must not be empty")
+    return key, value
+
+
+def _positive_limit(value: int, name: str, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if not 1 <= value <= maximum:
+        raise ValueError(f"{name} must be in [1, {maximum}]")
+    return value
+
+
+def _validate_document_resource(
+        document: Document, *, max_content_length: int,
+        max_embedding_dimensions: int, max_metadata_size: int) -> None:
+    if len(str(document.content)) > max_content_length:
+        raise ValueError("vector document content exceeds configured limit")
+    if not isinstance(document.embedding, (list, tuple)):
+        raise ValueError("vector document embedding must be a list or tuple")
+    if len(document.embedding or []) > max_embedding_dimensions:
+        raise ValueError("vector embedding dimensions exceed configured limit")
+    if not isinstance(document.metadata, dict):
+        raise ValueError("vector document metadata must be an object")
+    try:
+        metadata_size = len(json.dumps(
+            document.metadata or {}, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("vector document metadata must be JSON serializable") from exc
+    if metadata_size > max_metadata_size:
+        raise ValueError("vector document metadata exceeds configured limit")
+
+
 def cosine_similarity(a: List[float], b: List[float]) -> float:
     """余弦相似度"""
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
+    try:
+        left = [float(value) for value in a]
+        right = [float(value) for value in b]
+    except (TypeError, ValueError):
+        return 0.0
+    if not all(math.isfinite(value) for value in (*left, *right)):
+        return 0.0
+    dot = sum(x * y for x, y in zip(left, right, strict=True))
+    na = math.sqrt(sum(x * x for x in left))
+    nb = math.sqrt(sum(y * y for y in right))
     if na == 0 or nb == 0:
         return 0.0
     return dot / (na * nb)
@@ -57,21 +131,43 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
 class SimpleInMemoryVectorStore(VectorStore):
     """内存向量存储 - 开发/测试用，余弦相似度"""
 
-    def __init__(self, embedding_model=None):
+    def __init__(self, embedding_model=None, max_documents: int = 10_000,
+                 max_content_length: int = 1_000_000,
+                 max_embedding_dimensions: int = 65_536,
+                 max_metadata_size: int = 256 * 1024):
         self._docs: List[Document] = []
         self._embedding_model = embedding_model
+        self._lock = threading.RLock()
+        self.max_documents = _positive_limit(
+            max_documents, "max_documents", 1_000_000)
+        self.max_content_length = _positive_limit(
+            max_content_length, "max_content_length", 100_000_000)
+        self.max_embedding_dimensions = _positive_limit(
+            max_embedding_dimensions, "max_embedding_dimensions", 1_000_000)
+        self.max_metadata_size = _positive_limit(
+            max_metadata_size, "max_metadata_size", 10_000_000)
 
     def add(self, documents: List[Document]) -> None:
+        prepared = []
         for doc in documents:
             if not doc.embedding and self._embedding_model and doc.content:
                 doc.embedding = self._embedding_model.embed_one(doc.content)
-            self._docs.append(doc)
+            _validate_document_resource(
+                doc, max_content_length=self.max_content_length,
+                max_embedding_dimensions=self.max_embedding_dimensions,
+                max_metadata_size=self.max_metadata_size,
+            )
+            prepared.append(doc)
+        with self._lock:
+            if len(self._docs) + len(prepared) > self.max_documents:
+                raise RuntimeError("in-memory vector document limit exceeded")
+            self._docs.extend(prepared)
 
     def add_texts(self, texts: List[str],
                   metadatas: Optional[List[Dict]] = None) -> None:
         for i, text in enumerate(texts):
             meta = metadatas[i] if metadatas and i < len(metadatas) else {}
-            self.add([Document(id=f"doc-{len(self._docs)}", content=text,
+            self.add([Document(id=f"doc-{uuid.uuid4().hex}", content=text,
                                metadata=meta)])
 
     def similarity_search(self, request=None, **kwargs) -> List[Document]:
@@ -106,13 +202,19 @@ class SimpleInMemoryVectorStore(VectorStore):
         if emb is None:
             return []
 
+        parsed_filter = (
+            _parse_filter_expression(request.filter_expression)
+            if request.filter_expression else None
+        )
         scored = []
-        for doc in self._docs:
+        with self._lock:
+            documents = list(self._docs)
+        for doc in documents:
             if not doc.embedding:
                 continue
             # RAG 租户隔离：filter_expression 仅返回匹配文档
-            if request.filter_expression:
-                if not RedisVectorStore._match_filter(doc, request.filter_expression):
+            if parsed_filter:
+                if not RedisVectorStore._match_parsed_filter(doc, parsed_filter):
                     continue
             if request.filter_metadata:
                 if not RedisVectorStore._match_metadata(doc, request.filter_metadata):
@@ -133,10 +235,12 @@ class SimpleInMemoryVectorStore(VectorStore):
         return _InMemoryRetriever(self, search_kwargs or {"k": 4})
 
     def count(self) -> int:
-        return len(self._docs)
+        with self._lock:
+            return len(self._docs)
 
     def clear(self) -> None:
-        self._docs.clear()
+        with self._lock:
+            self._docs.clear()
 
 
 class _InMemoryRetriever:
@@ -164,8 +268,8 @@ class _InMemoryRetriever:
         return self.invoke(query)
 
     async def ainvoke(self, query, config=None):
-        """异步检索（内存实现，直接同步返回）。"""
-        return self.invoke(query, config)
+        """异步检索；同步 embedding/检索工作移出事件循环。"""
+        return await asyncio.to_thread(self.invoke, query, config)
 
 
 class LangChainVectorStore(VectorStore):
@@ -179,13 +283,36 @@ class LangChainVectorStore(VectorStore):
     langchain_community.vectorstores.FAISS / langchain_chroma）并自行构建实例传入。
     """
 
-    def __init__(self, langchain_store=None, embedding_model=None):
+    def __init__(self, langchain_store=None, embedding_model=None,
+                 max_batch_documents: int = 10_000,
+                 max_content_length: int = 1_000_000,
+                 max_embedding_dimensions: int = 65_536,
+                 max_metadata_size: int = 256 * 1024):
         self._store = langchain_store
         self._embedding_model = embedding_model
+        self.max_batch_documents = _positive_limit(
+            max_batch_documents, "max_batch_documents", 1_000_000)
+        self.max_content_length = _positive_limit(
+            max_content_length, "max_content_length", 100_000_000)
+        self.max_embedding_dimensions = _positive_limit(
+            max_embedding_dimensions, "max_embedding_dimensions", 1_000_000)
+        self.max_metadata_size = _positive_limit(
+            max_metadata_size, "max_metadata_size", 10_000_000)
+
+    def _validate_documents(self, documents: List[Document]) -> None:
+        if len(documents) > self.max_batch_documents:
+            raise ValueError("vector document batch exceeds configured limit")
+        for document in documents:
+            _validate_document_resource(
+                document, max_content_length=self.max_content_length,
+                max_embedding_dimensions=self.max_embedding_dimensions,
+                max_metadata_size=self.max_metadata_size,
+            )
 
     def add(self, documents: List[Document]) -> None:
         if self._store is None:
             return
+        self._validate_documents(documents)
         self._store.add_texts(
             [d.content for d in documents],
             metadatas=[d.metadata for d in documents],
@@ -195,7 +322,16 @@ class LangChainVectorStore(VectorStore):
                   metadatas: Optional[List[Dict]] = None) -> None:
         if self._store is None:
             return
-        self._store.add_texts(texts, metadatas=metadatas or [{}] * len(texts))
+        metadata_values = list(metadatas or [])[:len(texts)]
+        metadata_values.extend(
+            {} for _ in range(len(texts) - len(metadata_values)))
+        documents = [Document(
+            id=f"langchain-input-{index}", content=text,
+            metadata=(metadata_values[index]
+                      if index < len(metadata_values) else {}),
+        ) for index, text in enumerate(texts)]
+        self._validate_documents(documents)
+        self._store.add_texts(texts, metadatas=metadata_values)
 
     def similarity_search(self, request: SearchRequest) -> List[Document]:
         if self._store is None:
@@ -206,14 +342,41 @@ class LangChainVectorStore(VectorStore):
         if emb is None:
             return []
         filters = dict(request.filter_metadata or {})
-        if request.filter_expression and ":" in request.filter_expression:
-            key, _, value = request.filter_expression.partition(":")
-            if key.strip() and value.strip():
-                filters.setdefault(key.strip(), value.strip())
-        if filters:
+        if request.filter_expression:
+            key, value = _parse_filter_expression(request.filter_expression)
+            filters.setdefault(key, value)
+        scored_docs = None
+        relevance_search = getattr(
+            self._store, "similarity_search_with_relevance_scores", None)
+        if relevance_search is not None and request.query:
             try:
-                docs = self._store.similarity_search_by_vector(
-                    emb, k=request.top_k, filter=filters)
+                search_kwargs: Dict[str, Any] = {"k": request.top_k}
+                if filters:
+                    search_kwargs["filter"] = filters
+                scored_docs = list(
+                    relevance_search(request.query, **search_kwargs))
+            except TypeError as exc:
+                if not filters:
+                    raise
+                raise RuntimeError(
+                    "the configured LangChain vector store does not support "
+                    "metadata filters required for isolated retrieval"
+                ) from exc
+            if len(scored_docs) > self.max_batch_documents:
+                raise RuntimeError(
+                    "LangChain vector result batch exceeds configured limit")
+            scored_docs = scored_docs[:request.top_k]
+            docs = [item[0] for item in scored_docs]
+        elif request.similarity_threshold != 0.0:
+            raise RuntimeError(
+                "the configured LangChain vector store cannot enforce "
+                "similarity_threshold; provide a backend implementing "
+                "similarity_search_with_relevance_scores"
+            )
+        elif filters:
+            try:
+                docs = list(self._store.similarity_search_by_vector(
+                    emb, k=request.top_k, filter=filters))
             except TypeError as exc:
                 # Never issue an unfiltered query when tenant/user isolation was
                 # requested. That would turn a compatibility fallback into a
@@ -223,15 +386,36 @@ class LangChainVectorStore(VectorStore):
                     "metadata filters required for isolated retrieval"
                 ) from exc
         else:
-            docs = self._store.similarity_search_by_vector(emb, k=request.top_k)
+            docs = list(self._store.similarity_search_by_vector(
+                emb, k=request.top_k))
+        if len(docs) > self.max_batch_documents:
+            raise RuntimeError(
+                "LangChain vector result batch exceeds configured limit")
+        docs = docs[:request.top_k]
         result: List[Document] = []
         for i, d in enumerate(docs):
-            result.append(Document(
+            if scored_docs is not None:
+                try:
+                    score = float(scored_docs[i][1])
+                except (IndexError, TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        "LangChain vector store returned an invalid relevance score"
+                    ) from exc
+                if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+                    raise RuntimeError(
+                        "LangChain vector store returned an invalid relevance score")
+                if score < request.similarity_threshold:
+                    continue
+            raw_embedding = getattr(d, "embedding", None)
+            document = Document(
                 id=getattr(d, "id", "") or f"langchain-{i}",
                 content=getattr(d, "page_content", str(d)),
-                embedding=emb,
+                embedding=(list(raw_embedding)
+                           if isinstance(raw_embedding, (list, tuple)) else []),
                 metadata=getattr(d, "metadata", {}) or {},
-            ))
+            )
+            self._validate_documents([document])
+            result.append(document)
         return result
 
     def count(self) -> int:
@@ -281,11 +465,27 @@ class RedisVectorStore(VectorStore):
     KEY_PREFIX = "springpy:ai:vectorstore:"
 
     def __init__(self, redis_client=None, collection: str = "default",
-                 embedding_model=None, max_scan: int = 10000):
+                 embedding_model=None, max_scan: int = 10000,
+                 max_content_length: int = 1_000_000,
+                 max_embedding_dimensions: int = 65_536,
+                 max_metadata_size: int = 256 * 1024,
+                 max_scan_bytes: int = 100 * 1024 * 1024):
         self._client = redis_client
         self.collection = collection
         self._embedding_model = embedding_model
+        if isinstance(max_scan, bool) or not isinstance(max_scan, int):
+            raise TypeError("RedisVectorStore max_scan must be an integer")
+        if not 1 <= max_scan <= 1_000_000:
+            raise ValueError("RedisVectorStore max_scan must be in [1, 1000000]")
         self.max_scan = max_scan
+        self.max_content_length = _positive_limit(
+            max_content_length, "max_content_length", 100_000_000)
+        self.max_embedding_dimensions = _positive_limit(
+            max_embedding_dimensions, "max_embedding_dimensions", 1_000_000)
+        self.max_metadata_size = _positive_limit(
+            max_metadata_size, "max_metadata_size", 10_000_000)
+        self.max_scan_bytes = _positive_limit(
+            max_scan_bytes, "max_scan_bytes", 1_000_000_000)
 
     def _key(self) -> str:
         return f"{self.KEY_PREFIX}{self.collection}"
@@ -307,27 +507,38 @@ class RedisVectorStore(VectorStore):
         for doc in documents:
             if not doc.embedding and self._embedding_model and doc.content:
                 doc.embedding = self._embedding_model.embed_one(doc.content)
+            _validate_document_resource(
+                doc, max_content_length=self.max_content_length,
+                max_embedding_dimensions=self.max_embedding_dimensions,
+                max_metadata_size=self.max_metadata_size,
+            )
             record = {
                 "id": doc.id, "content": doc.content,
                 "embedding": doc.embedding or [], "metadata": doc.metadata,
             }
-            if self._is_framework_client(self._client):
-                # 复用框架 RedisClient 封装（自动 JSON 序列化）
-                self._client.hash_set(self._key(), doc.id, record)
-            else:
-                # 降级：原生 redis 接口（兼容 redis.Redis / 测试 FakeRedis）
-                try:
-                    self._raw_client(self._client).hset(
+            try:
+                raw = self._raw_client(self._client)
+                if raw is not None and hasattr(raw, "hset"):
+                    raw.hset(
                         self._key(), doc.id,
                         json.dumps(record, ensure_ascii=False))
-                except Exception:
-                    pass
+                elif self._is_framework_client(self._client):
+                    self._client.hash_set(self._key(), doc.id, record)
+                else:
+                    raise RuntimeError("Redis client does not support hash writes")
+            except Exception as exc:
+                logger.warning(
+                    "Redis vector write failed collection=%s error_type=%s",
+                    self.collection, type(exc).__name__,
+                )
+                raise RuntimeError("Redis vector write failed") from None
 
     def add_texts(self, texts: List[str],
                   metadatas: Optional[List[Dict]] = None,
                   ids: Optional[List[str]] = None) -> None:
         for i, text in enumerate(texts):
-            doc_id = ids[i] if ids and i < len(ids) else f"doc-{i}"
+            doc_id = (ids[i] if ids and i < len(ids)
+                      else f"doc-{uuid.uuid4().hex}")
             meta = metadatas[i] if metadatas and i < len(metadatas) else {}
             self.add([Document(id=doc_id, content=text, metadata=meta)])
 
@@ -335,34 +546,89 @@ class RedisVectorStore(VectorStore):
         if self._client is None:
             return []
         max_scan = max_scan if max_scan is not None else self.max_scan
-        # max_scan <= 0 表示无限制（count() 场景）
-        if self._is_framework_client(self._client):
-            # 框架封装：hash_get_all 已自动 JSON 反序列化
-            raw = self._client.hash_get_all(self._key()) or {}
-        else:
-            try:
-                raw = self._raw_client(self._client).hgetall(self._key()) or {}
-            except Exception:
-                return []
+        # Prefer incremental HSCAN. HGETALL defeats max_scan because Redis must
+        # materialize the entire collection before Python can truncate it.
+        raw_client = self._raw_client(self._client)
         docs: List[Document] = []
         scanned = 0
-        for redis_field, val in raw.items():
-            if max_scan > 0 and scanned >= max_scan:
-                break
-            d = _safe_json_loads(val)
-            if not d:
-                continue
-            docs.append(Document(
-                id=d.get(
-                    "id",
-                    redis_field if isinstance(redis_field, str)
-                    else str(redis_field),
-                ),
-                content=d.get("content", ""),
-                embedding=d.get("embedding", []),
-                metadata=d.get("metadata", {}),
-            ))
-            scanned += 1
+        scanned_bytes = 0
+
+        def consume(entries) -> None:
+            nonlocal scanned, scanned_bytes
+            for redis_field, val in entries:
+                if max_scan > 0 and scanned >= max_scan:
+                    return
+                try:
+                    field_size = len(
+                        redis_field if isinstance(redis_field, bytes)
+                        else str(redis_field).encode("utf-8"))
+                    if isinstance(val, bytes):
+                        value_size = len(val)
+                    elif isinstance(val, str):
+                        value_size = len(val.encode("utf-8"))
+                    else:
+                        value_size = len(json.dumps(
+                            val, ensure_ascii=False).encode("utf-8"))
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        "Redis vector record is not serializable") from exc
+                scanned_bytes += field_size + value_size
+                if scanned_bytes > self.max_scan_bytes:
+                    raise RuntimeError("Redis vector scan exceeds max_scan_bytes")
+                data = _safe_json_loads(val)
+                if not isinstance(data, dict):
+                    raise RuntimeError("Redis vector record contains invalid JSON")
+                document = Document(
+                    id=data.get(
+                        "id",
+                        redis_field if isinstance(redis_field, str)
+                        else str(redis_field),
+                    ),
+                    content=data.get("content", ""),
+                    embedding=data.get("embedding", []),
+                    metadata=data.get("metadata", {}),
+                )
+                try:
+                    _validate_document_resource(
+                        document,
+                        max_content_length=self.max_content_length,
+                        max_embedding_dimensions=self.max_embedding_dimensions,
+                        max_metadata_size=self.max_metadata_size,
+                    )
+                except ValueError as exc:
+                    raise RuntimeError(
+                        "Redis vector record exceeds configured resource limits"
+                    ) from exc
+                docs.append(document)
+                scanned += 1
+
+        try:
+            if raw_client is not None and hasattr(raw_client, "hscan"):
+                cursor = 0
+                while True:
+                    cursor, batch = raw_client.hscan(
+                        self._key(), cursor=cursor,
+                        count=min(max_scan or self.max_scan, 1000),
+                    )
+                    consume((batch or {}).items())
+                    if max_scan and max_scan > 0 and scanned >= max_scan:
+                        break
+                    if int(cursor) == 0:
+                        break
+            elif raw_client is not None and hasattr(raw_client, "hgetall"):
+                consume((raw_client.hgetall(self._key()) or {}).items())
+            elif self._is_framework_client(self._client):
+                consume((self._client.hash_get_all(self._key()) or {}).items())
+            else:
+                return []
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Redis vector scan failed collection=%s error_type=%s",
+                self.collection, type(exc).__name__,
+            )
+            raise RuntimeError("Redis vector scan failed") from None
         return docs
 
     def similarity_search(self, request: SearchRequest) -> List[Document]:
@@ -371,13 +637,22 @@ class RedisVectorStore(VectorStore):
             emb = self._embedding_model.embed_one(request.query)
         if emb is None:
             return []
+        total = self.count()
+        if total > self.max_scan:
+            raise RuntimeError(
+                f"Redis vector collection contains {total} documents, exceeding "
+                f"max_scan={self.max_scan}; use a vector index or raise the limit")
+        parsed_filter = (
+            _parse_filter_expression(request.filter_expression)
+            if request.filter_expression else None
+        )
         scored = []
         for doc in self._all_docs():
             if not doc.embedding:
                 continue
             # RAG 租户隔离：filter_expression 为 "key:value" 格式，仅返回匹配文档
-            if request.filter_expression:
-                if not self._match_filter(doc, request.filter_expression):
+            if parsed_filter:
+                if not self._match_parsed_filter(doc, parsed_filter):
                     continue
             if request.filter_metadata:
                 if not self._match_metadata(doc, request.filter_metadata):
@@ -392,18 +667,18 @@ class RedisVectorStore(VectorStore):
     def _match_filter(doc: Document, filter_expr: str) -> bool:
         """检查文档 metadata 是否匹配 filter_expression。
 
-        支持两种格式：
-        - ``"key:value"`` — metadata 中的 key 值等于 value
-        - ``"key:"`` — metadata 中 key 存在且非空即可
+        仅支持非空 ``"key:value"``，非法表达式会被拒绝而不是降级查询。
         """
-        if ":" not in filter_expr:
-            return str(filter_expr).lower() in str(doc.metadata).lower()
-        key, _, value = filter_expr.partition(":")
-        key = key.strip()
-        actual = doc.metadata.get(key)
-        if not value:  # 仅检查键是否存在
-            return actual is not None and actual != ""
-        return str(actual) == value.strip()
+        return RedisVectorStore._match_parsed_filter(
+            doc, _parse_filter_expression(filter_expr))
+
+    @staticmethod
+    def _match_parsed_filter(doc: Document,
+                             parsed_filter: tuple[str, str]) -> bool:
+        if not isinstance(doc.metadata, dict):
+            return False
+        key, value = parsed_filter
+        return str(doc.metadata.get(key)) == value
 
     @staticmethod
     def _match_metadata(doc: Document, filters: Dict[str, Any]) -> bool:
@@ -414,15 +689,31 @@ class RedisVectorStore(VectorStore):
                    for key, value in filters.items())
 
     def count(self) -> int:
-        return len(self._all_docs(max_scan=0))  # 0 = 无限制，count 需准确
+        if self._client is None:
+            return 0
+        raw = self._raw_client(self._client)
+        try:
+            if raw is not None and hasattr(raw, "hlen"):
+                return int(raw.hlen(self._key()))
+        except Exception as exc:
+            logger.warning(
+                "Redis vector count failed collection=%s error_type=%s",
+                self.collection, type(exc).__name__,
+            )
+            raise RuntimeError("Redis vector count failed") from None
+        return len(self._all_docs(max_scan=0))
 
     def clear(self) -> None:
         if self._client is None:
             return
-        if self._is_framework_client(self._client):
-            self._client.delete_key(self._key())
-        else:
-            try:
+        try:
+            if self._is_framework_client(self._client):
+                self._client.delete_key(self._key())
+            else:
                 self._raw_client(self._client).delete(self._key())
-            except Exception:
-                pass
+        except Exception as exc:
+            logger.warning(
+                "Redis vector clear failed collection=%s error_type=%s",
+                self.collection, type(exc).__name__,
+            )
+            raise RuntimeError("Redis vector clear failed") from None

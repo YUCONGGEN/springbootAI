@@ -6,20 +6,20 @@
 设计：
 - **ContextVar 持有**：用 ``ContextVar`` 保存当前事务的同步列表与活跃标志，兼容 ``asyncio`` 协程，
   对齐 Spring 的 ``ThreadLocal<List<TransactionSynchronization>>``。
-- **最佳努力触发**：同步回调抛错时记录日志但不中断事务流程（与 Spring ``after_completion``
-  语义一致；``beforeCommit`` 抛错在 Spring 中会触发回滚，此处为安全起见统一记录，避免影响既有事务）。
+- **阶段化错误语义**：``beforeCommit`` 的异常向上传播并触发回滚；提交后与完成阶段
+  采用最佳努力执行，避免一个监听器阻断其他清理回调。
 - **集成点**：``@Transactional`` 切面（``bean_factory._wrap_transactional``）在事务边界调用
   ``init/clear`` 与各 ``trigger_*``；非受管场景可用 ``transaction_sync_scope`` 上下文管理器。
 
 与 Java 的差异：
 - Spring 用 ``ThreadLocal``；Python 用 ``ContextVar`` 兼容协程。
-- 同步回调抛错统一记录不中断事务（Spring ``beforeCommit`` 抛错会回滚），已在模块文档标注。
+- ``REQUIRES_NEW`` 使用独立 ContextVar 值并在结束后恢复外层同步上下文。
 """
 from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from enum import Enum
 from typing import Callable, List, Optional
 
@@ -68,9 +68,19 @@ class TransactionSynchronizationManager:
         return _synchronizations.get() is not None
 
     @staticmethod
-    def init_synchronization() -> None:
+    def init_synchronization() -> Token:
         """开启一个新的事务同步上下文（``@Transactional`` 入口调用）。"""
-        _synchronizations.set([])
+        return _synchronizations.set([])
+
+    @staticmethod
+    def suspend_synchronization() -> Token:
+        """Suspend the current synchronization context until restored."""
+        return _synchronizations.set(None)
+
+    @staticmethod
+    def restore_synchronization(token: Token) -> None:
+        """Restore exactly the context replaced by ``init``/``suspend``."""
+        _synchronizations.reset(token)
 
     @staticmethod
     def clear_synchronization() -> None:
@@ -99,7 +109,7 @@ class TransactionSynchronizationManager:
     @staticmethod
     def trigger_before_commit() -> None:
         TransactionSynchronizationManager._trigger(
-            "before_commit", lambda s: s.before_commit()
+            "before_commit", lambda s: s.before_commit(), propagate=True
         )
 
     @staticmethod
@@ -121,13 +131,24 @@ class TransactionSynchronizationManager:
         )
 
     @staticmethod
-    def _trigger(phase: str, invoker: Callable[[TransactionSynchronization], None]) -> None:
-        """最佳努力触发：逐个调用同步回调，单个抛错记录日志但不中断后续。"""
+    def _trigger(
+        phase: str,
+        invoker: Callable[[TransactionSynchronization], None],
+        *,
+        propagate: bool = False,
+    ) -> None:
+        """Run callbacks, propagating commit vetoes and isolating later phases."""
         for sync in TransactionSynchronizationManager.get_synchronizations():
             try:
                 invoker(sync)
-            except Exception:  # pragma: no cover - 防御性，同步回调实现多样
-                logger.exception("事务同步回调 %s 执行失败", phase)
+            except Exception as exc:
+                logger.error(
+                    "事务同步回调 %s 执行失败 error_type=%s",
+                    phase,
+                    type(exc).__name__,
+                )
+                if propagate:
+                    raise
 
 
 @contextmanager
@@ -136,8 +157,8 @@ def transaction_sync_scope():
 
     供独立测试或手动管理事务事件边界使用。``@Transactional`` 切面内部会自行管理。
     """
-    TransactionSynchronizationManager.init_synchronization()
+    token = TransactionSynchronizationManager.init_synchronization()
     try:
         yield TransactionSynchronizationManager
     finally:
-        TransactionSynchronizationManager.clear_synchronization()
+        TransactionSynchronizationManager.restore_synchronization(token)

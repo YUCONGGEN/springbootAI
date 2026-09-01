@@ -10,6 +10,7 @@ import requests
 
 from springbootai.ai.core import ChatModel, ChatResponse, Generation, Message
 from springbootai.ai.providers import (
+    FakeChatModel,
     OllamaChatModel,
     OpenAIChatModel,
     OpenAICompatChatModel,
@@ -18,6 +19,7 @@ from springbootai.ai.providers import (
     ProviderStreamError,
     _http_post_json,
 )
+from springbootai.ai.tools import ToolRegistry
 from springbootai.ai.resilience import AICircuitBreaker, TransientError
 from springbootai.logging.context import request_context
 
@@ -345,6 +347,63 @@ def test_astream_does_not_expose_provider_exception_text():
     with pytest.raises(RuntimeError, match="stream error: RuntimeError") as raised:
         asyncio.run(scenario())
     assert "SUPERSECRET" not in str(raised.value)
+
+
+def test_tool_enabled_stream_executes_the_complete_tool_loop():
+    registry = ToolRegistry()
+    registry.register("lookup", lambda: "tool-result")
+    model = FakeChatModel(prefix="AI:", simulate_tool_call=True)
+
+    chunks = list(model.stream(
+        [Message.user("调用工具 lookup")], tool_registry=registry))
+
+    assert len(chunks) == 1
+    assert chunks[0].content() == "AI: 工具返回: tool-result"
+    assert chunks[0].metadata["stream_fallback"] == "tool_loop"
+    assert model.call_count == 2
+
+
+def test_astream_cancellation_closes_active_http_response_and_releases_capacity(
+        monkeypatch):
+    started = threading.Event()
+
+    class BlockingResponse(_Response):
+        def __init__(self):
+            super().__init__()
+            self.unblocked = threading.Event()
+
+        def iter_lines(self, decode_unicode=True):
+            started.set()
+            self.unblocked.wait(2)
+            yield "data: [DONE]"
+
+        def close(self):
+            self.closed = True
+            self.unblocked.set()
+
+    response = BlockingResponse()
+    monkeypatch.setattr(requests, "post", lambda *_a, **_k: response)
+    model = _openai_model()
+    model.max_concurrent_requests = 1
+    model.concurrency_acquire_timeout = 0.2
+
+    async def scenario():
+        iterator = model.astream([Message.user("hello")])
+        pending = asyncio.create_task(anext(iterator))
+        for _ in range(100):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.005)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        await iterator.aclose()
+
+    asyncio.run(scenario())
+    assert response.closed is True
+    semaphore = model._capacity_semaphore()
+    assert semaphore.acquire(timeout=0.2)
+    semaphore.release()
 
 
 @pytest.mark.parametrize(

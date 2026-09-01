@@ -1,50 +1,44 @@
 # ========================================
-# SpringBootAI AI & LangChain 模块可选依赖（精确锁定版本）
+# SpringBootAI optional AI/LangChain dependencies (exact versions)
 # ========================================
-# AI 模块采用"可选依赖 + 降级"设计：
-#   - 未安装本文件任何依赖时，AI 模块仍可用（降级原生 HTTP + FakeChatModel）
-#   - 安装后自动启用 LangChain 生态适配（见 springbootai/ai/providers.py 的 _has_* 检测）
+# The AI module uses optional dependencies with a built-in fallback:
+#   - Without this file, native HTTP providers and FakeChatModel remain usable.
+#   - Installing it enables LangChain adapters detected by ai/providers.py.
 #
-# 安装方式（按需）：
-#   pip install -r requirements-ai.txt          # 全量
-#   pip install langchain-openai==1.4.2         # 仅 OpenAI 适配
+# Install examples:
+#   pip install -r requirements-ai.txt
+#   pip install langchain-openai==1.4.2
 #
-# 推荐 Python: 3.10+（CI 测试 3.10 / 3.11 / 3.12）
-# 所有固定版本均经过本仓库测试与依赖漏洞扫描
+# Recommended Python: 3.10+ (CI covers 3.10, 3.11 and 3.12).
+# Every pinned version is covered by tests and dependency auditing.
+# Keep this file ASCII-only: pip-audit may use the Windows system encoding.
 # ========================================
 
-# LangChain 核心（1.x 架构，BaseChatModel / Embeddings / Runnable 接口）
+# LangChain core (BaseChatModel, Embeddings and Runnable APIs).
 langchain-core==1.5.4
 
-# LangChain classic（LLMChain / ConversationChain / initialize_agent 等经典 API）
-# langchain 1.x 把经典 Chain/Agent 迁到了 langchain-classic 包
+# Classic APIs including LLMChain, ConversationChain and initialize_agent.
 langchain-classic==1.0.8
 
-# OpenAI 兼容模型适配（OpenAI / Azure / DeepSeek / Moonshot）
+# OpenAI-compatible providers (OpenAI, Azure, DeepSeek and Moonshot).
 langchain-openai==1.4.2
 
-# 文档切分器（RecursiveCharacterTextSplitter / CharacterTextSplitter）
+# RecursiveCharacterTextSplitter and CharacterTextSplitter.
 langchain-text-splitters==1.1.2
 
-# LangChain 社区包（FAISS / Chroma / DuckDuckGo / Wikipedia 等社区集成）
+# Community integrations including FAISS, Chroma, DuckDuckGo and Wikipedia.
 langchain-community==0.4.2
 
-# 向量相似度计算（cosine_similarity 等，未安装时降级内置 math.sqrt 实现）
-# 锁定 2.2.6 以保持 Python 3.10 兼容性（numpy 2.3+ 要求 Python >=3.11）
+# Vector similarity calculations; 2.2.6 retains Python 3.10 compatibility.
 numpy==2.2.6
 
-# 数据校验（pydantic v2，OutputParser 结构化输出依赖）
+# Pydantic v2 for validation and structured output parsing.
 pydantic==2.13.4
 
 # ========================================
-# 以下为可选依赖（按需安装，CI 中用 || true 容错）
+# Additional optional packages (install only when needed)
 # ========================================
 
-# 向量库（faiss-cpu — 未安装时 test_18 自动 skip，不影响其他测试）
-# pip install faiss-cpu
-
-# PDF 文档加载（pypdf — 未安装时 JSONLoader/TextLoader 仍可用）
-# pip install pypdf
-
-# HTML 解析（beautifulsoup4 — 未安装时 WebBaseLoader 不可用）
-# pip install beautifulsoup4
+# Vector database: faiss-cpu
+# PDF document loading: pypdf
+# HTML parsing: beautifulsoup4

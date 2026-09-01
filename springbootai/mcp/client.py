@@ -18,6 +18,29 @@ from springbootai.mcp.config import MCPClientProperties, MCPConfigurationError
 logger = logging.getLogger("Spring.MCP.Client")
 
 
+_STDIO_SAFE_ENVIRONMENT_KEYS = (
+    # Process creation and basic platform runtime.
+    "PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+    # Locale and deterministic Python stdio behavior.
+    "LANG", "LC_ALL", "LC_CTYPE", "PYTHONIOENCODING", "PYTHONUTF8",
+    "PYTHONUNBUFFERED",
+)
+
+
+def _stdio_child_environment(properties: MCPClientProperties) -> Dict[str, str]:
+    """Build a least-privilege environment for a local MCP subprocess."""
+    if properties.inherit_environment:
+        child_env = os.environ.copy()
+    else:
+        child_env = {
+            key: os.environ[key]
+            for key in _STDIO_SAFE_ENVIRONMENT_KEYS
+            if key in os.environ
+        }
+    child_env.update(dict(properties.env))
+    return child_env
+
+
 class MCPDependencyError(ImportError):
     """Raised when MCP is enabled without the optional official SDK."""
 
@@ -37,14 +60,29 @@ def require_mcp_sdk() -> None:
         ) from exc
 
 
-def _content_to_value(result: Any) -> Any:
+def _content_to_value(
+    result: Any,
+    *,
+    max_items: int,
+    max_chars: int,
+) -> Any:
     """Convert an SDK CallToolResult into an AI-safe Python value."""
+    content = getattr(result, "content", [])
     if getattr(result, "is_error", False):
-        details = " ".join(
-            str(getattr(item, "text", "")) for item in getattr(result, "content", [])
-            if getattr(item, "text", "")
-        ).strip()
-        raise MCPClientError(details[:500] or "remote MCP tool returned an error")
+        details: list[str] = []
+        remaining = 500
+        for index, item in enumerate(content):
+            if index >= max_items or remaining <= 0:
+                break
+            text = str(getattr(item, "text", "")).strip()
+            if not text:
+                continue
+            fragment = text[:remaining]
+            details.append(fragment)
+            remaining -= len(fragment) + 1
+        raise MCPClientError(
+            " ".join(details).strip() or "remote MCP tool returned an error"
+        )
 
     structured = getattr(result, "structured_content", None)
     if structured is not None:
@@ -53,14 +91,23 @@ def _content_to_value(result: Any) -> Any:
         return structured
 
     rendered: list[Any] = []
-    for item in getattr(result, "content", []):
+    rendered_chars = 0
+    for index, item in enumerate(content):
+        if index >= max_items:
+            raise MCPClientError("MCP tool result contains too many content items")
         item_type = getattr(item, "type", "")
         if item_type == "text":
-            rendered.append(getattr(item, "text", ""))
+            value = getattr(item, "text", "")
         elif hasattr(item, "model_dump"):
-            rendered.append(item.model_dump(by_alias=True, mode="json"))
+            value = item.model_dump(by_alias=True, mode="json")
         else:
-            rendered.append(str(item))
+            value = str(item)
+        rendered_chars += len(str(value))
+        if rendered_chars > max_chars:
+            raise MCPClientError(
+                f"MCP tool result exceeds {max_chars} characters"
+            )
+        rendered.append(value)
     if len(rendered) == 1:
         return rendered[0]
     return rendered
@@ -71,6 +118,49 @@ def _json_size(value: Any) -> int:
         return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
     except (TypeError, ValueError) as exc:
         raise TypeError("MCP tool arguments must be JSON serializable") from exc
+
+
+def _json_value(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(by_alias=True, mode="json")
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _schema_depth(value: Any, current: int = 0) -> int:
+    # Configuration caps the accepted depth at 64. Stop descending past that
+    # boundary so maliciously deep stdio/in-process payloads cannot exhaust the
+    # Python call stack before the normal validation rejects them.
+    if current > 64:
+        return current
+    if isinstance(value, dict):
+        if not value:
+            return current + 1
+        return max(_schema_depth(item, current + 1) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return current + 1
+        return max(_schema_depth(item, current + 1) for item in value)
+    return current
+
+
+def _is_timeout_error(error: BaseException) -> bool:
+    """Recognize timeout wrappers used by asyncio, HTTPX and the MCP SDK."""
+    seen: set[int] = set()
+    current: Optional[BaseException] = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (asyncio.TimeoutError, TimeoutError)):
+            return True
+        name = type(current).__name__.lower()
+        message = str(current).lower()
+        if "timeout" in name or "timed out" in message:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class MCPClientConnection:
@@ -85,6 +175,7 @@ class MCPClientConnection:
         self._requests: Optional[asyncio.Queue] = None
         self._runner_task: Optional[asyncio.Task] = None
         self._ready: Optional[asyncio.Future] = None
+        self._active_tasks: Dict[asyncio.Future, asyncio.Task] = {}
 
     def _transport(self) -> Any:
         require_mcp_sdk()
@@ -95,9 +186,9 @@ class MCPClientConnection:
 
             # The documented ``python -m example_mcp.*`` example runs in a
             # child process, which does not inherit the source checkout path
-            # when the library is installed. Preserve the caller environment
-            # and add the repository examples path only when it exists.
-            child_env = os.environ.copy()
+            # when the library is installed. Add only those import paths; the
+            # rest of the parent environment is isolated by default.
+            child_env = _stdio_child_environment(self.properties)
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(
                 os.path.abspath(__file__)
             )))
@@ -109,7 +200,6 @@ class MCPClientConnection:
                     paths.append(candidate)
             if paths:
                 child_env["PYTHONPATH"] = os.pathsep.join(paths)
-            child_env.update(dict(self.properties.env))
             parameters = StdioServerParameters(
                 command=self.properties.command,
                 args=list(self.properties.args),
@@ -128,10 +218,52 @@ class MCPClientConnection:
 
         parsed = urlparse(self.properties.url)
         loopback = (parsed.hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
+        response_limit = self.properties.max_response_bytes
+
+        class BoundedResponseStream(httpx.AsyncByteStream):
+            def __init__(self, stream: Any):
+                self.stream = stream
+                self.total = 0
+
+            async def __aiter__(self):
+                async for chunk in self.stream:
+                    self.total += len(chunk)
+                    if self.total > response_limit:
+                        raise MCPClientError(
+                            "MCP HTTP response exceeds max_response_bytes")
+                    yield chunk
+
+            async def aclose(self) -> None:
+                await self.stream.aclose()
+
+        async def enforce_response_limit(response: Any) -> None:
+            content_encoding = response.headers.get(
+                "content-encoding", "identity").strip().lower()
+            if content_encoding not in {"", "identity"}:
+                await response.aclose()
+                raise MCPClientError(
+                    "compressed MCP responses are disabled to prevent decompression bombs")
+            raw_length = response.headers.get("content-length")
+            if raw_length:
+                try:
+                    length = int(raw_length)
+                except ValueError as exc:
+                    await response.aclose()
+                    raise MCPClientError(
+                        "MCP HTTP response has an invalid Content-Length") from exc
+                if length < 0 or length > response_limit:
+                    await response.aclose()
+                    raise MCPClientError(
+                        "MCP HTTP response exceeds max_response_bytes")
+            response.stream = BoundedResponseStream(response.stream)
+
+        headers = dict(self.properties.headers)
+        headers.setdefault("Accept-Encoding", "identity")
         self._http_client = httpx.AsyncClient(
-            headers=dict(self.properties.headers),
+            headers=headers,
             timeout=self.properties.timeout_seconds,
             trust_env=not loopback,
+            event_hooks={"response": [enforce_response_limit]},
         )
         return streamable_http_client(
             self.properties.url, http_client=self._http_client
@@ -147,14 +279,27 @@ class MCPClientConnection:
             if self._client is not None and self._runner_task is not None:
                 return self
             loop = asyncio.get_running_loop()
-            self._requests = asyncio.Queue()
+            self._requests = asyncio.Queue(
+                maxsize=self.properties.max_pending_requests)
             self._ready = loop.create_future()
-            self._runner_task = loop.create_task(
+            runner = loop.create_task(
                 self._run_client(), name=f"spring-mcp-{self.properties.name}"
             )
-            await asyncio.wait_for(
-                asyncio.shield(self._ready), timeout=self.properties.timeout_seconds
-            )
+            self._runner_task = runner
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(self._ready),
+                    timeout=self.properties.timeout_seconds,
+                )
+            except BaseException:
+                if self._runner_task is runner:
+                    self._runner_task = None
+                if not runner.done():
+                    runner.cancel()
+                await asyncio.gather(runner, return_exceptions=True)
+                self._requests = None
+                self._ready = None
+                raise
         return self
 
     async def _run_client(self) -> None:
@@ -184,13 +329,26 @@ class MCPClientConnection:
                         if not result_future.done():
                             result_future.set_result(result)
 
+                requests = self._requests
+                if requests is None:
+                    raise MCPClientError("MCP request queue is unavailable")
                 while True:
-                    request = await self._requests.get()
+                    request = await requests.get()  # nosec B113 - asyncio.Queue, not HTTP
                     if request is None:
                         break
+                    result_future = request[3]
+                    # 调用在队列中等待期间已超时/取消，不再把副作用发送给远端。
+                    if result_future.done():
+                        continue
                     task = asyncio.create_task(execute(request))
                     active.add(task)
-                    task.add_done_callback(active.discard)
+                    self._active_tasks[result_future] = task
+
+                    def discard(done_task, future=result_future):
+                        active.discard(done_task)
+                        self._active_tasks.pop(future, None)
+
+                    task.add_done_callback(discard)
                 if active:
                     await asyncio.gather(*active, return_exceptions=True)
         except BaseException as exc:
@@ -198,6 +356,13 @@ class MCPClientConnection:
             if self._ready is not None and not self._ready.done():
                 self._ready.set_exception(exc)
         finally:
+            active_tasks = list(self._active_tasks.values())
+            for task in active_tasks:
+                if not task.done():
+                    task.cancel()
+            if active_tasks:
+                await asyncio.gather(*active_tasks, return_exceptions=True)
+            self._active_tasks.clear()
             self._client = None
             http_client, self._http_client = self._http_client, None
             if http_client is not None:
@@ -213,21 +378,58 @@ class MCPClientConnection:
 
     async def _request(self, operation: str, *args: Any, **kwargs: Any) -> Any:
         await self.connect()
+        requests = self._requests
+        if requests is None:
+            raise MCPClientError("MCP request queue is unavailable")
         future = asyncio.get_running_loop().create_future()
-        await self._requests.put((operation, args, kwargs, future))
         try:
-            return await asyncio.wait_for(
-                asyncio.shield(future), timeout=self.properties.timeout_seconds + 1
+            await asyncio.wait_for(
+                requests.put((operation, args, kwargs, future)),  # nosec B113 - asyncio.Queue, not HTTP
+                timeout=self.properties.timeout_seconds,
             )
         except asyncio.TimeoutError as exc:
             future.cancel()
+            raise MCPClientError("MCP request queue is full") from exc
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(future), timeout=self.properties.timeout_seconds
+            )
+        except asyncio.TimeoutError as exc:
+            await self._cancel_request(future)
             raise MCPClientError(f"MCP operation timed out: {operation}") from exc
+        except asyncio.CancelledError:
+            await self._cancel_request(future)
+            raise
+
+    async def _cancel_request(self, future: asyncio.Future) -> None:
+        """Cancel queued/running work and wait for local transport cancellation."""
+        future.cancel()
+        task = self._active_tasks.get(future)
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     async def close(self) -> None:
         runner, self._runner_task = self._runner_task, None
+        active_tasks = list(self._active_tasks.values())
+        for future, task in list(self._active_tasks.items()):
+            future.cancel()
+            if not task.done():
+                task.cancel()
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
         if runner is not None and not runner.done():
-            await self._requests.put(None)
-            await runner
+            if self._requests is not None:
+                await self._requests.put(None)
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(runner),
+                    timeout=self.properties.timeout_seconds + 1,
+                )
+            except asyncio.TimeoutError:
+                runner.cancel()
+                await asyncio.gather(runner, return_exceptions=True)
+        self._active_tasks.clear()
         self._requests = None
         self._ready = None
         self._connect_lock = None
@@ -235,7 +437,11 @@ class MCPClientConnection:
     async def list_tools(self) -> list[Any]:
         try:
             result = await self._request("list_tools", cache_mode="bypass")
-            return list(result.tools)
+            tools = list(result.tools)
+            self._validate_collection(tools, "tools", validate_schemas=True)
+            return tools
+        except MCPClientError:
+            raise
         except Exception as exc:
             raise MCPClientError(
                 f"failed to discover tools from MCP server {self.properties.name!r}"
@@ -257,7 +463,14 @@ class MCPClientConnection:
                 arguments,
                 read_timeout_seconds=self.properties.timeout_seconds,
             )
-            value = _content_to_value(result)
+            value = _content_to_value(
+                result,
+                max_items=self.properties.max_collection_items,
+                max_chars=self.properties.max_result_chars,
+            )
+            if _json_size(_json_value(value)) > self.properties.max_response_bytes:
+                raise MCPClientError(
+                    "MCP tool result exceeds max_response_bytes")
             if len(str(value)) > self.properties.max_result_chars:
                 raise MCPClientError(
                     f"MCP tool result exceeds {self.properties.max_result_chars} characters"
@@ -268,25 +481,65 @@ class MCPClientConnection:
         except MCPClientError:
             raise
         except Exception as exc:
+            if _is_timeout_error(exc):
+                raise MCPClientError(f"MCP tool timed out: {name}") from exc
             raise MCPClientError(f"MCP tool failed: {name}") from exc
 
     async def list_resources(self) -> list[Any]:
         result = await self._request("list_resources", cache_mode="bypass")
-        return list(result.resources)
+        resources = list(result.resources)
+        self._validate_collection(resources, "resources")
+        return resources
 
     async def list_resource_templates(self) -> list[Any]:
         result = await self._request("list_resource_templates", cache_mode="bypass")
-        return list(result.resource_templates)
+        templates = list(result.resource_templates)
+        self._validate_collection(templates, "resource templates")
+        return templates
 
     async def read_resource(self, uri: str) -> Any:
-        return await self._request("read_resource", uri, cache_mode="bypass")
+        result = await self._request("read_resource", uri, cache_mode="bypass")
+        self._validate_payload(result, "resource")
+        return result
 
     async def list_prompts(self) -> list[Any]:
         result = await self._request("list_prompts", cache_mode="bypass")
-        return list(result.prompts)
+        prompts = list(result.prompts)
+        self._validate_collection(prompts, "prompts")
+        return prompts
 
     async def get_prompt(self, name: str, arguments: Optional[Dict[str, str]] = None) -> Any:
-        return await self._request("get_prompt", name, arguments)
+        result = await self._request("get_prompt", name, arguments)
+        self._validate_payload(result, "prompt")
+        return result
+
+    def _validate_payload(self, value: Any, label: str) -> None:
+        normalized = _json_value(value)
+        if _json_size(normalized) > self.properties.max_response_bytes:
+            raise MCPClientError(
+                f"MCP {label} exceeds max_response_bytes")
+
+    def _validate_collection(
+        self,
+        values: list[Any],
+        label: str,
+        *,
+        validate_schemas: bool = False,
+    ) -> None:
+        if len(values) > self.properties.max_collection_items:
+            raise MCPClientError(
+                f"MCP {label} exceed max_collection_items")
+        self._validate_payload(values, label)
+        if not validate_schemas:
+            return
+        for tool in values:
+            schema = getattr(tool, "input_schema", None)
+            if schema is None:
+                schema = getattr(tool, "inputSchema", None)
+            normalized = _json_value(schema or {})
+            if _schema_depth(normalized) > self.properties.max_schema_depth:
+                raise MCPClientError(
+                    "MCP tool schema exceeds max_schema_depth")
 
 
 class MCPClientManager:
@@ -325,6 +578,8 @@ class MCPClientManager:
             self._thread.start()
             if not ready.wait(5):
                 raise MCPClientError("MCP client event loop failed to start")
+        if self._loop is None:
+            raise MCPClientError("MCP client event loop failed to initialize")
         return self._loop
 
     def submit(self, coroutine: Any, timeout: Optional[float] = None) -> Any:
@@ -333,8 +588,9 @@ class MCPClientManager:
         try:
             return future.result(timeout=timeout)
         except TimeoutError:
-            # Propagate cancellation to the coroutine/HTTP transport instead of
-            # leaving a remote side effect running after the caller times out.
+            # Best-effort propagation to the coroutine/HTTP transport. Once a
+            # remote side effect has been accepted, the tool itself still needs
+            # an idempotency key because no distributed client can revoke it.
             future.cancel()
             raise
 
@@ -343,7 +599,8 @@ class MCPClientManager:
             *(connection.connect() for connection in self.connections.values()),
             return_exceptions=True,
         )
-        for connection, result in zip(self.connections.values(), results):
+        for connection, result in zip(
+                self.connections.values(), results, strict=True):
             if isinstance(result, BaseException):
                 if connection.properties.fail_fast:
                     raise MCPClientError(
@@ -421,7 +678,7 @@ class MCPClientManager:
                 # MCPConnection owns an asyncio/httpx timeout and cancels the
                 # submitted coroutine. ToolRegistry must not add a second
                 # in-process thread timeout around this managed operation.
-                invoke_remote.__spring_tool_managed_timeout__ = True
+                invoke_remote.__spring_tool_managed_timeout__ = True  # type: ignore[attr-defined]
                 registry.register_schema(
                     public_name,
                     invoke_remote,

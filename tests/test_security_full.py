@@ -32,8 +32,9 @@ class TestJwtUtilsConstruction:
         assert jwt.issuer is None
 
     def test_with_secret_and_algorithm(self):
-        jwt = JwtUtils(secret_key="mykey", algorithm="HS256")
-        assert jwt.secret_key == "mykey"
+        secret = "unit-test-secret-key-at-least-32-bytes"
+        jwt = JwtUtils(secret_key=secret, algorithm="HS256")
+        assert jwt.secret_key == secret
         assert jwt.algorithm == "HS256"
 
     def test_algorithm_hs384(self):
@@ -49,19 +50,25 @@ class TestJwtUtilsConstruction:
             JwtUtils(algorithm="RS256")
 
     def test_configure_with_issuer(self):
-        jwt = JwtUtils(secret_key="key")
+        jwt = JwtUtils(secret_key="unit-test-secret-key-at-least-32-bytes")
         jwt.configure(issuer="my-app")
         assert jwt.issuer == "my-app"
 
     def test_configure_with_audience(self):
-        jwt = JwtUtils(secret_key="key")
+        jwt = JwtUtils(secret_key="unit-test-secret-key-at-least-32-bytes")
         jwt.configure(audience="my-aud")
         assert jwt.audience == "my-aud"
 
     def test_constructor_does_not_accept_issuer(self):
         # 构造函数不接受 issuer 参数；应抛出 TypeError
         with pytest.raises(TypeError):
-            JwtUtils(secret_key="key", issuer="my-app")
+            JwtUtils(
+                secret_key="unit-test-secret-key-at-least-32-bytes",
+                issuer="my-app")
+
+    def test_weak_secret_is_rejected(self):
+        with pytest.raises(ValueError, match="at least 32 bytes"):
+            JwtUtils(secret_key="too-short")
 
 
 class TestJwtTokenGeneration:

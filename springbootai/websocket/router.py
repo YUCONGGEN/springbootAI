@@ -21,9 +21,11 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 import json
 import logging
 from typing import Any, Callable, Dict, Iterable, List, Optional, Type
+from urllib.parse import urlsplit
 
 from .annotations import (
     MessageEndpoint,
@@ -69,11 +71,13 @@ class MessageEndpointDispatcher(WebSocketHandler):
         instance: Optional[Any] = None,
         configurer: Optional[MessageBrokerConfigurer] = None,
         session_registry: Optional[WebSocketSessionRegistry] = None,
+        destination_authorizer: Optional[Callable] = None,
     ):
         self._endpoint_cls = endpoint_cls
         self._instance = instance
         self._configurer = configurer or broker_registry
         self._session_registry = session_registry or global_session_registry
+        self._destination_authorizer = destination_authorizer
         self._models: List[MessageMappingModel] = collect_message_mappings(endpoint_cls)
         # @MessageMapping 路由表（destination -> model）
         self._message_routes: Dict[str, MessageMappingModel] = {
@@ -111,6 +115,21 @@ class MessageEndpointDispatcher(WebSocketHandler):
         action = frame.get("action", "message")
         destination = frame.get("destination", "")
         payload = frame.get("payload")
+
+        if self._destination_authorizer is not None:
+            try:
+                allowed = self._destination_authorizer(
+                    session, action, destination, payload)
+                if inspect.isawaitable(allowed):
+                    allowed = await allowed
+            except Exception as exc:
+                logger.warning(
+                    "WebSocket destination authorization failed error_type=%s",
+                    type(exc).__name__,
+                )
+                allowed = False
+            if not allowed:
+                raise MessageBrokerException("destination access denied")
 
         if action == "subscribe":
             await self._handle_subscribe(session, destination)
@@ -187,9 +206,13 @@ class MessageEndpointDispatcher(WebSocketHandler):
             if inspect.isawaitable(result):
                 result = await result
         except Exception as exc:
-            logger.warning("@MessageMapping %s.%s 抛异常: %s",
-                           self._endpoint_cls.__name__, model.method_name, exc)
-            raise WebSocketHandlerException(str(exc)) from exc
+            logger.warning(
+                "@MessageMapping %s.%s failed error_type=%s",
+                self._endpoint_cls.__name__, model.method_name,
+                type(exc).__name__,
+            )
+            raise WebSocketHandlerException(
+                "message handler failed") from exc
 
         if result is None:
             return  # 无返回值：不发送
@@ -261,10 +284,27 @@ class WebSocketRouter:
         self,
         session_registry: Optional[WebSocketSessionRegistry] = None,
         configurer: Optional[MessageBrokerConfigurer] = None,
+        handshake_authorizer: Optional[Callable] = None,
+        destination_authorizer: Optional[Callable] = None,
+        allowed_origins: Optional[Iterable[str]] = None,
+        allow_anonymous: bool = False,
+        allow_query_token: bool = False,
+        max_message_size: int = 1024 * 1024,
+        send_timeout: float = 10.0,
     ):
-        self._session_registry = session_registry or global_session_registry
-        self._configurer = configurer or broker_registry
+        inherited_registry = getattr(configurer, "session_registry", None)
+        self._session_registry = (
+            session_registry or inherited_registry or WebSocketSessionRegistry())
+        self._configurer = configurer or MessageBrokerConfigurer(
+            session_registry=self._session_registry)
         self._routes: Dict[str, _RouteEntry] = {}
+        self._handshake_authorizer = handshake_authorizer
+        self._destination_authorizer = destination_authorizer
+        self._allowed_origins = set(allowed_origins or ())
+        self._allow_anonymous = bool(allow_anonymous)
+        self._allow_query_token = bool(allow_query_token)
+        self._max_message_size = max(1, int(max_message_size))
+        self._send_timeout = max(0.001, float(send_timeout))
 
     @property
     def session_registry(self) -> WebSocketSessionRegistry:
@@ -311,14 +351,19 @@ class WebSocketRouter:
             dispatcher = MessageEndpointDispatcher(
                 endpoint_cls, instance=instance, configurer=self._configurer,
                 session_registry=self._session_registry,
+                destination_authorizer=self._destination_authorizer,
             )
             self._routes[path] = _RouteEntry(path, lambda: dispatcher, name=name)
             return
 
         # @ServerEndpoint 类：用 AnnotatedEndpointHandler
         if _is_server_endpoint(endpoint_cls):
-            handler = AnnotatedEndpointHandler(endpoint_cls, instance=instance)
-            self._routes[path] = _RouteEntry(path, lambda: handler, name=name)
+            def annotated_handler_factory(
+                    cls=endpoint_cls, shared=instance) -> WebSocketHandler:
+                return AnnotatedEndpointHandler(cls, instance=shared)
+            self._routes[path] = _RouteEntry(
+                path, annotated_handler_factory, name=name,
+            )
             return
 
         # WebSocketHandler 子类
@@ -349,6 +394,7 @@ class WebSocketRouter:
         dispatcher = MessageEndpointDispatcher(
             endpoint_cls, instance=instance, configurer=self._configurer,
             session_registry=self._session_registry,
+            destination_authorizer=self._destination_authorizer,
         )
         self._routes[path] = _RouteEntry(path, lambda: dispatcher, name=name)
 
@@ -365,22 +411,41 @@ class WebSocketRouter:
         from starlette.websockets import WebSocket
 
         async def endpoint(websocket: WebSocket) -> None:
-            # 握手：接受连接
+            auth = await self._authorize_handshake(websocket)
+            if auth is None:
+                try:
+                    await websocket.close(code=1008, reason="policy violation")
+                except Exception:
+                    pass
+                return
+
+            # 握手授权通过后才接受连接。
             try:
                 await websocket.accept()
             except Exception as exc:
-                raise WebSocketConnectionException(f"WebSocket 握手失败: {exc}") from exc
+                raise WebSocketConnectionException(
+                    "WebSocket handshake failed") from exc
 
-            session = WebSocketSession(websocket)
+            session = WebSocketSession(
+                websocket, user=auth.get("user"),
+                send_timeout=self._send_timeout)
+            session.attributes.update(auth.get("attributes", {}))
             self._session_registry.register(session)
             handler = entry.handler_factory()
+            close_notified = False
 
             # 调用 after_connection_established
             try:
                 await handler.after_connection_established(session)
             except Exception as exc:
-                logger.warning("after_connection_established 抛异常: %s", exc)
+                logger.warning(
+                    "after_connection_established failed error_type=%s",
+                    type(exc).__name__,
+                )
                 await _safe_close(session, code=1011, reason="server error")
+                await _safe_call(
+                    handler.after_connection_closed, session,
+                    "connection establishment failed")
                 self._session_registry.unregister(session.id)
                 return
 
@@ -406,22 +471,48 @@ class WebSocketRouter:
                     if msg_type == "websocket.disconnect":
                         # 客户端断开
                         code = message.get("code", 1000)
-                        await handler.after_connection_closed(session, f"client closed (code={code})")
+                        session.mark_closed()
+                        await _safe_call(
+                            handler.after_connection_closed, session,
+                            f"client closed (code={code})")
+                        close_notified = True
                         break
-                    if "text" in message:
-                        await handler.handle_text_message(session, message["text"])
-                    elif "bytes" in message:
-                        await handler.handle_binary_message(session, message["bytes"])
+                    text_message = message.get("text")
+                    byte_message = message.get("bytes")
+                    if text_message is not None:
+                        if len(text_message.encode("utf-8")) > self._max_message_size:
+                            await _safe_close(
+                                session, code=1009, reason="message too large")
+                            break
+                        await handler.handle_text_message(session, text_message)
+                    elif byte_message is not None:
+                        if len(byte_message) > self._max_message_size:
+                            await _safe_close(
+                                session, code=1009, reason="message too large")
+                            break
+                        await handler.handle_binary_message(session, byte_message)
             except Exception as exc:
                 # 区分：连接关闭 vs 处理器异常
                 if _is_disconnect(exc):
                     await _safe_call(handler.after_connection_closed, session, "client disconnected")
+                    close_notified = True
                 else:
-                    logger.warning("WebSocket 消息循环异常: %s", exc)
+                    logger.warning(
+                        "WebSocket message loop failed error_type=%s",
+                        type(exc).__name__,
+                    )
                     await _safe_call(handler.handle_transport_error, session, exc)
-                    await _safe_call(handler.after_connection_closed, session, str(exc))
+                    await _safe_call(
+                        handler.after_connection_closed, session,
+                        "message handling failed")
+                    close_notified = True
                     await _safe_close(session, code=1011, reason="server error")
             finally:
+                session.mark_closed()
+                if not close_notified:
+                    await _safe_call(
+                        handler.after_connection_closed, session,
+                        "server closed")
                 self._session_registry.unregister(session.id)
                 # 清理该会话的所有 broker 订阅
                 self._configurer.broker.unsubscribe_all(session.id)
@@ -445,6 +536,94 @@ class WebSocketRouter:
             raise WebSocketConnectionException(
                 f"应用 {app!r} 不支持 WebSocket 路由（无 websocket/add_websocket_route）"
             )
+
+    async def _authorize_handshake(self, websocket) -> Optional[Dict[str, Any]]:
+        origin = ""
+        host = ""
+        try:
+            origin = websocket.headers.get("origin", "")
+            host = websocket.headers.get("host", "")
+        except Exception:
+            pass
+        if (self._allowed_origins and "*" not in self._allowed_origins
+                and origin not in self._allowed_origins):
+            return None
+        if not self._allowed_origins and origin:
+            try:
+                parsed_origin = urlsplit(origin)
+                origin_host = parsed_origin.netloc.lower()
+            except ValueError:
+                return None
+            if (parsed_origin.scheme not in {"http", "https"}
+                    or not origin_host
+                    or origin_host != str(host).lower()):
+                return None
+        if self._handshake_authorizer is None:
+            if self._allow_anonymous:
+                return {"user": None, "attributes": {}}
+            authorization = ""
+            try:
+                authorization = websocket.headers.get("authorization", "")
+            except Exception:
+                pass
+            token = ""
+            if authorization.lower().startswith("bearer "):
+                token = authorization[7:].strip()
+            if not token and self._allow_query_token:
+                try:
+                    token = websocket.query_params.get("access_token", "")
+                except Exception:
+                    token = ""
+            if not token:
+                return None
+            try:
+                from springbootai.security.oauth2 import oauth2_resource_server
+                if oauth2_resource_server.is_configured:
+                    claims = await asyncio.to_thread(
+                        oauth2_resource_server.validate_token, token)
+                else:
+                    from springbootai.security.jwt_utils import jwt_utils
+                    claims = await asyncio.to_thread(
+                        jwt_utils.decode_token, token)
+            except Exception as exc:
+                logger.info(
+                    "WebSocket bearer token rejected error_type=%s",
+                    type(exc).__name__,
+                )
+                return None
+            user = claims.get("sub") or claims.get("username")
+            return {
+                "user": str(user) if user is not None else None,
+                "attributes": {"principal": claims},
+            }
+        try:
+            if inspect.iscoroutinefunction(self._handshake_authorizer):
+                result = await self._handshake_authorizer(websocket)
+            else:
+                result = await asyncio.to_thread(
+                    self._handshake_authorizer, websocket)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            logger.warning(
+                "WebSocket handshake authorization failed error_type=%s",
+                type(exc).__name__,
+            )
+            return None
+        if result is True:
+            return {"user": None, "attributes": {}}
+        if isinstance(result, str) and result:
+            return {"user": result, "attributes": {}}
+        if isinstance(result, dict) and result.get("allowed", True):
+            attributes = result.get("attributes", {})
+            if not isinstance(attributes, dict):
+                attributes = {}
+            user = result.get("user")
+            return {
+                "user": str(user) if user is not None else None,
+                "attributes": dict(attributes),
+            }
+        return None
 
 
 def _is_server_endpoint(cls: Any) -> bool:
@@ -477,7 +656,11 @@ async def _safe_call(method: Callable, *args) -> None:
         if inspect.isawaitable(result):
             await result
     except Exception as exc:
-        logger.debug("safe_call %s 抛异常: %s", getattr(method, "__name__", method), exc)
+        logger.debug(
+            "safe_call %s failed error_type=%s",
+            getattr(method, "__name__", type(method).__name__),
+            type(exc).__name__,
+        )
 
 
 def _is_disconnect(exc: Exception) -> bool:
@@ -498,6 +681,7 @@ def install_websocket_routes(
     classes: Optional[Iterable[Type]] = None,
     modules: Optional[Iterable[Any]] = None,
     router: Optional[WebSocketRouter] = None,
+    **router_options,
 ) -> WebSocketRouter:
     """便捷函数：扫描 ``@ServerEndpoint`` 类并挂载到应用。
 
@@ -510,7 +694,10 @@ def install_websocket_routes(
     Returns:
         挂载完成的 ``WebSocketRouter``。
     """
-    r = router or WebSocketRouter()
+    if router is not None and router_options:
+        raise ValueError(
+            "router_options cannot be used with an existing WebSocketRouter")
+    r = router or WebSocketRouter(**router_options)
     endpoints = discover_server_endpoints(classes=classes, modules=modules)
     for path, cls in endpoints.items():
         if path not in r.routes:

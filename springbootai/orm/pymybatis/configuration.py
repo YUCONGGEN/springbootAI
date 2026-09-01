@@ -14,6 +14,7 @@ import os
 import json
 import yaml
 import re
+import math
 from collections.abc import Mapping
 from typing import Dict, List, Optional, Any
 
@@ -54,7 +55,8 @@ class Configuration:
         if isinstance(value, dict):
             value = value.get('value') or value.get('timeout') or default
         try:
-            return float(value)
+            converted = float(value)
+            return converted if math.isfinite(converted) else default
         except (ValueError, TypeError):
             return default
 

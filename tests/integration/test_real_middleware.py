@@ -79,3 +79,19 @@ def test_nacos_real_readiness_endpoint():
     )
     response.raise_for_status()
     assert response.text.strip().upper() == "OK"
+
+
+def test_kafka_publish_through_springpy_client():
+    from springbootai.messaging.kafka import KafkaClient
+
+    KafkaClient._instance = None
+    client = KafkaClient(bootstrap_servers="127.0.0.1:9092")
+    try:
+        metadata = client.send_and_wait(
+            "springpy.integration", {"status": "ok"}, timeout=15
+        )
+        assert metadata.topic == "springpy.integration"
+        assert metadata.offset >= 0
+    finally:
+        client.close()
+        KafkaClient._instance = None

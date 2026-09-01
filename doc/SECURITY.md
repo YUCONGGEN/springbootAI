@@ -1,6 +1,6 @@
 # SpringBootAI 安全模块 —— 小白也能看懂的 Web 安全指南
 
-> SpringBootAI 2.3.10
+> SpringBootAI 2.3.11
 
 ---
 

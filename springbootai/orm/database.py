@@ -3,11 +3,17 @@
 集成SQLAlchemy实现企业级数据库操作
 """
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
-from sqlalchemy.orm import declarative_base, sessionmaker, Session, scoped_session
+from sqlalchemy.orm import (
+    declarative_base, sessionmaker, Session, scoped_session, Query,
+)
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 from typing import Optional
 import logging
+import asyncio
+import threading
+from contextlib import contextmanager
+from springbootai.logging.context import sanitize_url
 
 logger = logging.getLogger("Spring.ORM")
 
@@ -15,11 +21,71 @@ logger = logging.getLogger("Spring.ORM")
 Base = declarative_base()
 
 
+def _session_scope_key():
+    """Return an asyncio-task scope when applicable, otherwise a thread scope."""
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return task if task is not None else ("thread", threading.get_ident())
+
+
+class _ManagedQuery:
+    """Close the standalone query session after a terminal operation."""
+
+    _TERMINAL_METHODS = {
+        "all", "first", "one", "one_or_none", "scalar", "count",
+        "delete", "update", "get",
+    }
+
+    def __init__(self, query: Query, session: Session):
+        self._query = query
+        self._session = session
+        self._closed = False
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._session.close()
+
+    def __iter__(self):
+        try:
+            yield from self._query
+        finally:
+            self.close()
+
+    def __getattr__(self, name):
+        attribute = getattr(self._query, name)
+        if not callable(attribute):
+            return attribute
+
+        def invoke(*args, **kwargs):
+            try:
+                result = attribute(*args, **kwargs)
+            except Exception:
+                self.close()
+                raise
+            if isinstance(result, Query):
+                self._query = result
+                return self
+            if name in self._TERMINAL_METHODS:
+                self.close()
+            return result
+
+        return invoke
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
 class DatabaseManager:
     """数据库管理器"""
     
     _instance = None
-    _lock = __import__('threading').Lock()
+    _lock = threading.Lock()
     
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -36,7 +102,35 @@ class DatabaseManager:
         self._engine = None
         self._session_factory = None
         self._scoped_session = None
+        self._resource_lock = threading.RLock()
         self._initialized = True
+
+    def _detach_resources(self):
+        scoped = self._scoped_session
+        engine = self._engine
+        self._engine = None
+        self._session_factory = None
+        self._scoped_session = None
+        if scoped is not None:
+            remove = getattr(scoped, "remove", None)
+            if callable(remove):
+                try:
+                    remove()
+                except Exception:
+                    logger.warning(
+                        "Failed to remove database session registry",
+                        exc_info=True,
+                    )
+        if engine is not None:
+            dispose = getattr(engine, "dispose", None)
+            if callable(dispose):
+                try:
+                    dispose()
+                except Exception:
+                    logger.warning(
+                        "Failed to dispose database engine",
+                        exc_info=True,
+                    )
 
     def configure(self, db_url: Optional[str] = None, echo: Optional[bool] = None) -> None:
         """重新配置单例的数据库连接参数（读取配置后调用）。
@@ -52,46 +146,82 @@ class DatabaseManager:
             db_url: 数据库连接 URL，None 表示保留原值
             echo: 是否开启 SQLAlchemy SQL 回显，None 表示保留原值
         """
-        if db_url is not None:
-            self.db_url = db_url
-        if echo is not None:
-            self.echo = echo
-        # 重置已建立的连接，强制 connect() 重建 engine
-        self._engine = None
-        self._session_factory = None
-        self._scoped_session = None
+        with self._resource_lock:
+            self._detach_resources()
+            if db_url is not None:
+                self.db_url = db_url
+            if echo is not None:
+                self.echo = echo
 
     def connect(self) -> None:
         """连接数据库"""
-        try:
-            self._engine = create_engine(self.db_url, echo=self.echo)
-            
-            # 创建Session工厂
-            self._session_factory = sessionmaker(
-                bind=self._engine,
-                autocommit=False,
-                autoflush=False,
-            )
-            
-            # 创建线程安全的Scoped Session
-            self._scoped_session = scoped_session(self._session_factory)
-            
-            logger.info(f"Connected to database: {self.db_url}")
-        except Exception as e:
-            logger.error(f"Failed to connect to database: {e}")
-            raise
+        with self._resource_lock:
+            if self._engine is not None:
+                return
+            try:
+                engine = create_engine(self.db_url, echo=self.echo)
+                session_factory = sessionmaker(
+                    bind=engine,
+                    autocommit=False,
+                    autoflush=False,
+                )
+                session_registry = scoped_session(
+                    session_factory, scopefunc=_session_scope_key)
+                self._engine = engine
+                self._session_factory = session_factory
+                self._scoped_session = session_registry
+                logger.info(
+                    "Connected to database: %s", sanitize_url(self.db_url))
+            except Exception as exc:
+                logger.error(
+                    "Failed to connect to database error_type=%s",
+                    type(exc).__name__,
+                )
+                raise
     
     def get_engine(self):
         """获取数据库引擎"""
-        if self._engine is None:
-            self.connect()
-        return self._engine
+        self.connect()
+        with self._resource_lock:
+            return self._engine
     
     def get_session(self) -> Session:
         """获取数据库会话"""
-        if self._scoped_session is None:
-            self.connect()
-        return self._scoped_session()
+        self.connect()
+        with self._resource_lock:
+            registry = self._scoped_session
+        session = registry()
+        session.info["springbootai.scoped_registry"] = registry
+        return session
+
+    @staticmethod
+    def _release_session(session: Session) -> None:
+        registry = session.info.pop("springbootai.scoped_registry", None)
+        try:
+            session.close()
+        finally:
+            if registry is not None:
+                registry.remove()
+
+    @contextmanager
+    def session_scope(self):
+        """Yield a standalone session and deterministically close it."""
+        self.connect()
+        with self._resource_lock:
+            factory = self._session_factory
+        session = factory()
+        try:
+            yield session
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def close(self) -> None:
+        """Release the current scoped session and dispose the connection pool."""
+        with self._resource_lock:
+            self._detach_resources()
     
     def create_all(self):
         """创建所有表"""
@@ -112,12 +242,13 @@ class DatabaseManager:
             result = session.execute(statement, *args, **kwargs)
             session.commit()
             return result
-        except SQLAlchemyError as e:
+        except SQLAlchemyError as exc:
             session.rollback()
-            logger.error(f"SQL execution failed: {e}")
+            logger.error(
+                "SQL execution failed error_type=%s", type(exc).__name__)
             raise
         finally:
-            session.close()
+            self._release_session(session)
     
     def insert(self, model):
         """插入数据"""
@@ -127,12 +258,12 @@ class DatabaseManager:
             session.commit()
             session.refresh(model)
             return model
-        except SQLAlchemyError as e:
+        except SQLAlchemyError as exc:
             session.rollback()
-            logger.error(f"Insert failed: {e}")
+            logger.error("Insert failed error_type=%s", type(exc).__name__)
             raise
         finally:
-            session.close()
+            self._release_session(session)
     
     def update(self, model):
         """更新数据"""
@@ -147,12 +278,12 @@ class DatabaseManager:
                 if hasattr(merged_model, attr):
                     setattr(model, attr, getattr(merged_model, attr))
             return model
-        except SQLAlchemyError as e:
+        except SQLAlchemyError as exc:
             session.rollback()
-            logger.error(f"Update failed: {e}")
+            logger.error("Update failed error_type=%s", type(exc).__name__)
             raise
         finally:
-            session.close()
+            self._release_session(session)
     
     def delete(self, model):
         """删除数据"""
@@ -160,17 +291,20 @@ class DatabaseManager:
         try:
             session.delete(model)
             session.commit()
-        except SQLAlchemyError as e:
+        except SQLAlchemyError as exc:
             session.rollback()
-            logger.error(f"Delete failed: {e}")
+            logger.error("Delete failed error_type=%s", type(exc).__name__)
             raise
         finally:
-            session.close()
+            self._release_session(session)
     
     def query(self, model):
-        """创建查询对象"""
-        session = self.get_session()
-        return session.query(model)
+        """Create a query whose standalone session closes on evaluation."""
+        self.connect()
+        with self._resource_lock:
+            factory = self._session_factory
+        session = factory()
+        return _ManagedQuery(session.query(model), session)
     
     def flush(self):
         """刷新会话"""
@@ -180,12 +314,18 @@ class DatabaseManager:
     def commit(self):
         """提交事务"""
         session = self.get_session()
-        session.commit()
+        try:
+            session.commit()
+        finally:
+            self._release_session(session)
     
     def rollback(self):
         """回滚事务"""
         session = self.get_session()
-        session.rollback()
+        try:
+            session.rollback()
+        finally:
+            self._release_session(session)
 
 
 # 创建全局数据库管理器实例

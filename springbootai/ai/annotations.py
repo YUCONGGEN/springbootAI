@@ -77,7 +77,18 @@ class AiMemory(SpringAnnotation):
     _annotation_type = "ai"
 
     def __init__(self, store: str = "inmemory", max_messages: int = 20):
-        super().__init__(store=store, max_messages=max_messages)
+        normalized_store = str(store).strip().lower()
+        if normalized_store not in {"inmemory", "redis"}:
+            raise ValueError("AiMemory store must be 'inmemory' or 'redis'")
+        if isinstance(max_messages, bool):
+            raise TypeError("AiMemory max_messages must be an integer")
+        try:
+            normalized_max = int(max_messages)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("AiMemory max_messages must be an integer") from exc
+        if not 1 <= normalized_max <= 100_000:
+            raise ValueError("AiMemory max_messages must be in [1, 100000]")
+        super().__init__(store=normalized_store, max_messages=normalized_max)
 
 
 class Prompt(SpringAnnotation):
@@ -96,10 +107,21 @@ class RAG(SpringAnnotation):
 
     def __init__(self, top_k: int = 4, vector_store: str = "aiVectorStore",
                  embedding: str = "aiEmbeddingModel", prompt_template: str = "",
-                 client: str = "aiChatClient"):
-        super().__init__(top_k=max(1, int(top_k)), vector_store=vector_store,
+                 client: str = "aiChatClient",
+                 max_context_chars: int = 100_000,
+                 max_document_chars: int = 25_000):
+        normalized_top_k = int(top_k)
+        if not 1 <= normalized_top_k <= 1000:
+            raise ValueError("RAG top_k must be in [1, 1000]")
+        if not 1 <= int(max_context_chars) <= 10_000_000:
+            raise ValueError("RAG max_context_chars must be in [1, 10000000]")
+        if not 1 <= int(max_document_chars) <= 10_000_000:
+            raise ValueError("RAG max_document_chars must be in [1, 10000000]")
+        super().__init__(top_k=normalized_top_k, vector_store=vector_store,
                          embedding=embedding, prompt_template=prompt_template,
-                         client=client)
+                         client=client,
+                         max_context_chars=int(max_context_chars),
+                         max_document_chars=int(max_document_chars))
 
 
 class StructuredOutput(SpringAnnotation):

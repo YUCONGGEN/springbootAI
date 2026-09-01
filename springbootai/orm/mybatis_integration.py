@@ -322,7 +322,9 @@ class MyBatisConfigurer:
                             self._mapper_registry[name] = obj
                             break
         except Exception as exc:
-            logger.warning("Failed to import mapper module %s: %s", module_name, exc)
+            logger.warning(
+                "Failed to import mapper module %s error_type=%s",
+                module_name, type(exc).__name__)
     
     def _generate_bean_name(self, cls_name: str) -> str:
         """

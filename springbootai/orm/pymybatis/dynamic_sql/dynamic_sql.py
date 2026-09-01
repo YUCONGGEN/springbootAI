@@ -337,7 +337,12 @@ class DynamicSQLProcessor:
         # 清理多余的空格和逗号
         processed_sql = self._clean_sql(processed_sql)
 
-        logger.debug(f"处理后的SQL: {processed_sql}, 参数: {param_order}")
+        logger.debug(
+            "动态SQL处理完成 sql_length=%d parameter_count=%d "
+            "parameter_types=%s",
+            len(processed_sql), len(param_order),
+            [type(value).__name__ for value in param_order[:20]],
+        )
 
         return processed_sql, param_order
 

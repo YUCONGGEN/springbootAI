@@ -3,6 +3,7 @@ from abc import ABC
 import fnmatch
 import inspect
 from fastapi import Request, Response
+from starlette.concurrency import run_in_threadpool
 
 
 class HandlerInterceptor(ABC):
@@ -67,29 +68,46 @@ class InterceptorManager:
     def __init__(self, registry: InterceptorRegistry):
         self.registry = registry
 
+    @staticmethod
+    async def _invoke(callback: Callable, *args):
+        if inspect.iscoroutinefunction(callback):
+            return await callback(*args)
+        result = await run_in_threadpool(callback, *args)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
     async def apply_pre_handle(self, request: Request, handler: Callable) -> bool:
+        applied: List[HandlerInterceptor] = []
+        setattr(request.state, "springbootai_applied_interceptors", applied)
         for interceptor in self.registry.get_interceptors():
             if not self.registry.should_intercept(request.url.path):
                 continue
-            result = interceptor.pre_handle(request, handler)
-            if inspect.isawaitable(result):
-                result = await result
+            result = await self._invoke(interceptor.pre_handle, request, handler)
             if not result:
                 return False
+            applied.append(interceptor)
         return True
 
     async def apply_post_handle(self, request: Request, response: Response, handler: Callable) -> None:
-        for interceptor in self.registry.get_interceptors():
-            if not self.registry.should_intercept(request.url.path):
-                continue
-            result = interceptor.post_handle(request, response, handler)
-            if inspect.isawaitable(result):
-                await result
+        applied = getattr(
+            request.state, "springbootai_applied_interceptors", None)
+        interceptors = (list(reversed(applied)) if applied is not None
+                        else list(reversed(self.registry.get_interceptors())))
+        for interceptor in interceptors:
+            await self._invoke(interceptor.post_handle, request, response, handler)
 
     async def apply_after_completion(self, request: Request, response: Response, handler: Callable, exception: Optional[Exception] = None) -> None:
-        for interceptor in self.registry.get_interceptors():
-            if not self.registry.should_intercept(request.url.path):
-                continue
-            result = interceptor.after_completion(request, response, handler, exception)
-            if inspect.isawaitable(result):
-                await result
+        applied = getattr(
+            request.state, "springbootai_applied_interceptors", None)
+        interceptors = (list(reversed(applied)) if applied is not None
+                        else list(reversed(self.registry.get_interceptors())))
+        try:
+            for interceptor in interceptors:
+                await self._invoke(
+                    interceptor.after_completion,
+                    request, response, handler, exception,
+                )
+        finally:
+            if applied is not None:
+                applied.clear()

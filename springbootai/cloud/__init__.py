@@ -75,6 +75,7 @@ from springbootai.cloud.nacos_config import (
 )
 from springbootai.cloud.bus import (
     BusEvent,
+    BusPublishError,
     EventBus,
     event_bus,
     init_bus,
@@ -115,7 +116,8 @@ __all__ = [
     'create_config_refresh_endpoint',
     'NacosConfigClient', 'NacosConfigError', 'NacosConfigProperties',
     # 事件总线
-    'BusEvent', 'EventBus', 'event_bus', 'init_bus', 'create_bus_refresh_endpoint',
+    'BusEvent', 'BusPublishError', 'EventBus', 'event_bus', 'init_bus',
+    'create_bus_refresh_endpoint',
     # 消息队列
     'rabbitmq_client', 'RabbitMQClient',
 ]

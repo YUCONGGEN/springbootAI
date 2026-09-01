@@ -25,6 +25,8 @@ import threading
 import re
 import random
 import inspect
+import asyncio
+import tempfile
 from collections import deque
 from collections.abc import Mapping
 from typing import Dict, List, Optional, Any
@@ -33,10 +35,11 @@ from urllib.parse import urlsplit
 
 import httpx
 from starlette.requests import ClientDisconnect, Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from springbootai.logging.context import (
-    get_request_id, outbound_request_id, request_context, sanitize_url,
+    get_request_id, outbound_request_id, request_context, safe_log_field,
+    sanitize_url,
 )
 
 logger = logging.getLogger("Spring.Cloud.Gateway")
@@ -73,7 +76,7 @@ class FilterContext:
 
 class GatewayFilter:
     """网关过滤器基类"""
-    def pre_filter(self, ctx: FilterContext) -> bool:
+    def pre_filter(self, ctx: FilterContext) -> Any:
         """前置过滤，返回False则终止请求"""
         return True
 
@@ -83,15 +86,42 @@ class GatewayFilter:
 
 
 class AuthenticationFilter(GatewayFilter):
-    """认证过滤器：检查JWT/Token"""
-    def __init__(self, token_header: str = "Authorization", exclude_paths: List[str] = None):
+    """Validate a bearer access token before forwarding a request.
+
+    ``validator`` may be supplied for an external identity provider.  It must
+    either return a claims mapping/truthy value or raise for an invalid token.
+    Without an override the configured OAuth2 resource server is preferred,
+    then the framework JWT utility is used.
+    """
+
+    def __init__(self, token_header: str = "Authorization",
+                 exclude_paths: Optional[List[str]] = None, validator=None):
         self.token_header = token_header
+        self.validator = validator
         self.exclude_paths = (
             ["/login", "/health", "/actuator"]
             if exclude_paths is None else list(exclude_paths)
         )
 
-    def pre_filter(self, ctx: FilterContext) -> bool:
+    async def _validate(self, token: str):
+        if self.validator is not None:
+            if inspect.iscoroutinefunction(self.validator):
+                result = await self.validator(token)
+            else:
+                result = await run_in_threadpool(self.validator, token)
+            if inspect.isawaitable(result):
+                result = await result
+            if not result:
+                raise ValueError("token validator rejected the token")
+            return result
+        from springbootai.security.oauth2 import oauth2_resource_server
+        if oauth2_resource_server.is_configured:
+            return await run_in_threadpool(
+                oauth2_resource_server.validate_token, token)
+        from springbootai.security.jwt_utils import jwt_utils
+        return await run_in_threadpool(jwt_utils.decode_token, token)
+
+    async def pre_filter(self, ctx: FilterContext) -> bool:
         for ep in self.exclude_paths:
             normalized = str(ep).rstrip('/') or '/'
             if (ctx.request_path == normalized
@@ -105,8 +135,26 @@ class AuthenticationFilter(GatewayFilter):
         )
         if not token:
             ctx.response_status = 401
-            ctx.response_headers["X-Gateway-Error"] = "Missing Authorization"
+            ctx.response_headers["WWW-Authenticate"] = "Bearer"
             return False
+        scheme, separator, credential = str(token).partition(" ")
+        if not separator or scheme.lower() != "bearer" or not credential.strip():
+            ctx.response_status = 401
+            ctx.response_headers["WWW-Authenticate"] = (
+                'Bearer error="invalid_token"')
+            return False
+        try:
+            claims = await self._validate(credential.strip())
+        except Exception as exc:
+            logger.info(
+                "[Gateway] Bearer token rejected error_type=%s request_id=%s",
+                type(exc).__name__, get_request_id(),
+            )
+            ctx.response_status = 401
+            ctx.response_headers["WWW-Authenticate"] = (
+                'Bearer error="invalid_token"')
+            return False
+        ctx.attributes["principal"] = claims
         return True
 
 
@@ -190,13 +238,27 @@ class LoggingFilter(GatewayFilter):
     """访问日志过滤器"""
     def pre_filter(self, ctx: FilterContext) -> bool:
         ctx.start_time = time.monotonic()
-        logger.info(f"[Gateway] {ctx.request_method} {ctx.request_path} -> {ctx.route.service_id or ctx.route.uri}")
+        target = (
+            safe_log_field(ctx.route.service_id)
+            if ctx.route.service_id else sanitize_url(ctx.route.uri)
+        )
+        logger.info(
+            "[Gateway] %s %s -> %s",
+            safe_log_field(ctx.request_method),
+            safe_log_field(ctx.request_path),
+            target,
+        )
         return True
 
     def post_filter(self, ctx: FilterContext):
         duration = (time.monotonic() - ctx.start_time) * 1000
-        logger.info(f"[Gateway] {ctx.request_method} {ctx.request_path} "
-                     f"status={ctx.response_status} duration={duration:.2f}ms")
+        logger.info(
+            "[Gateway] %s %s status=%s duration=%.2fms",
+            safe_log_field(ctx.request_method),
+            safe_log_field(ctx.request_path),
+            ctx.response_status,
+            duration,
+        )
 
 
 class LoadBalancerStrategy:
@@ -241,12 +303,18 @@ class LoadBalancerStrategy:
         if total <= 0:
             return LoadBalancerStrategy.round_robin(instances)
         r = random.uniform(0, total)
-        upto = 0
-        for inst, w in zip(instances, weights):
-            if upto + w >= r:
+        upto = 0.0
+        for inst, w in zip(instances, weights, strict=True):
+            # ``r == 0`` 时也不能命中零权重实例。
+            if w > 0 and r < upto + w:
                 return inst
             upto += w
-        return instances[0]
+        # 防御浮点舍入导致 r 落在累计区间之外；返回最后一个正权重实例。
+        for inst, w in zip(
+                reversed(instances), reversed(weights), strict=True):
+            if w > 0:
+                return inst
+        return LoadBalancerStrategy.round_robin(instances)
 
 
 class GatewayRouter:
@@ -279,7 +347,8 @@ class GatewayRouter:
             if token.strip()
         }
 
-    def __init__(self, discovery_client=None, default_filters: List[GatewayFilter] = None,
+    def __init__(self, discovery_client=None,
+                 default_filters: Optional[List[GatewayFilter]] = None,
                  timeout: float = 10.0, max_body_size: int = 10 * 1024 * 1024,
                  max_response_size: int = 50 * 1024 * 1024,
                  max_connections: int = 100,
@@ -289,7 +358,7 @@ class GatewayRouter:
         self.routes: List[Route] = []
         self.filters: List[GatewayFilter] = (
             list(default_filters) if default_filters is not None
-            else [LoggingFilter(), TracingFilter()]
+            else [AuthenticationFilter(), LoggingFilter(), TracingFilter()]
         )
         self._rr_counters: Dict[str, int] = {}
         self._rr_lock = threading.Lock()
@@ -406,7 +475,8 @@ class GatewayRouter:
 
     def route(self, path: str, service_id: str = "", uri: str = "",
               strip_prefix: bool = False, prefix: str = "",
-              route_id: str = "", filters: List[GatewayFilter] = None,
+              route_id: str = "",
+              filters: Optional[List[GatewayFilter]] = None,
               **predicates) -> Route:
         """添加路由"""
         if not path or not str(path).startswith('/'):
@@ -613,6 +683,9 @@ class GatewayRouter:
 
     async def _run_post_filters(self, filters: List[GatewayFilter],
                                 ctx: FilterContext, status_code: int) -> None:
+        if ctx.attributes.get("gateway.post_filters_completed"):
+            return
+        ctx.attributes["gateway.post_filters_completed"] = True
         ctx.response_status = status_code
         for flt in filters:
             try:
@@ -653,20 +726,33 @@ class GatewayRouter:
             request_method=method,
             request_query=query_dict,
         )
+        ctx.attributes["gateway.request_id"] = get_request_id()
 
         active_filters = [*self.filters, *route.filters]
         executed_filters: List[GatewayFilter] = []
-        # 执行前置过滤器
-        for flt in active_filters:
-            executed_filters.append(flt)
-            if not await self._run_filter(flt, 'pre_filter', ctx):
-                return await self._error_response(
-                    ctx, executed_filters,
-                    {"error": "Gateway filter blocked", "details": ctx.response_headers},
-                    ctx.response_status or 403,
-                )
-
-        target_uri = await run_in_threadpool(self._resolve_uri, route)
+        try:
+            # A filter that acquired a limiter/tracing resource must always be
+            # included in the matching post-filter cleanup, even if its own
+            # pre-filter raises.
+            for flt in active_filters:
+                executed_filters.append(flt)
+                if not await self._run_filter(flt, 'pre_filter', ctx):
+                    return await self._error_response(
+                        ctx, executed_filters,
+                        {"error": "Gateway filter blocked"},
+                        ctx.response_status or 403,
+                    )
+            target_uri = await run_in_threadpool(self._resolve_uri, route)
+        except Exception as exc:
+            logger.warning(
+                "[Gateway] Pre-forward processing failed route=%s "
+                "error_type=%s request_id=%s",
+                route.id, type(exc).__name__, get_request_id(),
+            )
+            return await self._error_response(
+                ctx, executed_filters,
+                {"error": "Gateway pre-forward processing failed"}, 500,
+            )
         if not target_uri:
             return await self._error_response(
                 ctx, executed_filters,
@@ -678,17 +764,32 @@ class GatewayRouter:
         ctx.attributes['forward_uri'] = target_uri + forward_path
 
         content_length = request.headers.get('content-length')
+        declared_body_size = None
         if self.max_body_size > 0 and content_length:
             try:
-                if int(content_length) > self.max_body_size:
+                declared_body_size = int(content_length)
+                if declared_body_size < 0:
+                    raise ValueError
+                if declared_body_size > self.max_body_size:
                     return await self._error_response(
                         ctx, executed_filters,
                         {"error": "Request body too large"}, 413)
             except ValueError:
-                pass
+                declared_body_size = None
+        elif content_length:
+            try:
+                declared_body_size = int(content_length)
+                if declared_body_size < 0:
+                    declared_body_size = None
+            except ValueError:
+                declared_body_size = None
 
+        actual_body_size = None
         try:
             if self.max_body_size > 0:
+                # Content-Length is an untrusted hint.  Always count the actual
+                # stream and reject it before a potentially mutating upstream
+                # sees any bytes.
                 chunks = []
                 body_size = 0
                 async for chunk in request.stream():
@@ -699,8 +800,11 @@ class GatewayRouter:
                             {"error": "Request body too large"}, 413)
                     chunks.append(chunk)
                 body = b''.join(chunks)
+                actual_body_size = body_size
             else:
-                body = await request.body()
+                # Limits were explicitly disabled; leave framing to httpx
+                # instead of forwarding an untrusted Content-Length value.
+                body = request.stream()
         except ClientDisconnect:
             logger.info(
                 "[Gateway] Client disconnected route=%s request_id=%s",
@@ -728,6 +832,18 @@ class GatewayRouter:
             if key.lower() != 'x-request-id'
         }
         request_headers['X-Request-ID'] = request_id
+        # A bounded response must be measured in bytes delivered to the
+        # downstream application, not in the (potentially tiny) compressed
+        # representation. Ask well-behaved upstreams for identity encoding;
+        # responses that ignore this request are decoded and counted below.
+        if self.max_response_size > 0:
+            request_headers = {
+                key: value for key, value in request_headers.items()
+                if key.lower() != 'accept-encoding'
+            }
+            request_headers['Accept-Encoding'] = 'identity'
+        if actual_body_size is not None:
+            request_headers['Content-Length'] = str(actual_body_size)
         try:
             target_url = target_uri + forward_path
             # 使用 stream=True 避免上游响应整体载入内存：
@@ -741,83 +857,79 @@ class GatewayRouter:
                 content=body,
             )
             upstream = await self._get_client().send(req, stream=True)
+            response_hop_headers = (
+                self._HOP_BY_HOP_HEADERS
+                | self._connection_header_tokens(upstream.headers)
+                | {'content-length', 'set-cookie'}
+            )
+            response_headers = {
+                key: value for key, value in upstream.headers.items()
+                if key.lower() not in response_hop_headers
+            }
 
-            try:
-                response_hop_headers = (
-                    self._HOP_BY_HOP_HEADERS
-                    | self._connection_header_tokens(upstream.headers)
-                    | {'content-length', 'set-cookie'}
+            content_encoding = upstream.headers.get(
+                'content-encoding', 'identity').strip().lower()
+            decode_response = (
+                self.max_response_size > 0
+                and content_encoding not in {'', 'identity'}
+            )
+            if decode_response:
+                # httpx ``aiter_bytes`` removes the content coding. Headers
+                # describing the encoded representation would then be false
+                # and can also corrupt a JSON gateway error if copied early.
+                for header_name in (
+                    'content-encoding', 'content-md5', 'digest', 'etag',
+                    'accept-ranges', 'content-range',
+                ):
+                    response_headers = {
+                        key: value for key, value in response_headers.items()
+                        if key.lower() != header_name
+                    }
+
+            content_length = upstream.headers.get('content-length')
+            declared_size = None
+            if content_length:
+                try:
+                    declared_size = int(content_length)
+                    if declared_size < 0:
+                        raise ValueError
+                except ValueError:
+                    content_length = None
+            # Content-Length describes the encoded representation. It is only
+            # a trustworthy fast-path bound when no decoding is required.
+            if (self.max_response_size > 0 and not decode_response
+                    and declared_size is not None
+                    and declared_size > self.max_response_size):
+                logger.warning(
+                    "[Gateway] Upstream response Content-Length %s exceeds limit %d",
+                    content_length, self.max_response_size,
                 )
-                response_headers = {
-                    key: value for key, value in upstream.headers.items()
-                    if key.lower() not in response_hop_headers
-                }
+                await upstream.aclose()
+                return await self._error_response(
+                    ctx, executed_filters,
+                    {"error": "Upstream response too large",
+                     "limit_bytes": self.max_response_size},
+                    502,
+                )
+
+            # MockTransport/自定义 transport 可能已经预载响应；此路径仍可在发送
+            # headers 前返回明确的 502，并避免为小响应增加流式调度开销。
+            if upstream.is_stream_consumed:
+                response_body = upstream.content
+                await upstream.aclose()
+                if (self.max_response_size > 0
+                        and len(response_body) > self.max_response_size):
+                    logger.warning(
+                        "[Gateway] Upstream response %d bytes exceeds limit %d",
+                        len(response_body), self.max_response_size,
+                    )
+                    return await self._error_response(
+                        ctx, executed_filters,
+                        {"error": "Upstream response too large",
+                         "limit_bytes": self.max_response_size},
+                        502,
+                    )
                 ctx.response_headers.update(response_headers)
-
-                # 响应大小限制：
-                # (1) 先检查 Content-Length 头（快速路径，无需读取响应体即可拒绝）
-                # (2) 流式读取时累计字节数，超限立即中止并返回 502
-                if self.max_response_size > 0:
-                    content_length = upstream.headers.get('content-length')
-                    if content_length:
-                        try:
-                            if int(content_length) > self.max_response_size:
-                                logger.warning(
-                                    "[Gateway] Upstream response Content-Length %s exceeds limit %d",
-                                    content_length, self.max_response_size,
-                                )
-                                return await self._error_response(
-                                    ctx, executed_filters,
-                                    {"error": "Upstream response too large",
-                                     "limit_bytes": self.max_response_size},
-                                    502,
-                                )
-                        except ValueError:
-                            pass
-
-                    # is_stream_consumed=True 表示响应体已预载（如 MockTransport 或
-                    # 非 stream 模式）；此时 aiter_raw() 会抛 StreamConsumed，
-                    # 直接用 .content 检查大小即可。
-                    if upstream.is_stream_consumed:
-                        response_body = upstream.content
-                        if len(response_body) > self.max_response_size:
-                            logger.warning(
-                                "[Gateway] Upstream response %d bytes exceeds limit %d",
-                                len(response_body), self.max_response_size,
-                            )
-                            return await self._error_response(
-                                ctx, executed_filters,
-                                {"error": "Upstream response too large",
-                                 "limit_bytes": self.max_response_size},
-                                502,
-                            )
-                    else:
-                        chunks = []
-                        response_size = 0
-                        too_large = False
-                        async for chunk in upstream.aiter_raw():
-                            response_size += len(chunk)
-                            if response_size > self.max_response_size:
-                                logger.warning(
-                                    "[Gateway] Upstream response exceeded %d bytes (got %d+), aborting",
-                                    self.max_response_size, response_size,
-                                )
-                                too_large = True
-                                break
-                            chunks.append(chunk)
-
-                        if too_large:
-                            return await self._error_response(
-                                ctx, executed_filters,
-                                {"error": "Upstream response too large",
-                                 "limit_bytes": self.max_response_size},
-                                502,
-                            )
-                        response_body = b''.join(chunks)
-                else:
-                    # 无限制：直接读取完整响应（向后兼容，不推荐在生产使用）
-                    response_body = await upstream.aread()
-
                 await self._run_post_filters(
                     executed_filters, ctx, upstream.status_code)
                 response = Response(
@@ -825,12 +937,117 @@ class GatewayRouter:
                     status_code=upstream.status_code,
                     headers=ctx.response_headers,
                 )
-                for cookie in upstream.headers.get_list('set-cookie'):
-                    response.headers.append('set-cookie', cookie)
-                return response
-            finally:
-                # stream=True 模式下必须显式关闭响应，否则连接不会归还连接池
-                await upstream.aclose()
+            elif self.max_response_size > 0:
+                # Consume into a bounded spooled file before returning the
+                # response. ASGI response headers are irreversible, so this is
+                # the only way to guarantee an oversized chunked response is a
+                # real 502 instead of a truncated upstream status.
+                spool = tempfile.SpooledTemporaryFile(
+                    max_size=min(self.max_response_size, 1024 * 1024),
+                    mode="w+b",
+                )
+                response_size = 0
+                try:
+                    response_iterator = (
+                        upstream.aiter_bytes()
+                        if decode_response else upstream.aiter_raw()
+                    )
+                    async for chunk in response_iterator:
+                        response_size += len(chunk)
+                        if response_size > self.max_response_size:
+                            logger.warning(
+                                "[Gateway] Streaming response exceeded %d "
+                                "bytes; rejecting before response headers",
+                                self.max_response_size,
+                            )
+                            spool.close()
+                            await upstream.aclose()
+                            return await self._error_response(
+                                ctx, executed_filters,
+                                {"error": "Upstream response too large",
+                                 "limit_bytes": self.max_response_size},
+                                502,
+                            )
+                        spool.write(chunk)
+                    await upstream.aclose()
+                    spool.seek(0)
+                except BaseException:
+                    spool.close()
+                    await upstream.aclose()
+                    raise
+
+                async def stream_spooled():
+                    final_status = upstream.status_code
+                    try:
+                        while True:
+                            chunk = await asyncio.to_thread(
+                                spool.read, 64 * 1024)
+                            if not chunk:
+                                break
+                            yield chunk
+                    except (asyncio.CancelledError, GeneratorExit):
+                        final_status = 499
+                        raise
+                    finally:
+                        spool.close()
+                        with request_context(
+                                ctx.attributes["gateway.request_id"]):
+                            await self._run_post_filters(
+                                executed_filters, ctx, final_status)
+
+                ctx.response_headers.update(response_headers)
+                response = StreamingResponse(
+                    stream_spooled(),
+                    status_code=upstream.status_code,
+                    headers=ctx.response_headers,
+                )
+            else:
+                ctx.response_headers.update(response_headers)
+                async def stream_upstream():
+                    response_size = 0
+                    final_status = upstream.status_code
+                    try:
+                        with request_context(
+                                ctx.attributes["gateway.request_id"]):
+                            async for chunk in upstream.aiter_raw():
+                                response_size += len(chunk)
+                                if (self.max_response_size > 0
+                                        and response_size > self.max_response_size):
+                                    logger.warning(
+                                        "[Gateway] Streaming response exceeded %d bytes; closing upstream",
+                                        self.max_response_size,
+                                    )
+                                    final_status = 502
+                                    # Headers may already be sent, so abort the
+                                    # stream without forwarding excess bytes.
+                                    raise RuntimeError(
+                                        "Gateway upstream response exceeded size limit")
+                                yield chunk
+                    except asyncio.CancelledError:
+                        final_status = 499
+                        raise
+                    except GeneratorExit:
+                        final_status = 499
+                        raise
+                    except BaseException:
+                        final_status = 502
+                        raise
+                    finally:
+                        await upstream.aclose()
+                        with request_context(
+                                ctx.attributes["gateway.request_id"]):
+                            await self._run_post_filters(
+                                executed_filters, ctx, final_status)
+
+                response = StreamingResponse(
+                    stream_upstream(),
+                    status_code=upstream.status_code,
+                    headers=ctx.response_headers,
+                )
+
+            for cookie in upstream.headers.get_list('set-cookie'):
+                response.headers.append('set-cookie', cookie)
+            return response
         except ClientDisconnect:
             logger.info(
                 "[Gateway] Client disconnected route=%s request_id=%s",
@@ -853,8 +1070,11 @@ class GatewayRouter:
             )
             return await self._error_response(
                 ctx, executed_filters, {"error": "Bad gateway"}, 502)
-        except Exception:
-            logger.exception("[Gateway] Proxy error")
+        except Exception as exc:
+            logger.error(
+                "[Gateway] Proxy error route=%s error_type=%s request_id=%s",
+                safe_log_field(route.id), type(exc).__name__, get_request_id(),
+            )
             return await self._error_response(
                 ctx, executed_filters, {"error": "Gateway internal error"}, 500)
 

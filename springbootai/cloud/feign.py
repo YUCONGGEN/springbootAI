@@ -50,6 +50,7 @@ class FeignClientProxy:
         connect_timeout: Optional[float] = None,
         read_timeout: Optional[float] = None,
         max_response_size: int = 10 * 1024 * 1024,
+        pool_acquire_timeout: Optional[float] = None,
     ):
         self.service_name = service_name
         self.path = path
@@ -65,6 +66,13 @@ class FeignClientProxy:
             if read_timeout is not None else None)
         self.max_response_size = max(0, int(max_response_size))
         self.max_retries = max(0, min(int(max_retries), 10))
+        pool_capacity = max(1, int(pool_maxsize))
+        self.pool_acquire_timeout = self._positive_timeout(
+            self.timeout if pool_acquire_timeout is None
+            else pool_acquire_timeout,
+            "pool_acquire_timeout",
+        )
+        self._pool_capacity = threading.BoundedSemaphore(pool_capacity)
         self._closed = False
         self._load_balancer = LoadBalancer()
         self._session = requests.Session()
@@ -82,7 +90,7 @@ class FeignClientProxy:
         )
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=max(1, int(pool_connections)),
-            pool_maxsize=max(1, int(pool_maxsize)),
+            pool_maxsize=pool_capacity,
             max_retries=retry_policy,
             pool_block=True,
         )
@@ -280,7 +288,13 @@ class FeignClientProxy:
             pass
 
         response = None
+        capacity_acquired = False
         try:
+            capacity_acquired = self._pool_capacity.acquire(
+                timeout=self.pool_acquire_timeout)
+            if not capacity_acquired:
+                raise FeignRequestError(
+                    method, url, "connection_pool_timeout")
             response = self._session.request(
                 method,
                 url,
@@ -318,12 +332,17 @@ class FeignClientProxy:
             if callable(closer):
                 closer()
                 response = None
+            if capacity_acquired:
+                self._pool_capacity.release()
+                capacity_acquired = False
             return self._call_fallback(
                 fallback_method, public_error, call_args, call_kwargs)
         finally:
             closer = getattr(response, "close", None)
             if callable(closer):
                 closer()
+            if capacity_acquired:
+                self._pool_capacity.release()
 
     async def arequest(self, method: str, endpoint: str, **kwargs) -> Any:
         """Execute the synchronous requests client without blocking the ASGI loop."""
@@ -584,7 +603,14 @@ def create_declared_feign_client(client_class: Type, annotation: Any) -> Any:
             call.__doc__ = getattr(original, '__doc__', None)
             if inspect.iscoroutinefunction(original):
                 async def async_call(self, *args, **kwargs):
-                    return await run_in_threadpool(call, self, *args, **kwargs)
+                    result = await run_in_threadpool(
+                        call, self, *args, **kwargs)
+                    # A synchronous HTTP call can select an async fallback.
+                    # Calling that fallback in the worker produces a coroutine
+                    # object, which must be awaited back on the caller's loop.
+                    if inspect.isawaitable(result):
+                        return await result
+                    return result
                 async_call.__name__ = name
                 async_call.__doc__ = call.__doc__
                 return async_call

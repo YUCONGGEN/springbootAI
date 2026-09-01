@@ -39,6 +39,54 @@ def sentinel_resource_decorator(annotation: SentinelResource):
     """
     def decorator(func: Callable) -> Callable:
         resource_key = annotation.value or f"{func.__module__}.{func.__name__}"
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                entry = None
+                try:
+                    entry = sentinel_engine.entry(resource_key, args=args, kwargs=kwargs)
+                    start = time.monotonic()
+                    result = await func(*args, **kwargs)
+                    rt_ms = (time.monotonic() - start) * 1000
+                    entry.success()
+                    await asyncio.to_thread(
+                        _record_to_redis, resource_key, rt_ms, False
+                    )
+                    return result
+                except BlockException as exc:
+                    logger.warning(
+                        "[Sentinel] Blocked %s: %s", resource_key, exc.rule_type
+                    )
+                    await asyncio.to_thread(
+                        _record_to_redis, resource_key, 0, True, True
+                    )
+                    handler = _find_handler(args, annotation.block_handler)
+                    if handler:
+                        value = handler(*args[1:], **kwargs)
+                        return await value if inspect.isawaitable(value) else value
+                    raise
+                except Exception as exc:
+                    if entry:
+                        entry.error()
+                    if annotation.exceptions_to_ignore and any(
+                        isinstance(exc, exc_type)
+                        for exc_type in annotation.exceptions_to_ignore
+                    ):
+                        raise
+                    await asyncio.to_thread(
+                        _record_to_redis, resource_key, 0, True
+                    )
+                    fallback = _find_handler(args, annotation.fallback)
+                    if fallback:
+                        logger.warning(
+                            "[Sentinel] Fallback triggered for %s (%s)",
+                            resource_key, type(exc).__name__,
+                        )
+                        value = fallback(*args[1:], **kwargs)
+                        return await value if inspect.isawaitable(value) else value
+                    raise
+            return async_wrapper
         
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -75,7 +123,10 @@ def sentinel_resource_decorator(annotation: SentinelResource):
                 if fallback_name:
                     fallback_func = _find_handler(args, fallback_name)
                     if fallback_func:
-                        logger.warning(f"[Sentinel] Fallback triggered for {resource_key}: {e}")
+                        logger.warning(
+                            "[Sentinel] Fallback triggered for %s (%s)",
+                            resource_key, type(e).__name__,
+                        )
                         return fallback_func(*args[1:], **kwargs)
                 raise
         return wrapper
@@ -109,8 +160,10 @@ def _record_to_redis(resource_key: str, rt_ms: float, is_error: bool, blocked: b
         pipe.hset(f"sentinel_stats:{resource_key}", "last_access", str(time.time()))
         pipe.expire(f"sentinel_stats:{resource_key}", 3600)
         pipe.execute()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(
+            "Sentinel Redis statistics update failed (%s)", type(exc).__name__
+        )
 
 
 # ==================== GlobalTransactional 分布式事务切面（Seata集成） ====================
@@ -219,7 +272,12 @@ def global_transactional_decorator(annotation: GlobalTransactional):
                 # 异常触发回滚
                 if seata_manager.is_in_transaction():
                     seata_manager.rollback_transaction(tx_id)
-                logger.error(f"[GlobalTransactional] Rollback transaction: {tx_id}, error={str(e)}")
+                logger.error(
+                    "[GlobalTransactional] Rollback transaction: %s, "
+                    "error_type=%s",
+                    tx_id,
+                    type(e).__name__,
+                )
                 raise
         return wrapper
     return decorator

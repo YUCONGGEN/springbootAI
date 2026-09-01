@@ -865,10 +865,13 @@ app = create_app(BenchmarkApplication)
 app.router.add_event_handler("shutdown", _mcp_manager.close_sync)
 benchmark_context = app.state.spring_application.application_context
 
-# 性能基准测试禁用 Actuator 鉴权（性能测试不验证安全行为，专注于框架路径执行）
-# 生产环境默认 enabled=true，由专门的安全测试覆盖鉴权行为。
-import springbootai.web.actuator as _actuator_mod
-_actuator_mod._actuator_secured = False
+# 性能基准测试禁用当前应用的 Actuator 鉴权（只测框架执行路径）。
+# 状态绑定在 ASGI app 上，避免修改全局值并污染同进程的其它应用。
+_benchmark_actuator_state = app.state.springbootai_actuator_state
+_benchmark_actuator_state["secured"] = False
+_benchmark_actuator_state["endpoints"].update({
+    name: True for name in _benchmark_actuator_state["endpoints"]
+})
 
 gateway = GatewayRouter(
     default_filters=[],
@@ -883,7 +886,7 @@ gateway.route(
 )
 gateway.install(app, "/gateway/{path:path}")
 
-websocket_router = WebSocketRouter()
+websocket_router = WebSocketRouter(allow_anonymous=True)
 websocket_router.add_endpoint("/ws/benchmark-echo", BenchmarkWebSocketEndpoint)
 websocket_router.add_message_endpoint("/ws/benchmark-app", BenchmarkMessageEndpoint)
 websocket_router.install(app)

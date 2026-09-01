@@ -5,6 +5,9 @@
 """
 
 from types import SimpleNamespace
+import threading
+
+import pytest
 
 
 def test_nacos_timeout_is_applied_to_sdk_client(monkeypatch):
@@ -17,11 +20,8 @@ def test_nacos_timeout_is_applied_to_sdk_client(monkeypatch):
             self.default_timeout = 30
             self.instances.append(self)
 
-        def add_naming_instance(self, **kwargs):
-            return True
-
-        def remove_naming_instance(self, **kwargs):
-            return True
+        def list_naming_services(self, **kwargs):
+            return {"doms": []}
 
     monkeypatch.setattr(discovery, "NacosClient", FakeNacosClient)
     monkeypatch.setattr(discovery.NacosDiscoveryClient, "_instance", None)
@@ -88,6 +88,96 @@ def test_rabbitmq_invalid_timeout_and_attempts_use_safe_defaults():
     assert RabbitMQClient._normalize_timeout(9999) == 60.0
     assert RabbitMQClient._normalize_attempts(0) == 1
     assert RabbitMQClient._normalize_attempts(999) == 10
+
+
+def test_rabbitmq_publisher_uses_owned_confirmed_channel(monkeypatch):
+    from springbootai.messaging.rabbitmq import RabbitMQClient
+
+    class Channel:
+        is_open = True
+
+        def __init__(self):
+            self.confirmed = False
+            self.calls = []
+
+        def confirm_delivery(self):
+            self.confirmed = True
+
+        def basic_publish(self, **kwargs):
+            self.calls.append((threading.get_ident(), kwargs))
+            return True
+
+    class Connection:
+        is_closed = False
+
+        def __init__(self):
+            self.channel_instance = Channel()
+
+        def channel(self):
+            return self.channel_instance
+
+        def close(self):
+            self.is_closed = True
+
+    client = object.__new__(RabbitMQClient)
+    client.__init__(publish_timeout=1)
+    connection = Connection()
+    monkeypatch.setattr(client, "_open_connection", lambda: connection)
+    caller_thread = threading.get_ident()
+    try:
+        client.publish("events", "orders.created", {"id": 1})
+        assert connection.channel_instance.confirmed is True
+        worker_thread, kwargs = connection.channel_instance.calls[0]
+        assert worker_thread != caller_thread
+        assert kwargs["mandatory"] is True
+    finally:
+        client.close()
+
+
+def test_rabbitmq_failed_message_moves_to_confirmed_dlq():
+    import pika
+    from springbootai.messaging.rabbitmq import RabbitMQClient
+
+    client = object.__new__(RabbitMQClient)
+    client.__init__(max_delivery_attempts=1)
+
+    class Channel:
+        def __init__(self):
+            self.declared = []
+            self.published = []
+            self.acked = []
+            self.nacked = []
+
+        def queue_declare(self, **kwargs):
+            self.declared.append(kwargs)
+
+        def basic_publish(self, **kwargs):
+            self.published.append(kwargs)
+            return True
+
+        def basic_ack(self, **kwargs):
+            self.acked.append(kwargs)
+
+        def basic_nack(self, **kwargs):
+            self.nacked.append(kwargs)
+
+    channel = Channel()
+    handler = client._create_message_handler(
+        lambda _message: (_ for _ in ()).throw(RuntimeError("failed")),
+        queue_name="orders",
+    )
+    handler(
+        channel,
+        SimpleNamespace(delivery_tag=7, exchange="", routing_key="orders"),
+        pika.BasicProperties(headers={}),
+        b'{"id": 1}',
+    )
+
+    assert channel.declared[0]["queue"] == "orders.DLQ"
+    assert channel.published[0]["routing_key"] == "orders.DLQ"
+    assert channel.published[0]["mandatory"] is True
+    assert channel.acked == [{"delivery_tag": 7}]
+    assert channel.nacked == []
 
 
 def test_config_loader_exposes_optional_component_timeout_overrides(tmp_path, monkeypatch):

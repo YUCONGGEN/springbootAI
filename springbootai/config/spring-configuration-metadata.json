@@ -7,6 +7,8 @@
   "properties": [
     {"name": "server.port", "type": "java.lang.Integer", "description": "HTTP 服务端口", "defaultValue": 8080},
     {"name": "server.host", "type": "java.lang.String", "description": "HTTP 服务绑定地址", "defaultValue": "0.0.0.0"},
+    {"name": "server.max-request-body-size", "type": "java.lang.Integer", "description": "HTTP 请求体最大字节数；0 表示禁用限制", "defaultValue": 10485760},
+    {"name": "server.uvicorn", "type": "java.util.Map", "description": "透传给 Uvicorn 的生产服务器参数"},
     {"name": "server.request-id.header", "type": "java.lang.String", "description": "请求关联 ID 的请求/响应头名称", "defaultValue": "X-Request-ID"},
     {"name": "server.cors.allow-origins", "type": "java.util.List<java.lang.String>", "description": "CORS 允许的源列表"},
     {"name": "server.cors.allow-credentials", "type": "java.lang.Boolean", "description": "CORS 是否允许携带凭证", "defaultValue": false},
@@ -34,6 +36,7 @@
 
     {"name": "spring.security.oauth2.resourceserver.jwt.issuer-uri", "type": "java.lang.String", "description": "OAuth2 Authorization Server 的 Issuer URI"},
     {"name": "spring.security.oauth2.resourceserver.jwt.jwk-set-uri", "type": "java.lang.String", "description": "OAuth2 JWKS 公钥集 URI"},
+    {"name": "spring.security.oauth2.resourceserver.jwt.jwks-max-stale-age", "type": "java.lang.Integer", "description": "JWKS 刷新失败时允许继续使用旧密钥的最大秒数", "defaultValue": 86400},
 
     {"name": "rabbitmq.host", "type": "java.lang.String", "description": "RabbitMQ 主机", "defaultValue": "localhost"},
     {"name": "rabbitmq.port", "type": "java.lang.Integer", "description": "RabbitMQ 端口", "defaultValue": 5672},
@@ -41,9 +44,12 @@
     {"name": "spring.kafka.bootstrap-servers", "type": "java.lang.String", "description": "Kafka Bootstrap Servers", "defaultValue": "localhost:9092"},
     {"name": "spring.kafka.consumer.group-id", "type": "java.lang.String", "description": "Kafka 消费者组 ID"},
     {"name": "spring.kafka.consumer.auto-offset-reset", "type": "java.lang.String", "description": "Kafka 消费者 Offset 重置策略 (latest/earliest)", "defaultValue": "latest"},
+    {"name": "spring.kafka.consumer.start-timeout", "type": "java.lang.Float", "description": "Kafka 消费线程启动并完成 Broker 探测的等待秒数", "defaultValue": 5.0},
 
     {"name": "redis.host", "type": "java.lang.String", "description": "Redis 主机", "defaultValue": "localhost"},
     {"name": "redis.port", "type": "java.lang.Integer", "description": "Redis 端口", "defaultValue": 6379},
+    {"name": "redis.ssl", "type": "java.lang.Boolean", "description": "是否使用 TLS 连接 Redis", "defaultValue": false},
+    {"name": "redis.ssl-cert-reqs", "type": "java.lang.String", "description": "Redis TLS 证书校验策略 (required/optional/none)", "defaultValue": "required"},
 
     {"name": "discovery.server_addr", "type": "java.lang.String", "description": "Nacos 服务发现地址", "defaultValue": "localhost:8848"},
     {"name": "spring.cloud.config.timeout", "type": "java.lang.Integer", "description": "Spring Cloud Config HTTP 请求超时（毫秒，默认 5000）", "defaultValue": 5000},
@@ -81,6 +87,24 @@
     {"name": "spring.ai.max-total-tokens", "type": "java.lang.Integer", "description": "单个模型/工具闭环累计 Token 上限", "defaultValue": 100000},
     {"name": "spring.ai.max-tool-iterations", "type": "java.lang.Integer", "description": "单个请求最多工具调用轮数", "defaultValue": 5},
     {"name": "spring.ai.openai.api-key", "type": "java.lang.String", "description": "OpenAI 兼容 Provider 的 API Key；也可使用 OPENAI_API_KEY 环境变量"},
-    {"name": "spring.ai.openai.base-url", "type": "java.lang.String", "description": "OpenAI 兼容 Provider 的 API 地址", "defaultValue": "https://api.openai.com/v1"}
+    {"name": "spring.ai.openai.base-url", "type": "java.lang.String", "description": "OpenAI 兼容 Provider 的 API 地址", "defaultValue": "https://api.openai.com/v1"},
+    {"name": "spring.ai.vector-store.max-scan-bytes", "type": "java.lang.Integer", "description": "Redis 向量检索单次扫描的累计字节上限", "defaultValue": 104857600},
+    {"name": "spring.ai.memory.allow-global-namespace", "type": "java.lang.Boolean", "description": "是否允许无认证身份的全局会话记忆；企业环境应保持关闭", "defaultValue": false},
+
+    {"name": "spring.langgraph.max-output-bytes", "type": "java.lang.Integer", "description": "LangGraph 普通结果或一次流的累计输出字节上限", "defaultValue": 10485760},
+    {"name": "spring.langgraph.max-stream-events", "type": "java.lang.Integer", "description": "LangGraph 单次流式执行事件数上限", "defaultValue": 10000},
+    {"name": "spring.langgraph.max-concurrent-executions", "type": "java.lang.Integer", "description": "每个 LangGraph 工作流并发执行上限", "defaultValue": 16},
+    {"name": "spring.langgraph.acquire-timeout-seconds", "type": "java.lang.Float", "description": "LangGraph 容量耗尽时等待槽位的秒数", "defaultValue": 1.0},
+
+    {"name": "spring.cloud.bus.enabled", "type": "java.lang.Boolean", "description": "是否启用 Spring Cloud Bus", "defaultValue": false},
+    {"name": "spring.cloud.bus.backend", "type": "java.lang.String", "description": "事件总线后端 (local/rabbitmq/kafka)", "defaultValue": "local"},
+    {"name": "spring.cloud.bus.destination", "type": "java.lang.String", "description": "RabbitMQ fanout exchange 或 Kafka topic", "defaultValue": "springCloudBus"},
+    {"name": "spring.cloud.bus.fallback-local", "type": "java.lang.Boolean", "description": "Broker 失败时是否显式降级为本地投递；默认失败关闭", "defaultValue": false},
+    {"name": "spring.cloud.bus.max-event-bytes", "type": "java.lang.Integer", "description": "单个总线事件最大 UTF-8 字节数", "defaultValue": 1048576},
+
+    {"name": "spring.mcp.clients.*.max-response-bytes", "type": "java.lang.Integer", "description": "单个 MCP HTTP 响应或反序列化载荷最大字节数", "defaultValue": 1048576},
+    {"name": "spring.mcp.clients.*.max-collection-items", "type": "java.lang.Integer", "description": "MCP 工具、资源或 Prompt 列表最大条目数", "defaultValue": 256},
+    {"name": "spring.mcp.clients.*.max-schema-depth", "type": "java.lang.Integer", "description": "远程工具 JSON Schema 最大嵌套深度", "defaultValue": 16},
+    {"name": "spring.mcp.clients.*.max-pending-requests", "type": "java.lang.Integer", "description": "单个 MCP 连接最大等待请求数", "defaultValue": 128}
   ]
 }

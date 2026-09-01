@@ -401,15 +401,16 @@ class TestReplayProtection:
         assert 'nonce' in reason.lower() or '8 character' in reason.lower()
 
     def test_millisecond_timestamp_supported(self):
-        """测试毫秒级时间戳自动识别（不验证签名，因签名需与原始timestamp一致）"""
+        """测试毫秒级时间戳自动识别并保留原始值参与签名。"""
         now = int(time.time())
         timestamp_ms = str(now * 1000)
         nonce = os.urandom(16).hex()
+        signature = self.protector.generate_signature(timestamp_ms, nonce)
 
         valid, reason = self.protector.validate_request(
-            timestamp_ms, nonce, ''
+            timestamp_ms, nonce, signature
         )
-        assert valid is True, f"毫秒时间戳应被正确识别（无签名模式）: {reason}"
+        assert valid is True, f"毫秒时间戳应被正确识别: {reason}"
 
     def test_validate_headers_method(self):
         """测试从HTTP头验证请求"""

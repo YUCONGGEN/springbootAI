@@ -1,6 +1,6 @@
 # SpringBootAI CLI 与项目脚手架 —— 使用指南
 
-> 框架版本：SpringBootAI 2.3.10
+> 框架版本：SpringBootAI 2.3.11
 > 源码位置：`springbootai/cli/main.py`、`springbootai/cli/scaffold.py`
 > 对齐 Java：Spring Boot CLI / Spring Initializr
 
@@ -86,7 +86,7 @@ springbootai version
 预期输出：
 
 ```
-SpringBootAI v2.3.10
+SpringBootAI v2.3.11
   Python: 3.11.5
   Platform: Windows-10-10.0.22621-SP0
   Installation: e:\交付\springbootAI
@@ -111,7 +111,7 @@ springbootai info
 ============================================================
 SpringBootAI 运行环境信息
 ============================================================
-SpringBootAI 2.3.10
+SpringBootAI 2.3.11
 Python 版本: 3.11.5 (main, ...)
 Python 路径: /usr/bin/python3
 操作系统: Linux-5.15.0-x86_64
@@ -548,7 +548,7 @@ redis:
 
 ```
 # my-app 依赖（由 SpringBootAI 脚手架生成）
-springbootAI==2.3.10
+springbootAI==2.3.11
 PyMySQL==1.2.0          # MySQL 驱动
 redis==8.1.0            # Redis 客户端
 ```
@@ -732,7 +732,7 @@ pip install -r requirements.txt
 
 ```
 # blog-system 依赖（由 SpringBootAI 脚手架生成）
-springbootAI==2.3.10
+springbootAI==2.3.11
 PyMySQL==1.2.0                 # MySQL 驱动
 langchain-openai==1.4.2        # AI OpenAI 适配器（按需）
 langchain-core==1.5.4          # AI 核心类型（按需）

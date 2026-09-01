@@ -5,6 +5,8 @@ import time
 import random
 import logging
 import functools
+import asyncio
+import inspect
 from typing import Callable, Tuple, Type
 
 logger = logging.getLogger("Spring.Retry")
@@ -23,6 +25,54 @@ def retryable_decorator(annotation):
     - 恢复方法（recover）
     """
     def decorator(func: Callable) -> Callable:
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                max_retries = annotation.max_retries
+                exceptions_to_retry = annotation.value
+                exceptions_to_exclude = annotation.exclude
+                backoff = annotation.backoff
+                last_exception = None
+
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        return await func(*args, **kwargs)
+                    except exceptions_to_exclude:
+                        raise
+                    except Exception as exc:
+                        if not isinstance(exc, exceptions_to_retry):
+                            raise
+                        last_exception = exc
+                        if attempt >= max_retries:
+                            break
+                        delay = _calculate_backoff(backoff, attempt)
+                        logger.info(
+                            "[Retry] Retrying %s (attempt %d/%d), "
+                            "exception_type=%s, delay=%.2fms",
+                            func.__name__, attempt, max_retries - 1,
+                            type(exc).__name__, delay,
+                        )
+                        await asyncio.sleep(delay / 1000.0)
+
+                if last_exception and args:
+                    from springbootai.retry.recovery import (
+                        invoke_recovery,
+                        resolve_recovery_method,
+                    )
+                    recovery = resolve_recovery_method(
+                        args[0], annotation, last_exception, args[1:], kwargs
+                    )
+                    if recovery is not None:
+                        result = invoke_recovery(
+                            recovery, last_exception, args[1:], kwargs)
+                        if inspect.isawaitable(result):
+                            return await result
+                        return result
+                if last_exception:
+                    raise last_exception
+
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             max_retries = annotation.max_retries
@@ -52,7 +102,11 @@ def retryable_decorator(annotation):
                     
                     # 判断是否需要继续重试
                     if retry_count >= max_retries:
-                        logger.warning(f"[Retry] Max retries ({max_retries}) exceeded for {func.__name__}: {str(e)}")
+                        logger.warning(
+                            "[Retry] Max retries (%d) exceeded for %s "
+                            "error_type=%s",
+                            max_retries, func.__name__, type(e).__name__,
+                        )
                         break
                     
                     # 计算退避时间

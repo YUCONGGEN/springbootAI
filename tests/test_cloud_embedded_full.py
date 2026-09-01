@@ -351,6 +351,20 @@ class TestTracer:
                 assert child.trace_id == parent.trace_id
                 assert child.parent_span_id == parent.span_id
 
+    def test_extracts_b3_context_case_insensitively(self):
+        tracer = Tracer("svc", export_to_log=False)
+        trace_id = "a" * 32
+        span_id = "b" * 16
+        header = tracer.extract_from_headers({
+            "x-b3-traceid": trace_id,
+            "x-b3-spanid": span_id,
+            "x-b3-sampled": "1",
+        })
+
+        with tracer.span("server", traceparent=header) as child:
+            assert child.trace_id == trace_id
+            assert child.parent_span_id == span_id
+
 
 class TestParseTraceparent:
     def test_valid(self):
@@ -402,6 +416,24 @@ class TestTraceSpan:
 
         # Should not raise and should use function qualname as span name
         assert named_func() == "ok"
+
+    def test_async_function_span_covers_awaited_work(self, monkeypatch):
+        import asyncio
+        import springbootai.cloud.tracer as tracer_module
+
+        tracer = Tracer("async-svc", export_to_log=False)
+        monkeypatch.setattr(tracer_module, "_tracer_instance", tracer)
+
+        @trace_span("async-op")
+        async def async_op():
+            await asyncio.sleep(0.02)
+            return tracer.get_current_span()
+
+        active_span = asyncio.run(async_op())
+        spans = tracer.get_spans()
+        assert active_span is spans[0]
+        assert spans[0].duration_ms >= 15
+        assert tracer.get_current_span() is None
 
 
 # ==================== Seata 测试 ====================

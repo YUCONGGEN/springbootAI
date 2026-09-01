@@ -6,6 +6,7 @@ import json
 import time
 import uuid
 import logging
+import threading
 from typing import Any
 
 try:
@@ -22,12 +23,27 @@ class RedisClient:
     """Redis客户端封装"""
 
     def __init__(self, host: str = 'localhost', port: int = 6379, db: int = 0,
-                 password: str = None, timeout: int = 5):
+                 password: str = None, timeout: int = 5,
+                 ssl: bool = False, ssl_cert_reqs: str = "required"):
         self._client = None
-        self.configure(host=host, port=port, db=db, password=password, timeout=timeout)
+        self._connection_lock = threading.RLock()
+        self._distributed_required = False
+        self.configure(
+            host=host, port=port, db=db, password=password, timeout=timeout,
+            ssl=ssl, ssl_cert_reqs=ssl_cert_reqs,
+        )
+
+    @property
+    def distributed_required(self) -> bool:
+        """Whether application configuration selected Redis as a safety boundary."""
+        return self._distributed_required
+
+    def require_distributed(self, required: bool = True) -> None:
+        self._distributed_required = bool(required)
 
     def configure(self, host: str, port: int, db: int, password: str = None,
-                  timeout: int = 5) -> None:
+                  timeout: int = 5, ssl: bool = False,
+                  ssl_cert_reqs: str = "required") -> None:
         """配置 Redis 连接参数。
 
         Args:
@@ -38,18 +54,38 @@ class RedisClient:
             timeout: 套接字超时（秒），对齐 application.yml 的 redis.timeout（毫秒值会被
                 init_redis 转换为秒）。默认 5 秒，保持向后兼容。
         """
-        self.host = host
-        self.port = int(port)
-        self.db = int(db)
-        self.password = password
-        # timeout 统一为秒；application.yml 中 redis.timeout 为毫秒，init_redis 负责换算
-        self.timeout = max(0.1, float(timeout))
-        self._client = None
+        with self._connection_lock:
+            previous = self._client
+            if not isinstance(host, str) or not host.strip():
+                raise ValueError("Redis host must be non-empty")
+            self.host = host.strip()
+            self.port = int(port)
+            self.db = int(db)
+            if not 1 <= self.port <= 65535 or self.db < 0:
+                raise ValueError("Redis port/db is out of range")
+            self.password = password
+            self.timeout = min(60.0, max(0.1, float(timeout)))
+            self.ssl = (
+                ssl.strip().lower() in {"1", "true", "yes", "on"}
+                if isinstance(ssl, str) else bool(ssl)
+            )
+            if ssl_cert_reqs not in {"required", "optional", "none"}:
+                raise ValueError("ssl_cert_reqs must be required, optional, or none")
+            self.ssl_cert_reqs = ssl_cert_reqs
+            self._client = None
+        if previous is not None:
+            try:
+                previous.close()
+            except Exception:
+                logger.debug("Failed to close previous Redis client", exc_info=True)
 
     def connect(self, strict: bool = False) -> None:
         """连接Redis"""
-        try:
-            from redis import Redis
+        with self._connection_lock:
+            if self._client is not None:
+                return
+            try:
+                from redis import Redis
 
             # redis-py 8 ships a default retry policy with ten connection
             # attempts.  A synchronous health check during application
@@ -59,47 +95,53 @@ class RedisClient:
             # dependency is fail-fast; the probe itself must be one bounded
             # attempt.  Keep the retry object version-compatible for older
             # redis-py releases that do not expose it.
-            retry = None
-            try:
-                from redis.backoff import NoBackoff
-                from redis.retry import Retry
-                retry = Retry(NoBackoff(), retries=0)
-            except (ImportError, TypeError):
-                pass
-            client_kwargs = {
-                "host": self.host,
-                "port": self.port,
-                "db": self.db,
-                "password": self.password,
-                "decode_responses": True,
-                "socket_timeout": self.timeout,
-                "socket_connect_timeout": self.timeout,
-            }
-            if retry is not None:
-                client_kwargs["retry"] = retry
-            else:
+                retry = None
+                try:
+                    from redis.backoff import NoBackoff
+                    from redis.retry import Retry
+                    retry = Retry(NoBackoff(), retries=0)
+                except (ImportError, TypeError):
+                    pass
+                client_kwargs = {
+                    "host": self.host,
+                    "port": self.port,
+                    "db": self.db,
+                    "password": self.password,
+                    "decode_responses": True,
+                    "socket_timeout": self.timeout,
+                    "socket_connect_timeout": self.timeout,
+                    "max_connections": 100,
+                    "ssl": self.ssl,
+                    "ssl_cert_reqs": self.ssl_cert_reqs,
+                }
+                if retry is not None:
+                    client_kwargs["retry"] = retry
+                else:
                 # redis-py 6+ prefers an explicit Retry object and emits a
                 # deprecation warning for ``retry_on_timeout``.  Keep the
                 # legacy switch only for older releases where Retry is not
                 # available.
-                client_kwargs["retry_on_timeout"] = False
-            self._client = Redis(**client_kwargs)
-            # 测试连接
-            self._client.ping()
-        except ImportError as exc:
-            self._client = None
-            if strict:
-                raise RuntimeError("Redis已启用但redis依赖未安装") from exc
-        except Exception as e:
-            self._client = None
-            if strict:
-                raise ConnectionError(f"无法连接Redis: {e}") from e
+                    client_kwargs["retry_on_timeout"] = False
+                candidate = Redis(**client_kwargs)
+                candidate.ping()
+                self._client = candidate
+            except ImportError as exc:
+                self._client = None
+                if strict:
+                    raise RuntimeError("Redis已启用但redis依赖未安装") from exc
+            except Exception as exc:
+                self._client = None
+                if strict:
+                    raise ConnectionError(
+                        f"无法连接Redis ({type(exc).__name__})"
+                    ) from exc
     
     def get_client(self):
         """获取Redis客户端"""
-        if self._client is None:
-            self.connect()
-        return self._client
+        with self._connection_lock:
+            if self._client is None:
+                self.connect()
+            return self._client
     
     # ==================== 分布式锁 ====================
     
@@ -134,7 +176,9 @@ class RedisClient:
                 if result:
                     return lock_id
             except (RedisError, TypeError, ValueError) as exc:
-                logger.warning("Redis lock acquisition failed: %s", exc)
+                logger.warning(
+                    "Redis lock acquisition failed error_type=%s",
+                    type(exc).__name__)
                 return None
             time.sleep(0.01)  # 短暂等待后重试
         
@@ -170,7 +214,9 @@ class RedisClient:
             # Lock cleanup runs from AOP ``finally`` blocks; a transient Redis
             # outage must not replace the business exception or crash the
             # request after the work has completed.
-            logger.warning("Redis lock release failed: %s", exc)
+            logger.warning(
+                "Redis lock release failed error_type=%s",
+                type(exc).__name__)
             return False
     
     # ==================== 持久化存储 ====================
@@ -335,25 +381,29 @@ class RedisClient:
             return 0
         
         try:
-            # 获取列表长度
-            length = client.llen(key)
-            if length == 0:
-                return 0
-            
-            # 计算需要保留的元素
-            result = 0
-            # 删除从start到end的元素（通过截断实现）
-            if start > 0:
-                # 保留前start个元素
-                client.ltrim(key, 0, start - 1)
-                result = length - start
-            elif end < length - 1:
-                # 保留从end+1开始的元素
-                client.ltrim(key, end + 1, -1)
-                result = end + 1
-            
-            return result
-        except RedisError:
+            start_index = int(start)
+            end_index = int(end)
+            marker = f"\x00springbootai:range-delete:{uuid.uuid4()}"
+            script = """
+            local length = redis.call('llen', KEYS[1])
+            if length == 0 then return 0 end
+            local first = tonumber(ARGV[1])
+            local last = tonumber(ARGV[2])
+            if first < 0 then first = length + first end
+            if last < 0 then last = length + last end
+            if first < 0 then first = 0 end
+            if last >= length then last = length - 1 end
+            if first >= length or last < 0 or first > last then return 0 end
+            for index = first, last do
+                redis.call('lset', KEYS[1], index, ARGV[3])
+            end
+            redis.call('lrem', KEYS[1], 0, ARGV[3])
+            return last - first + 1
+            """
+            return int(client.eval(
+                script, 1, key, start_index, end_index, marker
+            ) or 0)
+        except (RedisError, TypeError, ValueError, AttributeError):
             return 0
     
     def list_length(self, key: str) -> int:
@@ -438,7 +488,9 @@ class RedisClient:
         try:
             if not isinstance(value, str):
                 value = json.dumps(value)
-            return client.hset(key, field, value) > 0
+            # HSET returns 0 when an existing field is updated; that is still
+            # a successful write. Only an exception indicates failure.
+            return client.hset(key, field, value) is not None
         except (RedisError, TypeError):
             return False
     
@@ -582,11 +634,14 @@ def init_redis(config: dict) -> None:
         timeout_s = float(timeout_ms) / 1000.0
     except (ValueError, TypeError):
         timeout_s = 5.0
+    redis_client.require_distributed(True)
     redis_client.configure(
         host=config.get('host', 'localhost'),
         port=config.get('port', 6379),
         db=config.get('db', 0),
         password=config.get('password'),
         timeout=timeout_s,
+        ssl=config.get('ssl', False),
+        ssl_cert_reqs=config.get('ssl_cert_reqs', 'required'),
     )
     redis_client.connect(strict=True)

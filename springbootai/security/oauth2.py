@@ -31,10 +31,17 @@ import time
 import threading
 import functools
 from typing import Any, Callable, Dict, List, Optional, Set
-from urllib.request import urlopen, Request
-from urllib.error import URLError
+from urllib.request import build_opener, HTTPRedirectHandler, Request
+from urllib.parse import urlsplit
+
+from springbootai.logging.context import sanitize_url
 
 logger = logging.getLogger("Spring.Security.OAuth2")
+
+
+class _NoJwksRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class OAuth2TokenValidationError(Exception):
@@ -48,49 +55,126 @@ class JwksCache:
     从 Authorization Server 获取公钥集合并缓存，定期刷新。
     """
 
-    def __init__(self, jwk_set_uri: str, refresh_interval: int = 3600):
-        self.jwk_set_uri = jwk_set_uri
-        self.refresh_interval = refresh_interval  # 默认 1 小时刷新一次
+    def __init__(self, jwk_set_uri: str, refresh_interval: int = 3600,
+                 failure_retry_interval: int = 30,
+                 request_timeout: float = 10.0,
+                 max_response_size: int = 1024 * 1024,
+                 max_stale_age: int = 24 * 3600):
+        self.jwk_set_uri = self._validate_uri(jwk_set_uri)
+        self.refresh_interval = max(1, int(refresh_interval))
+        self.failure_retry_interval = max(1, int(failure_retry_interval))
+        self.request_timeout = max(0.1, min(float(request_timeout), 60.0))
+        self.max_response_size = max(1024, int(max_response_size))
+        self.max_stale_age = max(
+            self.refresh_interval, int(max_stale_age))
         self._keys: Dict[str, dict] = {}  # kid -> key dict
         self._last_fetch: float = 0
-        self._lock = threading.Lock()
+        self._last_failure: float = 0
+        self._refreshing = False
+        self._condition = threading.Condition(threading.Lock())
 
-    def _fetch_jwks(self) -> None:
-        """从 Authorization Server 获取 JWKS。"""
+    @staticmethod
+    def _validate_uri(value: str) -> str:
         try:
-            req = Request(self.jwk_set_uri, headers={"Accept": "application/json"})
-            with urlopen(req, timeout=10) as resp:  # nosec B310 - URL from config
-                data = json.loads(resp.read().decode('utf-8'))
-            keys = data.get('keys', [])
-            new_keys = {}
-            for key in keys:
-                kid = key.get('kid')
-                if kid:
-                    new_keys[kid] = key
-            self._keys = new_keys
-            self._last_fetch = time.time()
-            logger.info(f"JWKS fetched: {len(new_keys)} keys from {self.jwk_set_uri}")
-        except URLError as e:
-            logger.error(f"Failed to fetch JWKS from {self.jwk_set_uri}: {e}")
-            # 保留旧密钥，不清空
-        except Exception as e:
-            logger.error(f"JWKS fetch error: {e}")
+            parsed = urlsplit(str(value))
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("JWKS URI is invalid") from exc
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("JWKS URI must use https and include a host")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("JWKS URI must not contain credentials")
+        if parsed.fragment:
+            raise ValueError("JWKS URI must not contain a fragment")
+        return str(value)
+
+    def _fetch_jwks(self) -> Dict[str, dict]:
+        """Fetch and validate JWKS without holding the cache lock."""
+        req = Request(self.jwk_set_uri, headers={"Accept": "application/json"})
+        opener = build_opener(_NoJwksRedirects())
+        with opener.open(req, timeout=self.request_timeout) as resp:  # nosec B310
+            declared = resp.headers.get("Content-Length")
+            if declared and int(declared) > self.max_response_size:
+                raise ValueError("JWKS response exceeds size limit")
+            raw = resp.read(self.max_response_size + 1)
+        if len(raw) > self.max_response_size:
+            raise ValueError("JWKS response exceeds size limit")
+        data = json.loads(raw.decode('utf-8'))
+        if not isinstance(data, dict) or not isinstance(data.get('keys'), list):
+            raise ValueError("JWKS response must contain a keys list")
+        new_keys = {}
+        for key in data['keys']:
+            if not isinstance(key, dict):
+                continue
+            kid = key.get('kid')
+            if isinstance(kid, str) and kid:
+                new_keys[kid] = key
+        if not new_keys:
+            raise ValueError("JWKS response contains no usable keys")
+        return new_keys
+
+    def _refresh(self, force: bool = False) -> None:
+        now = time.time()
+        with self._condition:
+            fresh = self._keys and (
+                now - self._last_fetch <= self.refresh_interval)
+            if fresh and not force:
+                return
+            if (not force and self._last_failure
+                    and now - self._last_failure < self.failure_retry_interval):
+                return
+            if self._refreshing:
+                # Only bounded-stale keys may be served while another caller
+                # refreshes. Revoked keys must not remain valid indefinitely.
+                if (self._keys and self._last_fetch
+                        and now - self._last_fetch <= self.max_stale_age):
+                    return
+                deadline = time.monotonic() + self.request_timeout
+                while self._refreshing:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._condition.wait(timeout=remaining)
+                return
+            self._refreshing = True
+        try:
+            new_keys = self._fetch_jwks()
+        except Exception as exc:
+            with self._condition:
+                self._last_failure = time.time()
+            logger.error(
+                "JWKS refresh failed target=%s error_type=%s",
+                sanitize_url(self.jwk_set_uri), type(exc).__name__,
+            )
+        else:
+            with self._condition:
+                self._keys = new_keys
+                self._last_fetch = time.time()
+                self._last_failure = 0
+            logger.info(
+                "JWKS refreshed keys=%s target=%s",
+                len(new_keys), sanitize_url(self.jwk_set_uri),
+            )
+        finally:
+            with self._condition:
+                self._refreshing = False
+                self._condition.notify_all()
 
     def get_key(self, kid: str) -> Optional[dict]:
         """根据 key ID 获取公钥。
 
         如果缓存过期或为空，先刷新。
         """
-        with self._lock:
-            now = time.time()
-            if not self._keys or (now - self._last_fetch) > self.refresh_interval:
-                self._fetch_jwks()
+        self._refresh(force=False)
+        with self._condition:
+            if (not self._last_fetch
+                    or time.time() - self._last_fetch > self.max_stale_age):
+                return None
             return self._keys.get(kid)
 
     def force_refresh(self) -> None:
         """强制刷新 JWKS 缓存。"""
-        with self._lock:
-            self._fetch_jwks()
+        self._refresh(force=True)
 
 
 class OAuth2ResourceServer:
@@ -109,6 +193,10 @@ class OAuth2ResourceServer:
 
     _instance = None
     _lock = threading.Lock()
+    _SUPPORTED_ALGORITHMS = {
+        "HS256", "HS384", "HS512", "RS256", "RS384", "RS512",
+        "ES256", "ES384", "ES512",
+    }
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -148,9 +236,13 @@ class OAuth2ResourceServer:
         algorithms = jwt_config.get('algorithms', ["RS256", "HS256"])
         self._algorithms = [algorithms] if isinstance(algorithms, str) else list(algorithms)
         self._algorithms = [str(value).upper() for value in self._algorithms]
-        if not self._algorithms or any(value == 'NONE' for value in self._algorithms):
-            raise ValueError("OAuth2 algorithms must contain signed JWT algorithms")
+        if (not self._algorithms
+                or any(value not in self._SUPPORTED_ALGORITHMS
+                       for value in self._algorithms)):
+            raise ValueError("OAuth2 algorithms contain an unsupported value")
         self._secret_key = jwt_config.get('secret-key') or jwt_config.get('secret_key')
+        if self._secret_key and len(str(self._secret_key).encode("utf-8")) < 32:
+            raise ValueError("OAuth2 symmetric secret key must be at least 32 bytes")
         self._jwks_cache = None
 
         jwk_set_uri = (
@@ -160,8 +252,21 @@ class OAuth2ResourceServer:
             or jwt_config.get('jwks_uri')
         )
         if jwk_set_uri:
-            self._jwks_cache = JwksCache(jwk_set_uri)
-            logger.info(f"OAuth2 Resource Server configured with JWKS: {jwk_set_uri}")
+            self._jwks_cache = JwksCache(
+                jwk_set_uri,
+                refresh_interval=jwt_config.get(
+                    "jwks-refresh-interval", 3600),
+                failure_retry_interval=jwt_config.get(
+                    "jwks-failure-retry-interval", 30),
+                request_timeout=jwt_config.get("jwks-timeout", 10),
+                max_response_size=jwt_config.get(
+                    "jwks-max-response-size", 1024 * 1024),
+                max_stale_age=jwt_config.get("jwks-max-stale-age", 24 * 3600),
+            )
+            logger.info(
+                "OAuth2 Resource Server configured with JWKS: %s",
+                sanitize_url(jwk_set_uri),
+            )
         elif self._secret_key:
             logger.info("OAuth2 Resource Server configured with HS256 secret key")
         else:
@@ -228,6 +333,7 @@ class OAuth2ResourceServer:
             "verify_iat": True,
             "verify_aud": bool(self._audiences),
             "verify_iss": bool(self._issuer),
+            "require": ["exp", "iat"],
         }
 
         decode_kwargs = {

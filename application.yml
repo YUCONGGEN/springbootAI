@@ -21,6 +21,14 @@ server:
 spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:default}
+  cloud:
+    bus:
+      enabled: ${SPRING_CLOUD_BUS_ENABLED:false}
+      backend: ${SPRING_CLOUD_BUS_BACKEND:local}  # local | rabbitmq | kafka
+      destination: ${SPRING_CLOUD_BUS_DESTINATION:springCloudBus}
+      # Broker 失败默认向调用方返回失败；仅明确接受单节点降级时才开启。
+      fallback-local: ${SPRING_CLOUD_BUS_FALLBACK_LOCAL:false}
+      max-event-bytes: ${SPRING_CLOUD_BUS_MAX_EVENT_BYTES:1048576}
   # AI 模块配置（推荐前缀 spring.ai.*；兼容旧版 springbootai.ai.*）
   ai:
     default-provider: ${AI_PROVIDER:openai}   # openai | ollama
@@ -46,9 +54,19 @@ spring:
     vector-store:
       type: ${AI_VECTOR_STORE:inmemory}        # inmemory | redis
       collection: ${AI_VECTOR_COLLECTION:default}
+      max-documents: ${AI_VECTOR_MAX_DOCUMENTS:10000}
+      max-scan: ${AI_VECTOR_MAX_SCAN:10000}
+      max-content-length: ${AI_VECTOR_MAX_CONTENT_LENGTH:1000000}
+      max-embedding-dimensions: ${AI_VECTOR_MAX_DIMENSIONS:65536}
+      max-metadata-size: ${AI_VECTOR_MAX_METADATA_SIZE:262144}
+      max-scan-bytes: ${AI_VECTOR_MAX_SCAN_BYTES:104857600}
     memory:
       store: ${AI_MEMORY_STORE:inmemory}        # inmemory | redis
       max-messages: ${AI_MEMORY_MAX:20}
+      max-conversations: ${AI_MEMORY_MAX_CONVERSATIONS:10000}
+      ttl: ${AI_MEMORY_TTL:86400}
+      # 单用户应用可显式开启；多租户/企业环境必须保持 false。
+      allow-global-namespace: ${AI_MEMORY_ALLOW_GLOBAL_NAMESPACE:false}
     circuit-breaker:
       enabled: ${AI_CB_ENABLED:true}
       failure-threshold: ${AI_CB_FAILURE_THRESHOLD:5}
@@ -108,6 +126,10 @@ spring:
     allow-in-memory: ${LG_ALLOW_IN_MEMORY:false}
     require-thread-id: ${LG_REQUIRE_THREAD_ID:true}
     max-input-bytes: ${LG_MAX_INPUT_BYTES:65536}
+    max-output-bytes: ${LG_MAX_OUTPUT_BYTES:10485760}
+    max-stream-events: ${LG_MAX_STREAM_EVENTS:10000}
+    max-concurrent-executions: ${LG_MAX_CONCURRENT_EXECUTIONS:16}
+    acquire-timeout-seconds: ${LG_ACQUIRE_TIMEOUT_SECONDS:1}
     stream-mode: ${LG_STREAM_MODE:updates}
 
   # Model Context Protocol (MCP) client and server. Disabled by default.
@@ -130,6 +152,10 @@ spring:
         allow-dangerous-tools: false
         max-argument-bytes: 65536
         max-result-chars: 100000
+        max-response-bytes: 1048576
+        max-collection-items: 256
+        max-schema-depth: 16
+        max-pending-requests: 128
         fail-fast: true
         allow-insecure-http: false
     server:

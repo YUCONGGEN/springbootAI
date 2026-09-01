@@ -1,4 +1,4 @@
-from typing import Type, Optional, Any, Dict, Callable, List, get_args, get_origin, Union
+from typing import Type, Optional, Any, Dict, Callable, List, Tuple, get_args, get_origin, Union
 from springbootai.context.bean_definition import BeanDefinition
 from springbootai.context.lifecycle import (
     BeanPostProcessor, BeanFactoryPostProcessor, InitializingBean, DisposableBean,
@@ -14,6 +14,7 @@ import asyncio
 import functools
 import threading
 import hashlib
+import copy
 import concurrent.futures
 import types
 import logging
@@ -108,6 +109,9 @@ class BeanFactory:
         self._cache_max_size = 1000  # 默认最大缓存数
         self._cache_default_ttl = 300  # 默认TTL（秒）
         self._lock = threading.RLock()
+        # One process-wide Future per cache key coordinates sync threads and
+        # async event loops without binding locks to a particular loop.
+        self._cache_inflight: Dict[str, concurrent.futures.Future] = {}
         self._config_loader = config_loader
 
         # ========== IoC增强：三级缓存解决循环依赖 ==========
@@ -541,7 +545,7 @@ class BeanFactory:
             from springbootai.ai.annotation_runtime import inject_ai_marker
             inject_ai_marker(self, instance)
         except Exception as exc:
-            logger.debug("AI 字段注入跳过: %s", exc)
+            logger.debug("AI 字段注入跳过 error_type=%s", type(exc).__name__)
         for field_name, field_type in definition.dependencies.items():
             qualifier = definition.qualifiers.get(field_name)
             if qualifier:
@@ -740,7 +744,9 @@ class BeanFactory:
             except Exception as exc:
                 # Teardown is best effort: one faulty user destructor must not
                 # leave every later connection pool alive.
-                logger.error("Failed to destroy bean '%s': %s", bean_name, exc)
+                logger.error(
+                    "Failed to destroy bean '%s' error_type=%s",
+                    bean_name, type(exc).__name__)
 
         # Mark lazy/prototype definitions as destroyed as well.  They have no
         # instance to visit, but allowing them to be resolved after shutdown
@@ -871,7 +877,7 @@ class BeanFactory:
                     "@Transactional需要已启用的MyBatis SqlSessionFactory"
                 ) from exc
 
-        def should_rollback(exc: Exception) -> bool:
+        def should_rollback(exc: BaseException) -> bool:
             if annotation.no_rollback_for and any(
                 isinstance(exc, exc_type) for exc_type in annotation.no_rollback_for
             ):
@@ -882,29 +888,39 @@ class BeanFactory:
                 return False
             return True
 
+        propagation = str(annotation.propagation or 'REQUIRED').upper()
+
+        def begin_synchronization(tx_sync):
+            """Return ``(owns_boundary, context_token)`` for propagation."""
+            if tx_sync is None:
+                return False, None
+            active = tx_sync.is_synchronization_active()
+            if propagation == 'REQUIRES_NEW' or (
+                not active and propagation in {'REQUIRED', 'NESTED'}
+            ):
+                return True, tx_sync.init_synchronization()
+            if active and propagation in {'NOT_SUPPORTED', 'NEVER'}:
+                return False, tx_sync.suspend_synchronization()
+            return False, None
+
         if asyncio.iscoroutinefunction(method):
             @functools.wraps(method)
             async def async_wrapper(*args, **kwargs):
                 from springbootai.orm.mybatis_integration import mybatis_transaction
                 tx_sync = _get_tx_sync_manager()
 
-                owns_sync = (
-                    tx_sync is not None
-                    and not tx_sync.is_synchronization_active()
-                )
-                if owns_sync:
-                    tx_sync.init_synchronization()
+                owns_sync, sync_token = begin_synchronization(tx_sync)
 
                 deferred_exception = None
                 deferred_traceback = None
                 committed = False
                 try:
                     with mybatis_transaction(
-                        get_session_factory(), str(annotation.propagation).upper()
+                        get_session_factory(), propagation
                     ):
                         try:
                             result = await method(*args, **kwargs)
-                        except Exception as exc:
+                        except BaseException as exc:
                             if should_rollback(exc):
                                 raise
                             deferred_exception = exc
@@ -918,7 +934,7 @@ class BeanFactory:
                     if deferred_exception is not None:
                         raise deferred_exception.with_traceback(deferred_traceback)
                     return result
-                except Exception:
+                except BaseException:
                     if owns_sync and not committed:
                         tx_sync.trigger_after_rollback()
                     raise
@@ -927,7 +943,8 @@ class BeanFactory:
                         tx_sync.trigger_after_completion(
                             'commit' if committed else 'rollback'
                         )
-                        tx_sync.clear_synchronization()
+                    if sync_token is not None:
+                        tx_sync.restore_synchronization(sync_token)
 
             return async_wrapper
 
@@ -936,23 +953,18 @@ class BeanFactory:
             from springbootai.orm.mybatis_integration import mybatis_transaction
             tx_sync = _get_tx_sync_manager()
 
-            owns_sync = (
-                tx_sync is not None
-                and not tx_sync.is_synchronization_active()
-            )
-            if owns_sync:
-                tx_sync.init_synchronization()
+            owns_sync, sync_token = begin_synchronization(tx_sync)
 
             deferred_exception = None
             deferred_traceback = None
             committed = False
             try:
                 with mybatis_transaction(
-                    get_session_factory(), str(annotation.propagation).upper()
+                    get_session_factory(), propagation
                 ):
                     try:
                         result = method(*args, **kwargs)
-                    except Exception as exc:
+                    except BaseException as exc:
                         if should_rollback(exc):
                             raise
                         deferred_exception = exc
@@ -967,7 +979,7 @@ class BeanFactory:
                 if deferred_exception is not None:
                     raise deferred_exception.with_traceback(deferred_traceback)
                 return result
-            except Exception:
+            except BaseException:
                 if owns_sync and not committed:
                     tx_sync.trigger_after_rollback()
                 raise
@@ -976,135 +988,63 @@ class BeanFactory:
                     tx_sync.trigger_after_completion(
                         'commit' if committed else 'rollback'
                     )
-                    tx_sync.clear_synchronization()
+                if sync_token is not None:
+                    tx_sync.restore_synchronization(sync_token)
 
         return wrapper
 
     def _wrap_cacheable(self, instance: Any, method: Callable, annotation: Cacheable) -> Callable:
-        signature = inspect.signature(method)
-
-        def serialize_arg(arg: Any) -> str:
-            if isinstance(arg, (int, float, str, bool, type(None))):
-                return str(arg)
-            if isinstance(arg, (list, tuple)):
-                return '[' + ','.join(serialize_arg(item) for item in arg) + ']'
-            if isinstance(arg, dict):
-                items = sorted(
-                    ((serialize_arg(key), serialize_arg(value)) for key, value in arg.items()),
-                    key=lambda item: item[0],
-                )
-                return '{' + ','.join(f"{key}:{value}" for key, value in items) + '}'
-            return f"obj_{id(arg)}"
-
         def resolve_call(args, kwargs):
-            bound = signature.bind_partial(*args, **kwargs)
-            bound.apply_defaults()
-            cache_arguments = dict(bound.arguments)
-            cache_arguments.pop('self', None)
-
-            condition = annotation.condition
-            if condition:
-                if callable(condition):
-                    enabled = bool(condition(**cache_arguments))
-                else:
-                    condition_name = str(condition).strip()
-                    negate = condition_name.startswith('!')
-                    if negate:
-                        condition_name = condition_name[1:]
-                    if condition_name not in cache_arguments:
-                        raise ValueError(
-                            f"@Cacheable condition只支持参数名，未找到: {condition_name}"
-                        )
-                    enabled = bool(cache_arguments[condition_name])
-                    if negate:
-                        enabled = not enabled
-                if not enabled:
-                    return False, None
-
-            if annotation.key:
-                if '{' in annotation.key:
-                    try:
-                        resolved_key = annotation.key.format(**cache_arguments)
-                    except KeyError as exc:
-                        raise ValueError(
-                            f"@Cacheable key引用了不存在的参数: {exc.args[0]}"
-                        ) from exc
-                elif annotation.key in cache_arguments:
-                    resolved_key = serialize_arg(cache_arguments[annotation.key])
-                else:
-                    resolved_key = annotation.key
-                # key = cacheName + resolvedKey（对齐 Spring Cache：不含方法名，
-                # 使 @CachePut / @CacheEvict 可跨方法更新/失效 @Cacheable 条目）。
-                key_data = f"{annotation.value}:{resolved_key}"
-            else:
-                arguments = ','.join(
-                    f"{name}:{serialize_arg(value)}"
-                    for name, value in sorted(cache_arguments.items())
-                )
-                key_data = f"{annotation.value}:{arguments}"
-            return True, hashlib.sha256(key_data.encode('utf-8')).hexdigest()
-
-        def get_cached(cache_key):
-            with self._lock:
-                current_time = time.time()
-                metadata = self._cache_metadata.get(cache_key)
-                if metadata is None or cache_key not in self._cache:
-                    return False, None
-                if current_time > metadata.get('expire_time', current_time):
-                    self._cache.pop(cache_key, None)
-                    self._cache_metadata.pop(cache_key, None)
-                    return False, None
-                return True, self._cache[cache_key]
-
-        def store(cache_key, result):
-            current_time = time.time()
-            with self._lock:
-                if len(self._cache) >= self._cache_max_size:
-                    oldest_key = min(
-                        self._cache_metadata,
-                        key=lambda key: self._cache_metadata[key].get('create_time', 0),
-                    )
-                    self._cache.pop(oldest_key, None)
-                    self._cache_metadata.pop(oldest_key, None)
-                self._cache[cache_key] = result
-                self._cache_metadata[cache_key] = {
-                    'create_time': current_time,
-                    'expire_time': current_time + self._cache_default_ttl,
-                    # 登记 namespace，供 @CacheEvict(all_entries=True) 按命名空间清空
-                    'namespace': annotation.value,
-                }
+            return self._cache_resolve_call(
+                method, annotation, instance, args, kwargs)
 
         if asyncio.iscoroutinefunction(method):
             @functools.wraps(method)
             async def async_wrapper(*args, **kwargs):
-                enabled, cache_key = resolve_call(args, kwargs)
+                enabled, cache_key, namespace = resolve_call(args, kwargs)
                 if not enabled:
                     return await method(*args, **kwargs)
-                with self._lock:
-                    exists = cache_key in self._cache_metadata
-                if exists:
-                    hit, cached = get_cached(cache_key)
+                while True:
+                    hit, cached = self._cache_get(cache_key)
                     if hit:
                         return cached
-                result = await method(*args, **kwargs)
-                store(cache_key, result)
+                    owner, flight = self._cache_begin_flight(cache_key)
+                    if owner:
+                        break
+                    # Shield the shared concurrent Future: cancelling one
+                    # waiter must not cancel the computation for everyone.
+                    await asyncio.shield(asyncio.wrap_future(flight))
+                try:
+                    result = await method(*args, **kwargs)
+                    self._cache_store(cache_key, result, namespace)
+                except BaseException as exc:
+                    self._cache_finish_flight(cache_key, flight, error=exc)
+                    raise
+                self._cache_finish_flight(cache_key, flight)
                 return result
 
             return async_wrapper
 
         @functools.wraps(method)
         def wrapper(*args, **kwargs):
-            enabled, cache_key = resolve_call(args, kwargs)
+            enabled, cache_key, namespace = resolve_call(args, kwargs)
             if not enabled:
                 return method(*args, **kwargs)
-            with self._lock:
-                exists = cache_key in self._cache_metadata
-            if exists:
-                hit, cached = get_cached(cache_key)
+            while True:
+                hit, cached = self._cache_get(cache_key)
                 if hit:
                     return cached
-            result = method(*args, **kwargs)
-            store(cache_key, result)
+                owner, flight = self._cache_begin_flight(cache_key)
+                if owner:
+                    break
+                flight.result()
+            try:
+                result = method(*args, **kwargs)
+                self._cache_store(cache_key, result, namespace)
+            except BaseException as exc:
+                self._cache_finish_flight(cache_key, flight, error=exc)
+                raise
+            self._cache_finish_flight(cache_key, flight)
             return result
 
         return wrapper
@@ -1128,19 +1068,60 @@ class BeanFactory:
             pass
         return annotation_value
 
+    def _resolve_cache_config(self, instance: Any) -> Optional[CacheConfig]:
+        from springbootai.annotations.core import get_spring_annotations
+        try:
+            return next(
+                (ann for ann in get_spring_annotations(instance.__class__)
+                 if isinstance(ann, CacheConfig)),
+                None,
+            )
+        except Exception:
+            return None
+
     def _cache_serialize_arg(self, arg: Any) -> str:
-        """缓存参数序列化（与 _wrap_cacheable.serialize_arg 一致）。"""
-        if isinstance(arg, (int, float, str, bool, type(None))):
-            return str(arg)
-        if isinstance(arg, (list, tuple)):
-            return '[' + ','.join(self._cache_serialize_arg(item) for item in arg) + ']'
+        """Serialize a cache argument without cross-type/delimiter collisions."""
+        def packed(tag: str, payload: str = '') -> str:
+            return f"{tag}:{len(payload)}:{payload}"
+
+        if arg is None:
+            return packed('none')
+        # bool is an int subclass, so it must be handled first.
+        if isinstance(arg, bool):
+            return packed('bool', '1' if arg else '0')
+        if isinstance(arg, int):
+            return packed('int', str(arg))
+        if isinstance(arg, float):
+            return packed('float', repr(arg))
+        if isinstance(arg, str):
+            return packed('str', arg)
+        if isinstance(arg, bytes):
+            return packed('bytes', arg.hex())
+        if isinstance(arg, list):
+            payload = ''.join(packed(
+                'item', self._cache_serialize_arg(item)) for item in arg)
+            return packed('list', payload)
+        if isinstance(arg, tuple):
+            payload = ''.join(packed(
+                'item', self._cache_serialize_arg(item)) for item in arg)
+            return packed('tuple', payload)
+        if isinstance(arg, (set, frozenset)):
+            items = sorted(self._cache_serialize_arg(item) for item in arg)
+            payload = ''.join(packed('item', item) for item in items)
+            return packed(
+                'frozenset' if isinstance(arg, frozenset) else 'set', payload)
         if isinstance(arg, dict):
             items = sorted(
                 ((self._cache_serialize_arg(k), self._cache_serialize_arg(v)) for k, v in arg.items()),
                 key=lambda item: item[0],
             )
-            return '{' + ','.join(f"{k}:{v}" for k, v in items) + '}'
-        return f"obj_{id(arg)}"
+            payload = ''.join(
+                packed('key', key) + packed('value', value)
+                for key, value in items
+            )
+            return packed('dict', payload)
+        type_name = f"{type(arg).__module__}.{type(arg).__qualname__}"
+        return packed('object', f"{type_name}:{id(arg)}")
 
     def _cache_resolve_call(self, method: Callable, annotation: Any, instance: Any, args, kwargs):
         """解析一次缓存操作的 (enabled, cache_key, namespace)。返回 (False, None, None) 表示跳过。
@@ -1191,6 +1172,27 @@ class BeanFactory:
             # 使 @CachePut / @CacheEvict 与 @Cacheable 跨方法共享同一缓存条目）。
             key_data = f"{value}:{resolved_key}"
         else:
+            cache_config = self._resolve_cache_config(instance)
+            generator_name = (
+                cache_config.key_generator if cache_config else None)
+            if generator_name:
+                generator = self.get_bean(generator_name)
+                parameters = tuple(cache_arguments.values())
+                generate = getattr(generator, 'generate', None)
+                if callable(generate):
+                    generated = generate(instance, method, parameters)
+                elif callable(generator):
+                    generated = generator(instance, method, parameters)
+                else:
+                    raise TypeError(
+                        f"Cache key generator '{generator_name}' is not callable")
+                if generated is None:
+                    raise ValueError(
+                        f"Cache key generator '{generator_name}' returned None")
+                key_data = f"{value}:{self._cache_serialize_arg(generated)}"
+                return (True,
+                        hashlib.sha256(key_data.encode('utf-8')).hexdigest(),
+                        value)
             arguments = ','.join(
                 f"{name}:{self._cache_serialize_arg(val)}"
                 for name, val in sorted(cache_arguments.items())
@@ -1201,7 +1203,7 @@ class BeanFactory:
     def _cache_get(self, cache_key: str):
         """读取缓存条目（过期则视为未命中并清理）。返回 (hit, value)。"""
         with self._lock:
-            current_time = time.time()
+            current_time = time.monotonic()
             metadata = self._cache_metadata.get(cache_key)
             if metadata is None or cache_key not in self._cache:
                 return False, None
@@ -1209,14 +1211,27 @@ class BeanFactory:
                 self._cache.pop(cache_key, None)
                 self._cache_metadata.pop(cache_key, None)
                 return False, None
-            return True, self._cache[cache_key]
+            try:
+                # Never expose the canonical cached object. A request-local
+                # mutation must not poison later callers or other principals.
+                return True, copy.deepcopy(self._cache[cache_key])
+            except Exception as exc:
+                self._cache.pop(cache_key, None)
+                self._cache_metadata.pop(cache_key, None)
+                raise TypeError(
+                    "Cache values must be safely deep-copyable") from exc
 
     def _cache_store(self, cache_key: str, result: Any, namespace: str = "") -> None:
         """写入缓存条目（复用 @Cacheable 的容量淘汰与 TTL）。
 
         ``namespace`` 登记到 metadata，供 ``@CacheEvict(all_entries=True)`` 按命名空间清空。
         """
-        current_time = time.time()
+        try:
+            stored_result = copy.deepcopy(result)
+        except Exception as exc:
+            raise TypeError(
+                "Cache values must be safely deep-copyable") from exc
+        current_time = time.monotonic()
         with self._lock:
             if len(self._cache) >= self._cache_max_size:
                 oldest_key = min(
@@ -1225,12 +1240,42 @@ class BeanFactory:
                 )
                 self._cache.pop(oldest_key, None)
                 self._cache_metadata.pop(oldest_key, None)
-            self._cache[cache_key] = result
+            self._cache[cache_key] = stored_result
             self._cache_metadata[cache_key] = {
                 'create_time': current_time,
                 'expire_time': current_time + self._cache_default_ttl,
                 'namespace': namespace,
             }
+
+    def _cache_begin_flight(
+        self, cache_key: str,
+    ) -> Tuple[bool, concurrent.futures.Future]:
+        """Join or create the one in-flight computation for ``cache_key``."""
+        with self._lock:
+            flight = self._cache_inflight.get(cache_key)
+            if flight is not None:
+                return False, flight
+            flight = concurrent.futures.Future()
+            self._cache_inflight[cache_key] = flight
+            return True, flight
+
+    def _cache_finish_flight(
+        self,
+        cache_key: str,
+        flight: concurrent.futures.Future,
+        *,
+        error: Optional[BaseException] = None,
+    ) -> None:
+        """Wake all waiters and remove exactly the completed generation."""
+        with self._lock:
+            if self._cache_inflight.get(cache_key) is flight:
+                self._cache_inflight.pop(cache_key, None)
+        if flight.done():
+            return
+        if error is None:
+            flight.set_result(True)
+        else:
+            flight.set_exception(error)
 
     def _cache_evict_key(self, cache_key: str) -> None:
         with self._lock:

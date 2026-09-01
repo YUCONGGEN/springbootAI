@@ -19,10 +19,11 @@ python -m pip install -r requirements-langgraph.txt
 python -m pip install -r requirements-mcp.txt
 
 python -m pytest tests -q `
-  --cov=springbootai --cov-report=term --cov-fail-under=60
+  --cov=springbootai --cov-report=term --cov-fail-under=68
+python -m mypy
 ```
 
-预期：没有失败，覆盖率不少于 60%。`skipped` 必须逐个确认是明确的可选能力，不能把依赖安装失败当成正常跳过。
+预期：没有失败，覆盖率不少于 68%。`skipped` 必须逐个确认是明确的可选能力，不能把依赖安装失败当成正常跳过。
 
 启动 Docker 中间件并执行真实集成测试：
 
@@ -74,7 +75,7 @@ $Version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','
 python -m zipfile -l "dist\springbootai-$Version-py3-none-any.whl"
 ```
 
-确认 wheel 包含 `springbootai/langchain`、`springbootai/langgraph` 和 `springbootai/mcp`，并从新虚拟环境安装 wheel 后执行：
+确认 wheel 包含 `springbootai/py.typed`、`springbootai/langchain`、`springbootai/langgraph` 和 `springbootai/mcp`，并从新虚拟环境安装 wheel 后执行：
 
 ```powershell
 python -c "import springbootai, springbootai.ai, springbootai.langchain, springbootai.langgraph, springbootai.mcp; print(springbootai.__version__)"
@@ -88,4 +89,4 @@ python -c "import springbootai, springbootai.ai, springbootai.langchain, springb
 4. 在 GitHub 用这个 tag 创建 Release，发布工作流才会通过 Trusted Publishing 上传 PyPI。
 5. 上传后在全新环境运行 `pip install "springbootAI==$Version"` 和最小示例，检查 PyPI README 链接与代码块。
 
-不要在本机手工保存 PyPI token。仓库发布工作流使用 OIDC Trusted Publishing，并拒绝从普通分支上传。
+不要在本机手工保存 PyPI token。仓库发布工作流使用 OIDC Trusted Publishing；自动或手动发布都要求当前提交已经有一次完整 CI 成功记录。

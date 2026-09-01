@@ -33,7 +33,7 @@ from .reader import CsvReader
 from .writer import CsvWriter
 from .easy_csv import EasyCsv, read_csv, write_csv
 
-__version__ = "2.3.10"
+__version__ = "2.3.11"
 
 __all__ = [
     # 异常

@@ -128,7 +128,9 @@ class RequestMetricsStore:
                     if parent:
                         os.makedirs(parent, exist_ok=True)
             except (TypeError, ValueError, OSError) as exc:
-                logger.warning("请求监控 SQLite 目录创建失败，将交由 SQLAlchemy 处理: %s", exc)
+                logger.warning(
+                    "请求监控 SQLite 目录创建失败，将交由 SQLAlchemy 处理 "
+                    "error_type=%s", type(exc).__name__)
         self.engine = create_engine(database_url, future=True)
         self._ensure_table()
 
@@ -238,11 +240,24 @@ class RequestMetricsInterceptor(HandlerInterceptor):
         started = getattr(request.state, "springbootai_metrics_started", None)
         if started is None:
             return
+        route_path = getattr(
+            request.state, "springbootai_route_template", None)
+        if not route_path:
+            scope = getattr(request, "scope", {}) or {}
+            route_path = getattr(scope.get("route"), "path", None)
+        if not route_path:
+            # Direct/unit callers retain the concrete path; real ASGI requests
+            # are normalized to a route template or the shared unmatched key.
+            route_path = getattr(getattr(request, "url", None), "path", "<unmatched>")
+        route_path = str(route_path)[:255] or "<unmatched>"
         try:
-            self.store.record(request.url.path, status, (time.perf_counter() - started) * 1000)
+            self.store.record(
+                route_path, status, (time.perf_counter() - started) * 1000)
         except Exception as exc:
             # 监控是可选能力，写入失败绝不能影响用户的业务响应。
-            logger.warning("请求监控写入失败，已跳过本次记录: %s", exc)
+            logger.warning(
+                "请求监控写入失败，已跳过本次记录 error_type=%s",
+                type(exc).__name__)
 
 
 def _safe_status_code(value: Any) -> int:
@@ -301,7 +316,9 @@ def configure_request_metrics(config: Any) -> Optional[RequestMetricsInterceptor
         else:
             _store = None
             _metrics_error = "监控存储不可用"
-        logger.warning("内置请求监控未启用存储，将继续启动应用: %s", exc)
+        logger.warning(
+            "内置请求监控未启用存储，将继续启动应用 error_type=%s",
+            type(exc).__name__)
         return None
 
 
@@ -317,7 +334,8 @@ def get_request_metrics() -> Dict[str, Any]:
         return {"enabled": True, "persistent": True, "items": _store.snapshot()}
     except Exception as exc:
         # 运行时数据库暂时不可用时，Actuator 本身仍应返回可读 JSON 而不是 500。
-        logger.warning("读取请求监控失败: %s", exc)
+        logger.warning(
+            "读取请求监控失败 error_type=%s", type(exc).__name__)
         return {
             "enabled": True,
             "persistent": False,

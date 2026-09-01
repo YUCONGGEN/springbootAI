@@ -41,7 +41,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements-lock.txt
-        pip install pip-audit==2.10.1
+        pip install pip-audit==2.10.1 ruff==0.16.2 mypy==1.18.2
 
     - name: Install AI & LangChain dependencies
       run: |
@@ -59,6 +59,21 @@ jobs:
         echo "Compiling all Python files under springbootai/..."
         python -m py_compile $(find springbootai/ -name "*.py" -type f)
         echo "py_compile check passed"
+
+    - name: Static correctness check with Ruff
+      run: |
+        ruff check springbootai --select E9,F63,F7,F82,F601
+        ruff check \
+          springbootai/ai/tools.py springbootai/cloud/bus.py \
+          springbootai/cloud/tracer.py springbootai/mcp/client.py \
+          springbootai/mcp/config.py springbootai/monitoring/prometheus.py \
+          springbootai/orm/pymybatis/core/sql_session.py \
+          springbootai/orm/pymybatis/security/access_control.py \
+          springbootai/tx/synchronization.py \
+          --select E9,F63,F7,F82,F601,B,ASYNC
+
+    - name: Type-check enterprise boundaries
+      run: python -m mypy
 
     - name: Run core unit tests (no AI dependency)
       run: |
@@ -78,9 +93,7 @@ jobs:
 
     - name: Run MCP protocol integration tests
       run: |
-        pytest tests/test_mcp_module.py -v --tb=short \
-          --deselect tests/test_mcp_module.py::test_real_stdio_subprocess_transport \
-          --deselect tests/test_mcp_module.py::test_real_streamable_http_transport
+        pytest tests/test_mcp_module.py -v --tb=short
 
     - name: Run AI module tests (FakeChatModel)
       env:
@@ -115,7 +128,7 @@ jobs:
       run: |
         pytest tests/runtime/ -v --tb=short \
           --cov=springbootai --cov-append --cov-report=xml --cov-report=term \
-          --cov-fail-under=60 \
+          --cov-fail-under=68 \
           --deselect tests/runtime/test_runtime_hardening.py::test_sync_controller_runs_outside_event_loop
 
     - name: Module import verification (including springbootai.langchain)
@@ -192,6 +205,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements-lock.txt
+        pip install kafka-python==2.0.2
 
     - name: Start real middleware
       run: docker compose -f docker-compose.integration.yml up -d --wait

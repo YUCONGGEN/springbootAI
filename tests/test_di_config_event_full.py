@@ -1,5 +1,6 @@
 """DI/配置/事件完整测试 - 覆盖 ConfigLoader、BeanRegistry、ApplicationEventPublisher、retry。"""
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -401,6 +402,37 @@ class TestApplicationEventPublisher:
         publisher = ApplicationEventPublisher()
         event = publisher.publish_event("test")
         assert event.source == "test"
+
+    def test_async_publish_awaits_listeners_and_propagates_failure(self):
+        publisher = ApplicationEventPublisher()
+        calls = []
+
+        async def listener(event):
+            await asyncio.sleep(0)
+            calls.append(event.source)
+
+        publisher.add_listener(listener)
+        event = asyncio.run(publisher.publish_event_async("awaited"))
+        assert event.source == "awaited"
+        assert calls == ["awaited"]
+
+        async def failing(_event):
+            raise RuntimeError("listener failed")
+
+        publisher.clear()
+        publisher.add_listener(failing)
+        with pytest.raises(RuntimeError, match="listener failed"):
+            asyncio.run(publisher.publish_event_async("failure"))
+
+    def test_sync_publish_rejects_async_listener_in_running_loop(self):
+        publisher = ApplicationEventPublisher()
+        publisher.add_listener(lambda _event: asyncio.sleep(0))
+
+        async def scenario():
+            with pytest.raises(RuntimeError, match="publish_event_async"):
+                publisher.publish_event("event")
+
+        asyncio.run(scenario())
 
 
 class TestEventListenerAnnotation:

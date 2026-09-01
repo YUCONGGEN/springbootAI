@@ -76,6 +76,9 @@ class MCPClientProperties:
     command: str = ""
     args: tuple[str, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
+    # False by default: an MCP tool process must not automatically receive
+    # database passwords, cloud credentials or provider API keys.
+    inherit_environment: bool = False
     cwd: str = ""
     headers: Mapping[str, str] = field(default_factory=dict)
     timeout_seconds: float = 30.0
@@ -85,6 +88,10 @@ class MCPClientProperties:
     allow_dangerous_tools: bool = False
     max_argument_bytes: int = 65_536
     max_result_chars: int = 100_000
+    max_response_bytes: int = 1_048_576
+    max_collection_items: int = 256
+    max_schema_depth: int = 16
+    max_pending_requests: int = 128
     fail_fast: bool = True
     allow_insecure_http: bool = False
 
@@ -103,10 +110,30 @@ class MCPClientProperties:
             raise MCPConfigurationError(
                 "MCP client max_result_chars must be in [1024, 10000000]"
             )
+        if not 4096 <= self.max_response_bytes <= 50 * 1024 * 1024:
+            raise MCPConfigurationError(
+                "MCP client max_response_bytes must be in [4096, 52428800]"
+            )
+        if not 1 <= self.max_collection_items <= 10_000:
+            raise MCPConfigurationError(
+                "MCP client max_collection_items must be in [1, 10000]"
+            )
+        if not 1 <= self.max_schema_depth <= 64:
+            raise MCPConfigurationError(
+                "MCP client max_schema_depth must be in [1, 64]"
+            )
+        if not 1 <= self.max_pending_requests <= 10_000:
+            raise MCPConfigurationError(
+                "MCP client max_pending_requests must be in [1, 10000]"
+            )
         if self.transport == "streamable-http":
             parsed = urlparse(self.url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise MCPConfigurationError(f"MCP client {self.name!r} has an invalid URL")
+            if parsed.username is not None or parsed.password is not None or parsed.fragment:
+                raise MCPConfigurationError(
+                    f"MCP client {self.name!r} URL must not contain credentials or fragments"
+                )
             if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname or ""):
                 if not self.allow_insecure_http:
                     raise MCPConfigurationError(
@@ -211,6 +238,8 @@ def _bind_client(name: str, data: Mapping[str, Any]) -> MCPClientProperties:
         command=str(_get(data, "command", "")),
         args=_sequence(_get(data, "args")),
         env=_mapping(_get(data, "env")),
+        inherit_environment=_bool(
+            _get(data, "inherit-environment", False), False),
         cwd=str(_get(data, "cwd", "")),
         headers=_mapping(_get(data, "headers")),
         timeout_seconds=_number(_get(data, "timeout-seconds", 30.0), 30.0),
@@ -220,6 +249,14 @@ def _bind_client(name: str, data: Mapping[str, Any]) -> MCPClientProperties:
         allow_dangerous_tools=_bool(_get(data, "allow-dangerous-tools", False), False),
         max_argument_bytes=_integer(_get(data, "max-argument-bytes", 65_536), 65_536),
         max_result_chars=_integer(_get(data, "max-result-chars", 100_000), 100_000),
+        max_response_bytes=_integer(
+            _get(data, "max-response-bytes", 1_048_576), 1_048_576),
+        max_collection_items=_integer(
+            _get(data, "max-collection-items", 256), 256),
+        max_schema_depth=_integer(
+            _get(data, "max-schema-depth", 16), 16),
+        max_pending_requests=_integer(
+            _get(data, "max-pending-requests", 128), 128),
         fail_fast=_bool(_get(data, "fail-fast", True), True),
         allow_insecure_http=_bool(_get(data, "allow-insecure-http", False), False),
     ).validate()

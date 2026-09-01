@@ -3,6 +3,7 @@ import json
 import runpy
 import threading
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -576,12 +577,65 @@ def test_run_with_timeout_returns_down_on_exception(monkeypatch):
     import springbootai.web.health as health
 
     def _failing_check():
-        raise ConnectionError("component unavailable")
+        raise ConnectionError("password=secret host=db.internal")
 
     result = health._run_with_timeout(_failing_check, timeout=1.0)
     assert result["status"] == "DOWN"
     assert result["enabled"] is True
-    assert "component unavailable" in result["reason"]
+    assert "ConnectionError" in result["reason"]
+    assert "secret" not in result["reason"]
+    assert "db.internal" not in result["reason"]
+
+
+def test_database_health_never_returns_connection_url(monkeypatch):
+    import springbootai.web.health as health
+
+    class Connection:
+        def close(self):
+            return None
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+    class Database:
+        db_url = "postgresql://admin:super-secret@db.internal/orders"
+
+        def get_engine(self):
+            return Engine()
+
+    monkeypatch.setattr(health, "_application_context", None)
+    monkeypatch.setattr(health, "db_manager", Database())
+    result = health._check_database()
+    rendered = json.dumps(result)
+
+    assert result == {"status": "UP", "enabled": True, "type": "sqlalchemy"}
+    assert "super-secret" not in rendered
+    assert "db.internal" not in rendered
+
+
+def test_component_health_uses_one_shared_timeout(monkeypatch):
+    import springbootai.web.health as health
+
+    release = threading.Event()
+
+    def hanging_check():
+        release.wait(timeout=2)
+        return {"status": "UP", "enabled": True}
+
+    monkeypatch.setattr(health, "_CHECK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(health, "_COMPONENT_CHECKS", {
+        f"component-{index}": hanging_check for index in range(5)
+    })
+    started = time.perf_counter()
+    try:
+        result = health._collect_component_health()
+    finally:
+        release.set()
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.15
+    assert all(item["status"] == "DOWN" for item in result.values())
 
 
 def test_http_compensation_health_reports_store_without_claiming_at(monkeypatch, tmp_path):
@@ -649,3 +703,13 @@ def test_gunicorn_does_not_preload_initialized_clients():
     config = runpy.run_path("deploy/gunicorn/gunicorn.conf.py")
     assert config["preload_app"] is False
     assert callable(config["child_exit"])
+
+
+def test_audited_requirement_files_are_portable_across_system_encodings():
+    for filename in (
+        "requirements-lock.txt",
+        "requirements-ai.txt",
+        "requirements-langgraph.txt",
+        "requirements-mcp.txt",
+    ):
+        Path(filename).read_bytes().decode("ascii")

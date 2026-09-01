@@ -1,6 +1,6 @@
 # 声明式 AOP、后置鉴权与重试恢复指南
 
-> SpringBootAI 2.3.10
+> SpringBootAI 2.3.11
 >
 > 适用范围：`@Aspect` 通知、`@PostAuthorize` 返回后鉴权、`@Recover` 重试失败兜底。
 

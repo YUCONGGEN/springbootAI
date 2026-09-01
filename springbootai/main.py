@@ -103,7 +103,8 @@ class SpringApplication:
             sys.exit(1)
         except Exception as e:
             self._cleanup_after_start_failure()
-            self.logger.error(f"Application failed to start: {str(e)}")
+            self.logger.error(
+                f"Application failed to start: error_type={type(e).__name__}")
             raise
 
     # ------------------------------------------------------------------
@@ -489,22 +490,17 @@ class SpringApplication:
         bus_cfg = self._section(cloud_config.get('bus'))
         bus_annotation = self._find_annotation(EnableBus)
         bus_enabled = bus_cfg.get('enabled', False) or bus_annotation is not None
+        pending_bus_config = None
         if bus_enabled:
-            try:
-                if bus_annotation:
-                    merged_config = dict(config)
-                    bus_merged = merged_config.setdefault('spring', {}).setdefault('cloud', {}).setdefault('bus', {})
-                    bus_merged['enabled'] = True
-                    bus_merged.setdefault('destination', bus_annotation.destination)
-                    bus_merged.setdefault('backend', bus_annotation.backend)
-                    from springbootai.cloud.bus import init_bus
-                    init_bus(merged_config)
-                else:
-                    from springbootai.cloud.bus import init_bus
-                    init_bus(config)
-                self.logger.info("Spring Cloud Bus event bus initialized")
-            except Exception as e:
-                self._handle_init_error('CloudBus', bus_cfg, e, fail_fast)
+            if bus_annotation:
+                merged_config = dict(config)
+                bus_merged = merged_config.setdefault('spring', {}).setdefault('cloud', {}).setdefault('bus', {})
+                bus_merged['enabled'] = True
+                bus_merged.setdefault('destination', bus_annotation.destination)
+                bus_merged.setdefault('backend', bus_annotation.backend)
+                pending_bus_config = merged_config
+            else:
+                pending_bus_config = config
 
         # 初始化RabbitMQ（延迟导入）
         rabbitmq_config = self._section(config.get('rabbitmq'))
@@ -525,6 +521,16 @@ class SpringApplication:
                 self.logger.info("Kafka initialized")
             except Exception as e:
                 self._handle_init_error('Kafka', kafka_config, e, fail_fast)
+
+        # The bus declares consumers on top of RabbitMQ/Kafka, so transport
+        # clients must be configured before the bus starts.
+        if pending_bus_config is not None:
+            try:
+                from springbootai.cloud.bus import init_bus
+                init_bus(pending_bus_config)
+                self.logger.info("Spring Cloud Bus event bus initialized")
+            except Exception as e:
+                self._handle_init_error('CloudBus', bus_cfg, e, fail_fast)
 
         # 初始化OAuth2资源服务器（延迟导入）
         # 支持两种启用方式：配置文件 spring.security.oauth2.* 或 @EnableOAuth2 注解
@@ -890,11 +896,16 @@ class SpringApplication:
         
         port = kwargs.get('port', server_config.get('port', 8080))
         host = kwargs.get('host', server_config.get('host', '0.0.0.0'))  # nosec B104 - server bind is operator controlled
+        server_options = self._section(server_config.get('uvicorn'))
+        server_options.update({
+            key: value for key, value in kwargs.items()
+            if key not in {'host', 'port'}
+        })
 
         banner = BannerPrinter()
         banner.print_startup_info(port)
 
-        self.web_context.run(host=host, port=port)
+        self.web_context.run(host=host, port=port, **server_options)
 
     async def _on_app_shutdown(self):
         """ASGI应用关闭事件回调"""

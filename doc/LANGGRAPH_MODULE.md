@@ -291,6 +291,10 @@ spring:
     allow-in-memory: ${LG_ALLOW_IN_MEMORY:false}
     require-thread-id: ${LG_REQUIRE_THREAD_ID:true}
     max-input-bytes: ${LG_MAX_INPUT_BYTES:65536}
+    max-output-bytes: ${LG_MAX_OUTPUT_BYTES:10485760}
+    max-stream-events: ${LG_MAX_STREAM_EVENTS:10000}
+    max-concurrent-executions: ${LG_MAX_CONCURRENT_EXECUTIONS:16}
+    acquire-timeout-seconds: ${LG_ACQUIRE_TIMEOUT_SECONDS:1}
     stream-mode: ${LG_STREAM_MODE:updates}
 ```
 
@@ -306,6 +310,10 @@ spring:
 | `injected` | 生产 | 由应用注入 PostgreSQL/Mongo 等持久化实现 |
 | `require-thread-id` | `true` | 是否强制每次调用带流程编号 |
 | `max-input-bytes` | `65536` | 限制外部输入大小，防止超大请求拖垮服务 |
+| `max-output-bytes` | `10485760` | 限制普通结果或一次流的累计输出大小 |
+| `max-stream-events` | `10000` | 限制一次流式执行最多产生的事件数 |
+| `max-concurrent-executions` | `16` | 每个工作流最多同时运行的执行数；超时任务结束前仍占容量 |
+| `acquire-timeout-seconds` | `1` | 容量耗尽时等待执行槽位的最长时间 |
 
 ## 8. 在 Spring 应用中使用
 
@@ -347,7 +355,7 @@ async for update in workflow.astream(
     print(update)
 ```
 
-LangGraph 能编排异步节点，但不能把同步数据库、Feign 或 AI HTTP 自动变成异步。同步操作请使用项目已有线程池或异步客户端；AI provider 也要设置连接和读取超时。`timeout-seconds` 是调用方等待上限，超时后的工作线程不能被 Python 强行杀死，因此节点必须幂等。
+LangGraph 能编排异步节点，但不能把同步数据库、Feign 或 AI HTTP 自动变成异步。同步操作请使用项目已有线程池或异步客户端；AI provider 也要设置连接和读取超时。`timeout-seconds` 是调用方等待上限，超时后的工作线程不能被 Python 强行杀死，因此节点必须幂等。框架会让仍在运行的超时任务继续占用 `max-concurrent-executions` 槽位，避免反复超时造成无限线程增长；容量耗尽时新请求会在 `acquire-timeout-seconds` 后失败。
 
 ## 10. 测试
 

@@ -16,7 +16,8 @@ import threading
 import time
 import queue
 import logging
-from typing import Dict, Any, Set, Optional
+import math
+from typing import Dict, Any, Set
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
@@ -90,12 +91,16 @@ class PooledConnection:
 
     def is_valid(self) -> bool:
         """检查连接是否有效"""
+        if self._disposed or self.connection is None:
+            return False
         try:
-            # 根据不同数据库驱动检查连接有效性
             if hasattr(self.connection, 'ping'):
-                self.connection.ping()
-            elif hasattr(self.connection, 'isclosed') and not self.connection.isclosed():
-                return True
+                result = self.connection.ping()
+                return result is not False
+            if hasattr(self.connection, 'isclosed'):
+                return not bool(self.connection.isclosed())
+            if hasattr(self.connection, 'closed'):
+                return not bool(self.connection.closed)
             return True
         except Exception:
             return False
@@ -149,6 +154,8 @@ class ConnectionPool(ABC):
             raise ValueError("wait_timeout 必须大于 0")
         if self.max_idle < 0 or self.validation_interval <= 0 or self.leak_timeout <= 0:
             raise ValueError("连接池超时配置必须为正数")
+        if self.wait_timeout > 3600 or self.validation_interval > 86400 or self.leak_timeout > 7 * 86400:
+            raise ValueError("连接池超时配置超过安全上限")
 
         # 熔断器配置
         self.circuit_breaker_enabled = self._as_bool(config.get('circuit_breaker_enabled', False))
@@ -215,7 +222,8 @@ class ConnectionPool(ABC):
         if isinstance(value, dict):
             value = value.get('value') or value.get('timeout') or default
         try:
-            return float(value)
+            converted = float(value)
+            return converted if math.isfinite(converted) else default
         except (TypeError, ValueError):
             logger.warning("Invalid numeric pool setting %r; using %s", value, default)
             return default
@@ -241,7 +249,7 @@ class ConnectionPool(ABC):
                 self._total_connections += 1
             except Exception as e:
                 last_error = e
-                logger.error(f"初始化连接池失败: {e}")
+                logger.error("初始化连接池失败 (%s)", type(e).__name__)
 
         if self.min_size > 0 and self._total_connections == 0:
             raise ConnectionError("连接池初始化失败，未能建立任何数据库连接") from last_error
@@ -549,71 +557,6 @@ class ConnectionPool(ABC):
             pass
 
 
-def _get_docker_container_ip_by_port(target_port: int) -> Optional[str]:
-    """通过Docker CLI自动检测映射了指定端口的容器IP（开发环境辅助）
-    
-    按以下顺序查找：
-    1. 精确查找端口映射匹配target_port的运行中容器
-    2. 如果是数据库默认端口(3306/5432)，兜底查找mysql/mariadb/postgres镜像容器
-    返回容器内部IP，找不到返回None
-    """
-    import os
-    import re
-    # 允许通过环境变量禁用Docker自动检测
-    if os.getenv('SPRING_DISABLE_DOCKER_IP_DETECT', '').lower() in ('1', 'true', 'yes'):
-        return None
-    
-    # 数据库默认端口列表（用于兜底镜像匹配）
-    DB_PORTS = {3306: ('mysql', 'mariadb'), 5432: ('postgres', 'postgresql')}
-    
-    try:
-        import subprocess
-        # 方法1：精确通过端口映射查找容器
-        # 端口映射格式: 0.0.0.0:3306->3306/tcp, [::]:3306->3306/tcp
-        port_pattern = re.compile(r'(?:0\.0\.0\.0|::|\*):' + str(target_port) + r'->')
-        
-        result = subprocess.run(
-            ['docker', 'ps', '--format', '{{.ID}}|{{.Ports}}'],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            for line in result.stdout.strip().split('\n'):
-                if not line or '|' not in line:
-                    continue
-                cid, ports_str = line.split('|', 1)
-                if port_pattern.search(ports_str):
-                    ip_result = subprocess.run(
-                        ['docker', 'inspect', '-f', '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}', cid.strip()],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if ip_result.returncode == 0 and ip_result.stdout.strip():
-                        return ip_result.stdout.strip()
-        
-        # 方法2：兜底 - 仅当目标端口是数据库默认端口时，按镜像名模糊匹配
-        db_keywords = DB_PORTS.get(target_port)
-        if db_keywords:
-            result = subprocess.run(
-                ['docker', 'ps', '--format', '{{.ID}}|{{.Image}}'],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split('\n'):
-                    if not line or '|' not in line:
-                        continue
-                    cid, image = line.split('|', 1)
-                    image_lower = image.lower()
-                    if any(kw in image_lower for kw in db_keywords):
-                        ip_result = subprocess.run(
-                            ['docker', 'inspect', '-f', '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}', cid.strip()],
-                            capture_output=True, text=True, timeout=5
-                        )
-                        if ip_result.returncode == 0 and ip_result.stdout.strip():
-                            return ip_result.stdout.strip()
-    except Exception:
-        pass
-    return None
-
-
 class MySQLConnectionPool(ConnectionPool):
     """MySQL连接池实现"""
 
@@ -639,20 +582,16 @@ class MySQLConnectionPool(ConnectionPool):
             config.setdefault('autocommit', False)
             # 明确禁用unix socket，强制使用TCP连接
             config['unix_socket'] = None
-            config['connect_timeout'] = 5
-
-            try:
-                return pymysql.connect(**config)
-            except Exception as e:
-                # 如果连接localhost/127.0.0.1失败，尝试自动检测Docker容器IP
-                host = config.get('host', '')
-                if host in ('localhost', '127.0.0.1', '0.0.0.0'):  # nosec B104 - comparison only
-                    docker_ip = _get_docker_container_ip_by_port(config.get('port', 3306))
-                    if docker_ip:
-                        logger.info(f"使用Docker容器IP {docker_ip}:{config.get('port', 3306)} 连接数据库")
-                        config['host'] = docker_ip
-                        return pymysql.connect(**config)
-                raise
+            config['connect_timeout'] = min(
+                60, max(1, int(config.get('connect_timeout', 5)))
+            )
+            config['read_timeout'] = min(
+                300, max(1, int(config.get('read_timeout', 30)))
+            )
+            config['write_timeout'] = min(
+                300, max(1, int(config.get('write_timeout', 30)))
+            )
+            return pymysql.connect(**config)
         except ImportError:
             raise ImportError("请安装pymysql: pip install pymysql")
 
@@ -676,6 +615,10 @@ class PostgreSQLConnectionPool(ConnectionPool):
                 config.pop(key, None)
             if 'username' in config and 'user' not in config:
                 config['user'] = config.pop('username')
+
+            config['connect_timeout'] = min(
+                60, max(1, int(config.get('connect_timeout', 5)))
+            )
 
             connection = psycopg2.connect(**config)
             connection.autocommit = False

@@ -158,12 +158,30 @@ class ZhipuProps:
 class VectorStoreProps:
     type: str = field(default="inmemory", metadata={"env": "AI_VECTOR_STORE"})
     collection: str = field(default="default", metadata={"env": "AI_VECTOR_COLLECTION"})
+    max_documents: int = field(
+        default=10_000, metadata={"env": "AI_VECTOR_MAX_DOCUMENTS"})
+    max_scan: int = field(
+        default=10_000, metadata={"env": "AI_VECTOR_MAX_SCAN"})
+    max_content_length: int = field(
+        default=1_000_000, metadata={"env": "AI_VECTOR_MAX_CONTENT_LENGTH"})
+    max_embedding_dimensions: int = field(
+        default=65_536, metadata={"env": "AI_VECTOR_MAX_DIMENSIONS"})
+    max_metadata_size: int = field(
+        default=256 * 1024, metadata={"env": "AI_VECTOR_MAX_METADATA_SIZE"})
+    max_scan_bytes: int = field(
+        default=100 * 1024 * 1024,
+        metadata={"env": "AI_VECTOR_MAX_SCAN_BYTES"})
 
 
 @dataclass
 class MemoryProps:
     store: str = field(default="inmemory", metadata={"env": "AI_MEMORY_STORE"})
     max_messages: int = field(default=20, metadata={"env": "AI_MEMORY_MAX"})
+    max_conversations: int = field(
+        default=10000, metadata={"env": "AI_MEMORY_MAX_CONVERSATIONS"})
+    ttl: int = field(default=86_400, metadata={"env": "AI_MEMORY_TTL"})
+    allow_global_namespace: bool = field(
+        default=False, metadata={"env": "AI_MEMORY_ALLOW_GLOBAL_NAMESPACE"})
 
 
 @dataclass
@@ -187,6 +205,12 @@ class AIProperties:
         default=100000, metadata={"env": "AI_MAX_TOTAL_TOKENS"})
     max_tool_iterations: int = field(
         default=5, metadata={"env": "AI_MAX_TOOL_ITERATIONS"})
+    max_input_bytes: int = field(
+        default=2 * 1024 * 1024, metadata={"env": "AI_MAX_INPUT_BYTES"})
+    max_concurrent_requests: int = field(
+        default=32, metadata={"env": "AI_MAX_CONCURRENT_REQUESTS"})
+    concurrency_acquire_timeout: float = field(
+        default=30.0, metadata={"env": "AI_CONCURRENCY_ACQUIRE_TIMEOUT"})
     openai: OpenAIProps = field(default_factory=OpenAIProps)
     ollama: OllamaProps = field(default_factory=OllamaProps)
     deepseek: DeepSeekProps = field(default_factory=DeepSeekProps)
@@ -270,6 +294,39 @@ def bind_ai_config(ai_config: Dict[str, Any]) -> AIProperties:
             "AI max_total_tokens must be greater than or equal to max_output_tokens")
     if not 0 <= props.max_tool_iterations <= 100:
         raise ValueError("AI max_tool_iterations must be in [0, 100]")
+    if not 1024 <= props.max_input_bytes <= 100 * 1024 * 1024:
+        raise ValueError("AI max_input_bytes must be in [1024, 104857600]")
+    if not 1 <= props.max_concurrent_requests <= 10000:
+        raise ValueError("AI max_concurrent_requests must be in [1, 10000]")
+    if not 0.1 <= props.concurrency_acquire_timeout <= 600:
+        raise ValueError("AI concurrency_acquire_timeout must be in [0.1, 600]")
+    if not 1 <= props.memory.max_messages <= 100_000:
+        raise ValueError("AI memory.max_messages must be in [1, 100000]")
+    if not 1 <= props.memory.max_conversations <= 1_000_000:
+        raise ValueError(
+            "AI memory.max_conversations must be in [1, 1000000]")
+    if props.memory.store not in {"inmemory", "redis"}:
+        raise ValueError("AI memory.store must be 'inmemory' or 'redis'")
+    if not 1 <= props.memory.ttl <= 365 * 24 * 3600:
+        raise ValueError("AI memory.ttl must be in [1, 31536000]")
+    if props.vector_store.type not in {"inmemory", "redis"}:
+        raise ValueError("AI vector_store.type must be 'inmemory' or 'redis'")
+    vector_limits = {
+        "max_documents": (props.vector_store.max_documents, 1_000_000),
+        "max_scan": (props.vector_store.max_scan, 1_000_000),
+        "max_content_length": (
+            props.vector_store.max_content_length, 100_000_000),
+        "max_embedding_dimensions": (
+            props.vector_store.max_embedding_dimensions, 1_000_000),
+        "max_metadata_size": (
+            props.vector_store.max_metadata_size, 10_000_000),
+        "max_scan_bytes": (
+            props.vector_store.max_scan_bytes, 1_000_000_000),
+    }
+    for name, (value, maximum) in vector_limits.items():
+        if not 1 <= value <= maximum:
+            raise ValueError(
+                f"AI vector_store.{name} must be in [1, {maximum}]")
     return props
 
 
@@ -289,14 +346,20 @@ def _build_circuit_breaker(props: AIProperties, name: str = "default",
     )
 
 
-def _build_fake_chat_model(props: AIProperties,
-                           prefix: str = "[AI]") -> FakeChatModel:
-    """Apply the same request budgets to the explicit development fake."""
-    model = FakeChatModel(prefix=prefix)
+def _apply_runtime_limits(model: ChatModel, props: AIProperties) -> ChatModel:
     model.max_output_tokens = props.max_output_tokens
     model.max_total_tokens = props.max_total_tokens
     model.max_tool_iterations = props.max_tool_iterations
+    model.max_input_bytes = props.max_input_bytes
+    model.max_concurrent_requests = props.max_concurrent_requests
+    model.concurrency_acquire_timeout = props.concurrency_acquire_timeout
     return model
+
+
+def _build_fake_chat_model(props: AIProperties,
+                           prefix: str = "[AI]") -> FakeChatModel:
+    """Apply the same request budgets to the explicit development fake."""
+    return _apply_runtime_limits(FakeChatModel(prefix=prefix), props)
 
 
 def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
@@ -312,7 +375,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
                     " 请设置 OPENAI_API_KEY 环境变量或 application.yml 的 api-key。")
             logger.warning("spring.ai.openai.api-key 未配置，降级 FakeChatModel")
             return _build_fake_chat_model(props)
-        return OpenAIChatModel(
+        return _apply_runtime_limits(OpenAIChatModel(
             api_key=props.openai.api_key,
             base_url=props.openai.base_url,
             model=props.openai.chat.model,
@@ -324,10 +387,10 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
             max_output_tokens=props.max_output_tokens,
             max_total_tokens=props.max_total_tokens,
             max_tool_iterations=props.max_tool_iterations,
-        )
+        ), props)
 
     if provider == "ollama":
-        return OllamaChatModel(
+        return _apply_runtime_limits(OllamaChatModel(
             base_url=props.ollama.base_url,
             model=props.ollama.chat.model,
             temperature=props.ollama.chat.temperature,
@@ -338,7 +401,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
             max_output_tokens=props.max_output_tokens,
             max_total_tokens=props.max_total_tokens,
             max_tool_iterations=props.max_tool_iterations,
-        )
+        ), props)
 
     # OpenAI 兼容多厂商（DeepSeek / Moonshot / ZhipuAI）— 底层优先 LangChain 专用包
     _COMPAT_SPECS = {
@@ -357,7 +420,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
                     f" 请设置 {provider.upper()}_API_KEY 环境变量。")
             logger.warning("spring.ai.%s.api-key 未配置，降级 FakeChatModel", provider)
             return _build_fake_chat_model(props)
-        return OpenAICompatChatModel(
+        return _apply_runtime_limits(OpenAICompatChatModel(
             provider=pname, api_key=cfg.api_key, base_url=cfg.base_url,
             model=cfg.model, temperature=cfg.temperature,
             timeout=props.request_timeout_seconds,
@@ -366,7 +429,7 @@ def _build_chat_model(props: AIProperties, redis_client=None) -> ChatModel:
             max_output_tokens=props.max_output_tokens,
             max_total_tokens=props.max_total_tokens,
             max_tool_iterations=props.max_tool_iterations,
-        )
+        ), props)
 
     logger.warning("未知 AI provider: %s", provider)
     if not _ai_allow_fake():
@@ -438,8 +501,12 @@ def _build_memory(props: AIProperties, redis_client=None) -> ChatMemory:
     """根据配置构建会话记忆"""
     if props.memory.store == "redis" and redis_client is not None:
         return RedisChatMemory(redis_client=redis_client,
-                               max_messages=props.memory.max_messages)
-    return InMemoryChatMemory(max_messages=props.memory.max_messages)
+                               max_messages=props.memory.max_messages,
+                               ttl=props.memory.ttl)
+    return InMemoryChatMemory(
+        max_messages=props.memory.max_messages,
+        max_conversations=props.memory.max_conversations,
+    )
 
 
 def _build_vector_store(props: AIProperties,
@@ -451,10 +518,22 @@ def _build_vector_store(props: AIProperties,
             redis_client=redis_client,
             collection=props.vector_store.collection,
             embedding_model=embedding_model,
+            max_scan=props.vector_store.max_scan,
+            max_content_length=props.vector_store.max_content_length,
+            max_embedding_dimensions=(
+                props.vector_store.max_embedding_dimensions),
+            max_metadata_size=props.vector_store.max_metadata_size,
+            max_scan_bytes=props.vector_store.max_scan_bytes,
         )
     if props.vector_store.type == "redis":
         logger.warning("vector-store=redis 但无可用 redis_client，降级 inmemory")
-    return SimpleInMemoryVectorStore(embedding_model=embedding_model)
+    return SimpleInMemoryVectorStore(
+        embedding_model=embedding_model,
+        max_documents=props.vector_store.max_documents,
+        max_content_length=props.vector_store.max_content_length,
+        max_embedding_dimensions=props.vector_store.max_embedding_dimensions,
+        max_metadata_size=props.vector_store.max_metadata_size,
+    )
 
 
 def _resolve_redis_client(props: AIProperties,
@@ -545,7 +624,9 @@ def configure_ai(registry: Optional[BeanRegistry] = None,
                        os.environ.get("springbootai.ai.memory.auto-advisor", "true"))
     ).strip().lower() in ("true", "1", "yes", "on")
     if auto_advisor:
-        memory_advisor = MessageChatMemoryAdvisor(memory)
+        memory_advisor = MessageChatMemoryAdvisor(
+            memory, max_messages=props.memory.max_messages,
+            allow_global_namespace=props.memory.allow_global_namespace)
         chat_client = (ChatClientBuilder(chat_model)
                        .default_advisors(memory_advisor).build())
     else:

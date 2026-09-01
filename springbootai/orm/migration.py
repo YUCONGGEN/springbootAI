@@ -17,6 +17,7 @@ import hashlib
 import logging
 import time
 import threading
+from contextlib import contextmanager
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
@@ -87,6 +88,41 @@ class MigrationManager:
         self._lock = threading.Lock()
         self._ensure_version_table()
 
+    @contextmanager
+    def _connection(self):
+        """Borrow a pooled connection and always return it, including on failure."""
+        pooled = self.pool.get_connection()
+        conn = pooled.connection
+        try:
+            yield conn
+        except BaseException:
+            try:
+                conn.rollback()
+            except Exception:
+                logger.debug("Migration connection rollback failed", exc_info=True)
+            raise
+        finally:
+            try:
+                self.pool.return_connection(pooled)
+            except Exception:
+                logger.warning("Failed to return migration connection to pool", exc_info=True)
+
+    @contextmanager
+    def _migration_lock(self):
+        """Hold a database/session lock for the whole migration operation."""
+        with self._connection() as conn:
+            acquired = False
+            try:
+                acquired = self._acquire_db_lock(conn)
+                if not acquired:
+                    raise MigrationError(
+                        "Failed to acquire migration lock (another migration may be running)"
+                    )
+                yield
+            finally:
+                if acquired:
+                    self._release_db_lock(conn)
+
     def _ensure_version_table(self) -> None:
         """确保 schema_version 表存在"""
         ddl_map = {
@@ -130,69 +166,60 @@ class MigrationManager:
             logger.warning(f"Migration: dialect '{self.dialect}' not officially supported, trying generic")
             ddl = ddl_map['mysql']
 
-        conn = None
         try:
-            pooled = self.pool.get_connection()
-            conn = pooled.connection
-            cursor = conn.cursor()
-            for stmt in ddl.split(';'):
-                stmt = stmt.strip()
-                if stmt:
-                    cursor.execute(stmt)
-            conn.commit()
-            cursor.close()
-            self.pool.return_connection(pooled)
-        except Exception as e:
-            if conn:
+            with self._connection() as conn:
+                cursor = conn.cursor()
                 try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            raise MigrationError(f"Failed to create version table: {e}") from e
+                    for stmt in self._split_sql_statements(ddl):
+                        if stmt.strip():
+                            cursor.execute(stmt)
+                    conn.commit()
+                finally:
+                    cursor.close()
+        except Exception as e:
+            raise MigrationError(
+                f"Failed to create version table ({type(e).__name__})"
+            ) from e
 
     def _get_applied_versions(self) -> Dict[str, MigrationRecord]:
         """获取已执行的迁移版本"""
-        conn = None
         try:
-            pooled = self.pool.get_connection()
-            conn = pooled.connection
-            cursor = conn.cursor()
-            if self.dialect == 'mysql':
-                cursor.execute(f"SELECT version, description, script, checksum, installed_on, execution_time, success FROM `{self.table_name}` WHERE success = 1")  # nosec B608
-            else:
-                cursor.execute(f'SELECT version, description, script, checksum, installed_on, execution_time, success FROM "{self.table_name}" WHERE success = 1')  # nosec B608
-
-            applied = {}
-            for row in cursor.fetchall():
-                if isinstance(row, dict):
-                    rec = MigrationRecord(
-                        version=str(row['version']),
-                        description=row['description'],
-                        script=row['script'],
-                        checksum=row['checksum'],
-                        execution_time=row.get('execution_time', 0),
-                        success=bool(row.get('success', True))
-                    )
-                else:
-                    rec = MigrationRecord(
-                        version=str(row[0]),
-                        description=row[1],
-                        script=row[2],
-                        checksum=row[3],
-                        execution_time=row[4] if len(row) > 4 else 0,
-                        success=bool(row[6]) if len(row) > 6 else True
-                    )
-                applied[rec.version] = rec
-            cursor.close()
-            self.pool.return_connection(pooled)
-            return applied
-        except Exception as e:
-            if conn:
+            with self._connection() as conn:
+                cursor = conn.cursor()
                 try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            raise MigrationError(f"Failed to read applied versions: {e}") from e
+                    if self.dialect == 'mysql':
+                        cursor.execute(f"SELECT version, description, script, checksum, installed_on, execution_time, success FROM `{self.table_name}` WHERE success = 1")  # nosec B608
+                    else:
+                        cursor.execute(f'SELECT version, description, script, checksum, installed_on, execution_time, success FROM "{self.table_name}" WHERE success = 1')  # nosec B608
+
+                    applied = {}
+                    for row in cursor.fetchall():
+                        if isinstance(row, dict):
+                            rec = MigrationRecord(
+                                version=str(row['version']),
+                                description=row['description'],
+                                script=row['script'],
+                                checksum=row['checksum'],
+                                execution_time=row.get('execution_time', 0),
+                                success=bool(row.get('success', True))
+                            )
+                        else:
+                            rec = MigrationRecord(
+                                version=str(row[0]),
+                                description=row[1],
+                                script=row[2],
+                                checksum=row[3],
+                                execution_time=row[5] if len(row) > 5 else 0,
+                                success=bool(row[6]) if len(row) > 6 else True
+                            )
+                        applied[rec.version] = rec
+                    return applied
+                finally:
+                    cursor.close()
+        except Exception as e:
+            raise MigrationError(
+                f"Failed to read applied versions ({type(e).__name__})"
+            ) from e
 
     def _discover_migrations(self) -> List[Tuple[str, str, str, str]]:
         """发现迁移文件，返回 [(version, description, filename, content_checksum)]"""
@@ -224,6 +251,12 @@ class MigrationManager:
             return parts
 
         migrations.sort(key=_version_key)
+        versions = [migration[0] for migration in migrations]
+        duplicates = sorted({version for version in versions if versions.count(version) > 1})
+        if duplicates:
+            raise MigrationError(
+                "Duplicate migration version(s): " + ", ".join(duplicates)
+            )
         return [(m[0], m[1], m[2], m[4]) for m in migrations]
 
     def _version_tuple(self, version: str) -> tuple:
@@ -240,44 +273,33 @@ class MigrationManager:
                            script_name: str, sql_content: str,
                            checksum: str) -> MigrationRecord:
         """执行单条迁移"""
-        conn = None
         start = time.monotonic()
         try:
-            pooled = self.pool.get_connection()
-            conn = pooled.connection
-            cursor = conn.cursor()
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                try:
+                    sql_content = self._substitute_variables(sql_content)
+                    for stmt in self._split_sql_statements(sql_content):
+                        if stmt.strip():
+                            logger.debug("Executing migration SQL statement")
+                            cursor.execute(stmt)
 
-            # 变量替换
-            sql_content = self._substitute_variables(sql_content)
-
-            # 按分号分割语句
-            statements = self._split_sql_statements(sql_content)
-
-            for stmt in statements:
-                stmt = stmt.strip()
-                if stmt:
-                    logger.debug(f"Executing migration SQL: {stmt[:100]}...")
-                    cursor.execute(stmt)
-
-            elapsed = time.monotonic() - start
-
-            # 记录迁移
-            if self.dialect == 'mysql':
-                cursor.execute(
-                    f"INSERT INTO `{self.table_name}` (version, description, script, checksum, installed_on, execution_time, success) VALUES (%s, %s, %s, %s, %s, %s, %s)",  # nosec B608
-                    (version, description, script_name, checksum, int(time.time()), int(elapsed * 1000), 1)
-                )
-            else:
-                ph = '?' if self.dialect == 'sqlite' else '%s'
-                table_ref = f'"{self.table_name}"'
-                cursor.execute(
-                    f'INSERT INTO {table_ref} (version, description, script, checksum, installed_on, execution_time, success) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})',  # nosec B608
-                    (version, description, script_name, checksum, int(time.time()), int(elapsed * 1000), 1)
-                )
-
-            conn.commit()
-            cursor.close()
-            self.pool.return_connection(pooled)
+                    elapsed = time.monotonic() - start
+                    if self.dialect == 'mysql':
+                        cursor.execute(
+                            f"INSERT INTO `{self.table_name}` (version, description, script, checksum, installed_on, execution_time, success) VALUES (%s, %s, %s, %s, %s, %s, %s)",  # nosec B608
+                            (version, description, script_name, checksum, int(time.time()), int(elapsed * 1000), 1)
+                        )
+                    else:
+                        ph = '?' if self.dialect == 'sqlite' else '%s'
+                        table_ref = f'"{self.table_name}"'
+                        cursor.execute(
+                            f'INSERT INTO {table_ref} (version, description, script, checksum, installed_on, execution_time, success) VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph})',  # nosec B608
+                            (version, description, script_name, checksum, int(time.time()), int(elapsed * 1000), 1)
+                        )
+                    conn.commit()
+                finally:
+                    cursor.close()
 
             record = MigrationRecord(version, description, script_name, checksum, elapsed, True)
             logger.info(f"Migration V{version} ({description}) applied successfully in {elapsed:.2f}s")
@@ -285,13 +307,13 @@ class MigrationManager:
 
         except Exception as e:
             elapsed = time.monotonic() - start
-            if conn:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            logger.error(f"Migration V{version} failed after {elapsed:.2f}s: {e}")
-            raise MigrationError(f"Migration V{version} ({description}) failed: {e}") from e
+            logger.error(
+                "Migration V%s failed after %.2fs (%s)",
+                version, elapsed, type(e).__name__,
+            )
+            raise MigrationError(
+                f"Migration V{version} ({description}) failed ({type(e).__name__})"
+            ) from e
 
     def migrate(self, baseline: bool = False) -> List[MigrationRecord]:
         """
@@ -303,6 +325,11 @@ class MigrationManager:
         Returns:
             本次执行的迁移记录列表
         """
+        with self._migration_lock():
+            return self._migrate_locked(baseline=baseline)
+
+    def _migrate_locked(self, baseline: bool = False) -> List[MigrationRecord]:
+        """Migration implementation; caller must hold ``_migration_lock``."""
         applied = self._get_applied_versions()
         discovered = self._discover_migrations()
 
@@ -328,31 +355,28 @@ class MigrationManager:
             if baseline and not executed:
                 # baseline模式：将第一条之前的视为已baseline
                 logger.info(f"Baseline: marking migrations up to V{version} as applied")
-                baseline_conn = None
                 try:
-                    pooled = self.pool.get_connection()
-                    baseline_conn = pooled.connection
-                    cursor = baseline_conn.cursor()
-                    if self.dialect == 'mysql':
-                        cursor.execute(
-                            f"INSERT IGNORE INTO `{self.table_name}` (version, description, script, checksum, installed_on, execution_time, success) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                            (version, description, script, checksum, int(time.time()), 0, 1)
-                        )
-                    else:
-                        ph = '?' if self.dialect == 'sqlite' else '%s'
-                        cursor.execute(
-                            f'INSERT INTO "{self.table_name}" (version, description, script, checksum, installed_on, execution_time, success) SELECT {ph},{ph},{ph},{ph},{ph},{ph},{ph} WHERE NOT EXISTS (SELECT 1 FROM "{self.table_name}" WHERE version = {ph})',  # nosec B608
-                            (version, description, script, checksum, int(time.time()), 0, 1, version)
-                        )
-                    baseline_conn.commit()
-                    cursor.close()
-                    self.pool.return_connection(pooled)
-                except Exception:
-                    if baseline_conn:
+                    with self._connection() as baseline_conn:
+                        cursor = baseline_conn.cursor()
                         try:
-                            baseline_conn.rollback()
-                        except Exception:
-                            pass
+                            if self.dialect == 'mysql':
+                                cursor.execute(
+                                    f"INSERT IGNORE INTO `{self.table_name}` (version, description, script, checksum, installed_on, execution_time, success) VALUES (%s, %s, %s, %s, %s, %s, %s)",  # nosec B608
+                                    (version, description, script, checksum, int(time.time()), 0, 1)
+                                )
+                            else:
+                                ph = '?' if self.dialect == 'sqlite' else '%s'
+                                cursor.execute(
+                                    f'INSERT INTO "{self.table_name}" (version, description, script, checksum, installed_on, execution_time, success) SELECT {ph},{ph},{ph},{ph},{ph},{ph},{ph} WHERE NOT EXISTS (SELECT 1 FROM "{self.table_name}" WHERE version = {ph})',  # nosec B608
+                                    (version, description, script, checksum, int(time.time()), 0, 1, version)
+                                )
+                            baseline_conn.commit()
+                        finally:
+                            cursor.close()
+                except Exception as exc:
+                    raise MigrationError(
+                        f"Failed to baseline migration V{version} ({type(exc).__name__})"
+                    ) from exc
                 baseline = False
                 continue
 
@@ -398,36 +422,32 @@ class MigrationManager:
 
     def repair(self) -> int:
         """修复失败的迁移记录（标记为可重试）"""
-        conn = None
         try:
-            pooled = self.pool.get_connection()
-            conn = pooled.connection
-            cursor = conn.cursor()
-            if self.dialect == 'mysql':
-                cursor.execute(f"DELETE FROM `{self.table_name}` WHERE success = 0")  # nosec B608
-            else:
-                cursor.execute(f'DELETE FROM "{self.table_name}" WHERE success = 0')  # nosec B608
-            deleted = cursor.rowcount
-            conn.commit()
-            cursor.close()
-            self.pool.return_connection(pooled)
+            with self._migration_lock():
+                with self._connection() as conn:
+                    cursor = conn.cursor()
+                    try:
+                        if self.dialect == 'mysql':
+                            cursor.execute(f"DELETE FROM `{self.table_name}` WHERE success = 0")  # nosec B608
+                        else:
+                            cursor.execute(f'DELETE FROM "{self.table_name}" WHERE success = 0')  # nosec B608
+                        deleted = cursor.rowcount
+                        conn.commit()
+                    finally:
+                        cursor.close()
             logger.info(f"Repaired {deleted} failed migration record(s)")
             return deleted
         except Exception as e:
-            if conn:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            raise MigrationError(f"Repair failed: {e}") from e
+            raise MigrationError(f"Repair failed ({type(e).__name__})") from e
 
     # ==================== 变量替换 ====================
 
     def _substitute_variables(self, sql: str) -> str:
         """替换 SQL 中的 ${var_name} 变量。
 
-        安全说明：变量值仅做字符串替换，不执行 SQL 解析。
-        变量值不能包含分号（;），防止 SQL 注入。
+        Values are deliberately restricted to an unquoted SQL token. Callers
+        can place the placeholder inside quotes in the migration when a string
+        literal is required. This prevents a variable from changing SQL shape.
         """
         if not self.variables:
             return sql
@@ -437,11 +457,18 @@ class MigrationManager:
             if var_name not in self.variables:
                 raise MigrationError(f"Undefined migration variable: ${{{var_name}}}")
             value = str(self.variables[var_name])
-            # 防止 SQL 注入：变量值不能包含分号
+            if len(value.encode("utf-8")) > 1024:
+                raise MigrationError(
+                    f"Migration variable '{var_name}' exceeds 1024 bytes"
+                )
             if ';' in value:
                 raise MigrationError(
                     f"Migration variable '{var_name}' contains semicolon ';', "
                     f"which is not allowed for security reasons"
+                )
+            if not re.fullmatch(r"[A-Za-z0-9_.:/@+?&=%-]*", value):
+                raise MigrationError(
+                    f"Migration variable '{var_name}' contains unsafe characters"
                 )
             return value
 
@@ -458,13 +485,20 @@ class MigrationManager:
         """
         if self.dialect == 'mysql':
             cursor = conn.cursor()
-            cursor.execute("SELECT GET_LOCK('springbootai_migration', 10)")  # nosec B608
-            result = cursor.fetchone()
-            return bool(result[0] if result and isinstance(result, (tuple, list)) else result)
+            try:
+                cursor.execute("SELECT GET_LOCK('springbootai_migration', 10)")  # nosec B608
+                result = cursor.fetchone()
+                return bool(result[0] if result and isinstance(result, (tuple, list)) else result)
+            finally:
+                cursor.close()
         elif self.dialect == 'postgresql':
             cursor = conn.cursor()
-            cursor.execute("SELECT pg_advisory_lock(123456789)")  # nosec B608
-            return True
+            try:
+                cursor.execute("SELECT pg_try_advisory_lock(123456789)")  # nosec B608
+                result = cursor.fetchone()
+                return bool(result and result[0])
+            finally:
+                cursor.close()
         else:
             # SQLite 使用进程级锁
             return self._lock.acquire(timeout=30)
@@ -525,95 +559,77 @@ class MigrationManager:
         注意：Undo 脚本文件命名为 U{version}__{description}.sql，
               与正向迁移 V{version}__{description}.sql 一一对应。
         """
+        with self._migration_lock():
+            return self._rollback_locked(target_version)
+
+    def _rollback_locked(self, target_version: Optional[str]) -> List[MigrationRecord]:
         applied = self._get_applied_versions()
         if not applied:
             logger.info("No migrations to rollback")
             return []
 
         undo_scripts = self._discover_undo_migrations()
-
-        # 按版本号降序排列已应用的迁移
         sorted_versions = sorted(applied.keys(), key=self._version_tuple, reverse=True)
-
-        # 确定回滚范围
         if target_version:
             target_tuple = self._version_tuple(target_version)
-            to_rollback = [v for v in sorted_versions if self._version_tuple(v) > target_tuple]
+            to_rollback = [
+                version for version in sorted_versions
+                if self._version_tuple(version) > target_tuple
+            ]
         else:
-            to_rollback = [sorted_versions[0]]  # 只回滚最后一个
-
+            to_rollback = [sorted_versions[0]]
         if not to_rollback:
             logger.info("No migrations to rollback")
             return []
 
         rolled_back = []
-        conn = None
         try:
-            pooled = self.pool.get_connection()
-            conn = pooled.connection
-
-            # 获取迁移锁
-            if not self._acquire_db_lock(conn):
-                raise MigrationError("Failed to acquire migration lock (another migration may be running)")
-
-            try:
+            with self._connection() as conn:
                 for version in to_rollback:
                     if version not in undo_scripts:
                         raise MigrationError(
                             f"Undo script U{version}__*.sql not found. "
                             f"Cannot rollback migration V{version} without undo script."
                         )
-
                     desc, script_name, sql_content = undo_scripts[version]
-                    # 变量替换
                     sql_content = self._substitute_variables(sql_content)
-
                     start = time.monotonic()
                     cursor = conn.cursor()
-
-                    # 执行 Undo SQL
-                    statements = self._split_sql_statements(sql_content)
-                    for stmt in statements:
-                        stmt = stmt.strip()
-                        if stmt:
-                            logger.debug(f"Executing undo SQL: {stmt[:100]}...")
-                            cursor.execute(stmt)
-
-                    # 删除迁移记录
-                    if self.dialect == 'mysql':
-                        cursor.execute(
-                            f"DELETE FROM `{self.table_name}` WHERE version = %s",  # nosec B608
-                            (version,)
-                        )
-                    else:
-                        ph = '?' if self.dialect == 'sqlite' else '%s'
-                        cursor.execute(
-                            f'DELETE FROM "{self.table_name}" WHERE version = {ph}',  # nosec B608
-                            (version,)
-                        )
-
+                    try:
+                        for stmt in self._split_sql_statements(sql_content):
+                            if stmt.strip():
+                                logger.debug("Executing undo SQL statement")
+                                cursor.execute(stmt)
+                        if self.dialect == 'mysql':
+                            cursor.execute(
+                                f"DELETE FROM `{self.table_name}` WHERE version = %s",  # nosec B608
+                                (version,)
+                            )
+                        else:
+                            ph = '?' if self.dialect == 'sqlite' else '%s'
+                            cursor.execute(
+                                f'DELETE FROM "{self.table_name}" WHERE version = {ph}',  # nosec B608
+                                (version,)
+                            )
+                        conn.commit()
+                    finally:
+                        cursor.close()
                     elapsed = time.monotonic() - start
-                    conn.commit()
-                    cursor.close()
-
-                    record = MigrationRecord(version, f"UNDO: {desc}", script_name, "", elapsed, True)
-                    rolled_back.append(record)
-                    logger.info(f"Rollback U{version} ({desc}) completed in {elapsed:.2f}s")
-
-            finally:
-                self._release_db_lock(conn)
-
-            self.pool.return_connection(pooled)
+                    rolled_back.append(MigrationRecord(
+                        version, f"UNDO: {desc}", script_name, "", elapsed, True
+                    ))
+                    logger.info(
+                        "Rollback U%s (%s) completed in %.2fs",
+                        version, desc, elapsed,
+                    )
             return rolled_back
-
-        except Exception as e:
-            if conn:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            logger.error(f"Rollback failed: {e}")
-            raise MigrationError(f"Rollback failed: {e}") from e
+        except Exception as exc:
+            logger.error("Rollback failed (%s)", type(exc).__name__)
+            if isinstance(exc, MigrationError):
+                raise
+            raise MigrationError(
+                f"Rollback failed ({type(exc).__name__})"
+            ) from exc
 
     # ==================== 校验 ====================
 
@@ -652,20 +668,110 @@ class MigrationManager:
     # ==================== SQL 分割（公共方法） ====================
 
     def _split_sql_statements(self, sql_content: str) -> List[str]:
-        """按分号分割 SQL 语句，跳过注释行。"""
-        statements = []
-        current = []
-        for line in sql_content.split('\n'):
-            stripped = line.strip()
-            if stripped.startswith('--') or stripped.startswith('#'):
-                continue
-            current.append(line)
-            if stripped.endswith(';'):
-                stmt = '\n'.join(current).strip().rstrip(';')
-                if stmt:
-                    statements.append(stmt)
-                current = []
-        remaining = '\n'.join(current).strip()
+        """Split SQL without breaking quoted strings, comments, or routine bodies.
+
+        Supports MySQL ``DELIMITER`` directives and PostgreSQL dollar-quoted
+        blocks. The directive itself is client syntax and is not sent to the DB.
+        """
+        statements: List[str] = []
+        current: List[str] = []
+        delimiter = ";"
+        quote: Optional[str] = None
+        dollar_tag: Optional[str] = None
+        in_block_comment = False
+
+        for line in sql_content.splitlines(keepends=True):
+            if not quote and not dollar_tag and not in_block_comment and not "".join(current).strip():
+                directive = re.fullmatch(r"\s*DELIMITER\s+(\S+)\s*(?:\r?\n)?", line, re.IGNORECASE)
+                if directive:
+                    delimiter = directive.group(1)
+                    if len(delimiter) > 16:
+                        raise MigrationError("SQL delimiter is too long")
+                    continue
+
+            index = 0
+            line_comment = False
+            while index < len(line):
+                char = line[index]
+                following = line[index + 1] if index + 1 < len(line) else ""
+
+                if line_comment:
+                    if char in "\r\n":
+                        current.append(char)
+                        line_comment = False
+                    index += 1
+                    continue
+                if in_block_comment:
+                    if char == "*" and following == "/":
+                        in_block_comment = False
+                        index += 2
+                    else:
+                        index += 1
+                    continue
+                if dollar_tag:
+                    if line.startswith(dollar_tag, index):
+                        current.append(dollar_tag)
+                        index += len(dollar_tag)
+                        dollar_tag = None
+                    else:
+                        current.append(char)
+                        index += 1
+                    continue
+                if quote:
+                    current.append(char)
+                    if char == "\\" and index + 1 < len(line):
+                        current.append(line[index + 1])
+                        index += 2
+                        continue
+                    if char == quote:
+                        if following == quote:
+                            current.append(following)
+                            index += 2
+                            continue
+                        quote = None
+                    index += 1
+                    continue
+
+                if char == "/" and following == "*":
+                    in_block_comment = True
+                    index += 2
+                    continue
+                if char == "#" or (
+                    char == "-" and following == "-" and
+                    (index + 2 >= len(line) or line[index + 2].isspace())
+                ):
+                    line_comment = True
+                    index += 1 if char == "#" else 2
+                    continue
+                if char in {"'", '"', "`"}:
+                    quote = char
+                    current.append(char)
+                    index += 1
+                    continue
+                if char == "$":
+                    match = re.match(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$", line[index:])
+                    if match:
+                        dollar_tag = match.group(0)
+                        current.append(dollar_tag)
+                        index += len(dollar_tag)
+                        continue
+                if delimiter and line.startswith(delimiter, index):
+                    statement = "".join(current).strip()
+                    if statement:
+                        statements.append(statement)
+                    current = []
+                    index += len(delimiter)
+                    continue
+                current.append(char)
+                index += 1
+
+        if quote:
+            raise MigrationError("Unterminated SQL quoted string")
+        if dollar_tag:
+            raise MigrationError("Unterminated SQL dollar-quoted block")
+        if in_block_comment:
+            raise MigrationError("Unterminated SQL block comment")
+        remaining = "".join(current).strip()
         if remaining:
             statements.append(remaining)
         return statements

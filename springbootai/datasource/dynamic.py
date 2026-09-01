@@ -133,7 +133,11 @@ class DynamicRoutingDataSource:
             result = pool.get_pool_stats()
             return result if isinstance(result, dict) else {}
         except Exception as exc:  # pragma: no cover - 防御性
-            return {"error": str(exc)}
+            logger.warning(
+                "Dynamic datasource health check failed error_type=%s",
+                type(exc).__name__,
+            )
+            return {"error": "datasource unavailable"}
 
     # ==================== 运维辅助 ====================
 

@@ -29,9 +29,10 @@ _UNQUOTED_HEADER_PATTERN = re.compile(
     r"(?P<value>[^\r\n,}]+)"
 )
 _KEY_VALUE_PATTERN = re.compile(
-    r"(?i)(authorization|proxy-authorization|x-api-key|api[_-]?key|"
+    r"(?i)\b(authorization|proxy-authorization|x-api-key|api[_-]?key|"
     r"password|passwd|client[_-]?secret|access[_-]?token|refresh[_-]?token|token|"
-    r"cookie|set-cookie|credential)"
+    r"cookie|set-cookie|credential|secret|dsn|database[_-]?url|"
+    r"connection[_-]?(?:string|url))"
     r"(?P<key_quote>[\"']?)(?P<separator>\s*[:=]\s*)"
     r"(?:(?P<quote>[\"'])(?P<quoted>.*?)(?P=quote)|"
     r"(?P<value>[^\s,;\}\]&\"']+))"
@@ -39,6 +40,9 @@ _KEY_VALUE_PATTERN = re.compile(
 _URL_SECRET_PATTERN = re.compile(
     r"(?i)([?&](?:access_token|refresh_token|token|api[_-]?key|password|secret)=)"
     r"([^&#\s]+)"
+)
+_URI_USERINFO_PATTERN = re.compile(
+    r"(?i)\b([a-z][a-z0-9+.-]*://)([^/\s@]+)@"
 )
 
 
@@ -103,7 +107,8 @@ def redact_sensitive(value: object) -> str:
         ),
         text,
     )
-    return _URL_SECRET_PATTERN.sub(r"\1******", text)
+    text = _URL_SECRET_PATTERN.sub(r"\1******", text)
+    return _URI_USERINFO_PATTERN.sub(r"\1******@", text)
 
 
 def safe_log_field(value: object, limit: int = 160) -> str:

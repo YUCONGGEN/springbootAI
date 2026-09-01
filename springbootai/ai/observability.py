@@ -67,7 +67,9 @@ class AIMetrics:
                 self._metrics = pm
                 logger.info("AI Prometheus 指标已注册")
             except Exception as exc:
-                logger.warning("AI 指标注册失败，降级为无监控: %s", exc)
+                logger.warning(
+                    "AI 指标注册失败，降级为无监控 error_type=%s",
+                    type(exc).__name__)
                 self.enabled = False
         self._initialized = True
 
@@ -88,7 +90,7 @@ class AIMetrics:
                     self._tokens.labels(provider=provider,
                                         type="completion").inc(usage["completion_tokens"])
         except Exception as exc:  # 监控不应影响主流程
-            logger.debug("record_call 失败: %s", exc)
+            logger.debug("record_call 失败 error_type=%s", type(exc).__name__)
 
     def record_tokens(self, provider: str, usage: dict):
         """只记录 token 用量，不额外虚构一次模型调用。"""
@@ -101,7 +103,7 @@ class AIMetrics:
                 if value:
                     self._tokens.labels(provider=provider or "unknown", type=label).inc(value)
         except Exception as exc:
-            logger.debug("record_tokens 失败: %s", exc)
+            logger.debug("record_tokens 失败 error_type=%s", type(exc).__name__)
 
     def record_tool_call(self, tool: str, status: str):
         """记录一次工具调用"""

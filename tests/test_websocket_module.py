@@ -9,6 +9,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -398,6 +399,19 @@ class TestInMemoryBroker:
         with pytest.raises(MessageBrokerException):
             broker.subscribe("", WebSocketSession(_FakeWebSocket()))
 
+    def test_subscription_and_message_limits_are_enforced(self):
+        broker = InMemoryBroker(
+            max_destinations=1,
+            max_subscriptions_per_session=1,
+            max_message_size=32,
+        )
+        session = WebSocketSession(_FakeWebSocket())
+        broker.subscribe("/topic/a", session)
+        with pytest.raises(MessageBrokerException, match="订阅数"):
+            broker.subscribe("/topic/b", session)
+        with pytest.raises(MessageBrokerException, match="size limit"):
+            run(broker.publish("/topic/a", "x" * 100))
+
 
 # ==================== SimpMessageSendingOperations ====================
 
@@ -683,6 +697,27 @@ class TestWebSocketRouter:
         with pytest.raises(WebSocketHandlerException):
             router.add_message_endpoint("/ws/x", NotAnnotated)
 
+    def test_default_routers_do_not_share_sessions_or_broker(self):
+        first = WebSocketRouter()
+        second = WebSocketRouter()
+        assert first.session_registry is not second.session_registry
+        assert first.configurer.broker is not second.configurer.broker
+        assert first.configurer.session_registry is first.session_registry
+
+    def test_query_token_is_disabled_and_non_http_origin_is_rejected(self):
+        websocket = SimpleNamespace(
+            headers={"host": "app.test", "origin": "https://app.test"},
+            query_params={"access_token": "token"},
+        )
+        assert run(WebSocketRouter()._authorize_handshake(websocket)) is None
+
+        bad_origin = SimpleNamespace(
+            headers={"host": "app.test", "origin": "javascript://app.test"},
+            query_params={},
+        )
+        assert run(WebSocketRouter(
+            allow_anonymous=True)._authorize_handshake(bad_origin)) is None
+
 
 class TestIntegrationWithStarlette:
     """端到端：通过 Starlette TestClient 连接真实 WebSocket。"""
@@ -692,7 +727,9 @@ class TestIntegrationWithStarlette:
         from starlette.applications import Starlette
         # 独立 router + configurer 避免污染全局
         cfg = MessageBrokerConfigurer()
-        router = WebSocketRouter(configurer=cfg)
+        # Anonymous access is an explicit test/demo choice; production router
+        # defaults now require a validated bearer token.
+        router = WebSocketRouter(configurer=cfg, allow_anonymous=True)
         app = Starlette()
         return app, router, cfg
 
@@ -775,7 +812,8 @@ class TestIntegrationWithStarlette:
         from starlette.applications import Starlette
         app = Starlette()
         # 扫描当前测试模块的 @ServerEndpoint 类
-        router = install_websocket_routes(app, classes=[EchoEndpoint])
+        router = install_websocket_routes(
+            app, classes=[EchoEndpoint], allow_anonymous=True)
         assert "/ws/echo" in router.routes
 
         from starlette.testclient import TestClient

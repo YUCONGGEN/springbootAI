@@ -7,6 +7,7 @@ AI 调用韧性 - 复用框架 springbootai.retry 的 @Retryable 机制 + 复用
    Redis 不可用时降级本地内存。跨实例共享熔断状态，多副本一致性。
 """
 import functools
+import inspect
 import logging
 import threading
 import time
@@ -56,11 +57,14 @@ class AICircuitBreaker:
         self.name = name
         self._redis_client = redis_client
         self._redis_key = f"circuit_breaker:ai:{name}"
+        self._redis_probe_key = f"{self._redis_key}:half-open-probe"
         self._lock = threading.Lock()
         # 本地状态（读透 Redis 缓存）
         self._state = CircuitState.CLOSED
         self._failures = 0
         self._last_failure_time = 0.0
+        # HALF_OPEN 只允许一个本地探针，避免恢复瞬间把并发洪峰放给上游。
+        self._half_open_probe_in_flight = False
 
     def _redis_available(self) -> bool:
         """Redis 是否可用"""
@@ -127,6 +131,90 @@ class AICircuitBreaker:
         except Exception:
             pass
 
+    @staticmethod
+    def _decode_redis_value(value, default=""):
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return default if value is None else value
+
+    def _atomic_redis_failure(self, now: float) -> bool:
+        r = self._raw_redis()
+        if r is None or not hasattr(r, "eval"):
+            return False
+        script = """
+        local failures = redis.call('HINCRBY', KEYS[1], 'failures', 1)
+        local state = redis.call('HGET', KEYS[1], 'state') or 'CLOSED'
+        if state == 'HALF_OPEN' or failures >= tonumber(ARGV[1]) then
+            state = 'OPEN'
+        end
+        redis.call('HSET', KEYS[1], 'state', state,
+                   'last_failure_time', ARGV[2])
+        return {failures, state}
+        """
+        try:
+            failures, state = r.eval(
+                script, 1, self._redis_key,
+                self.failure_threshold, str(now),
+            )
+            self._failures = int(failures)
+            self._state = str(self._decode_redis_value(state, "CLOSED"))
+            self._last_failure_time = now
+            return True
+        except Exception:
+            return False
+
+    def _atomic_redis_success(self) -> bool:
+        r = self._raw_redis()
+        if r is None or not hasattr(r, "eval"):
+            return False
+        script = """
+        redis.call('HSET', KEYS[1], 'state', 'CLOSED',
+                   'failures', 0, 'last_failure_time', 0)
+        redis.call('DEL', KEYS[2])
+        return 1
+        """
+        try:
+            r.eval(script, 2, self._redis_key, self._redis_probe_key)
+            return True
+        except Exception:
+            return False
+
+    def _atomic_redis_refresh_state(self, now: float) -> bool:
+        r = self._raw_redis()
+        if r is None or not hasattr(r, "eval"):
+            return False
+        script = """
+        local state = redis.call('HGET', KEYS[1], 'state') or 'CLOSED'
+        local failures = tonumber(
+            redis.call('HGET', KEYS[1], 'failures') or '0')
+        local last_failure = tonumber(
+            redis.call('HGET', KEYS[1], 'last_failure_time') or '0')
+        if state == 'OPEN' and tonumber(ARGV[1]) - last_failure > tonumber(ARGV[2]) then
+            state = 'HALF_OPEN'
+            redis.call('HSET', KEYS[1], 'state', state)
+        end
+        return {state, failures, last_failure}
+        """
+        try:
+            state, failures, last_failure = r.eval(
+                script, 1, self._redis_key,
+                str(now), str(self.recovery_timeout),
+            )
+            self._state = str(self._decode_redis_value(state, "CLOSED"))
+            self._failures = int(failures)
+            self._last_failure_time = float(last_failure)
+            return True
+        except Exception:
+            return False
+
+    def _clear_distributed_probe(self) -> None:
+        r = self._raw_redis()
+        if r is not None and hasattr(r, "delete"):
+            try:
+                r.delete(self._redis_probe_key)
+            except Exception:
+                pass
+
     @property
     def state(self) -> str:
         with self._lock:
@@ -135,20 +223,44 @@ class AICircuitBreaker:
 
     def _refresh_state(self):
         # 先从 Redis 同步（如果可用）
-        if self._redis_available():
+        redis_available = self._redis_available()
+        if redis_available:
             self._sync_from_redis()
+            if self._atomic_redis_refresh_state(time.time()):
+                if self._state == CircuitState.HALF_OPEN:
+                    self._half_open_probe_in_flight = False
+                return
         if (self._state == CircuitState.OPEN and
                 time.time() - self._last_failure_time > self.recovery_timeout):
             self._state = CircuitState.HALF_OPEN
+            self._half_open_probe_in_flight = False
             logger.info("AI 熔断器[%s] 进入 HALF_OPEN，尝试放行探测请求", self.name)
-            if self._redis_available():
+            if redis_available:
                 self._sync_to_redis()
 
     def allow(self) -> bool:
         """是否放行请求"""
         with self._lock:
             self._refresh_state()
-            return self._state in (CircuitState.CLOSED, CircuitState.HALF_OPEN)
+            if self._state == CircuitState.CLOSED:
+                return True
+            if self._state == CircuitState.HALF_OPEN:
+                if self._half_open_probe_in_flight:
+                    return False
+                r = self._raw_redis()
+                if r is not None and hasattr(r, "set"):
+                    try:
+                        acquired = r.set(
+                            self._redis_probe_key, "1", nx=True,
+                            px=max(1000, int(self.recovery_timeout * 1000)),
+                        )
+                    except Exception:
+                        acquired = True
+                    if not acquired:
+                        return False
+                self._half_open_probe_in_flight = True
+                return True
+            return False
 
     def record_success(self):
         with self._lock:
@@ -156,22 +268,41 @@ class AICircuitBreaker:
                 logger.info("AI 熔断器[%s] HALF_OPEN -> CLOSED（探测成功）", self.name)
             self._state = CircuitState.CLOSED
             self._failures = 0
-            if self._redis_available():
+            self._half_open_probe_in_flight = False
+            if (self._redis_available()
+                    and not self._atomic_redis_success()):
                 self._sync_to_redis()
+            self._clear_distributed_probe()
 
     def record_failure(self):
         with self._lock:
-            self._failures += 1
-            self._last_failure_time = time.time()
-            if self._state == CircuitState.HALF_OPEN:
+            now = time.time()
+            previous_state = self._state
+            used_redis = (
+                self._redis_available()
+                and self._atomic_redis_failure(now)
+            )
+            if not used_redis:
+                self._failures += 1
+                self._last_failure_time = now
+            self._half_open_probe_in_flight = False
+            if previous_state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.OPEN
                 logger.warning("AI 熔断器[%s] HALF_OPEN -> OPEN（探测失败）", self.name)
             elif self._failures >= self.failure_threshold:
                 self._state = CircuitState.OPEN
                 logger.warning("AI 熔断器[%s] CLOSED -> OPEN（失败数=%d）",
                                self.name, self._failures)
-            if self._redis_available():
+            self._clear_distributed_probe()
+            if self._redis_available() and not used_redis:
                 self._sync_to_redis()
+
+    def release_probe(self) -> None:
+        """Release a HALF_OPEN reservation when a call is aborted/unclassified."""
+        with self._lock:
+            if self._state == CircuitState.HALF_OPEN:
+                self._half_open_probe_in_flight = False
+                self._clear_distributed_probe()
 
     def call(self, func: Callable, *args, **kwargs):
         """经熔断器执行函数"""
@@ -185,6 +316,27 @@ class AICircuitBreaker:
                 f"AI 熔断器[{self.name}] 处于 {self._state} 状态，拒绝请求（失败数={self._failures}）")
         try:
             result = func(*args, **kwargs)
+            if inspect.isawaitable(result):
+                async def await_result():
+                    try:
+                        value = await result
+                    except Exception as exc:
+                        if isinstance(exc, TransientError):
+                            self.record_failure()
+                        else:
+                            self.release_probe()
+                        ai_metrics.record_circuit_state(_provider, self._state)
+                        raise
+                    except BaseException:
+                        self.release_probe()
+                        raise
+                    else:
+                        self.record_success()
+                        ai_metrics.record_circuit_state(
+                            _provider, CircuitState.CLOSED)
+                        return value
+
+                return await_result()
             self.record_success()
             ai_metrics.record_circuit_state(_provider, CircuitState.CLOSED)
             return result
@@ -192,6 +344,8 @@ class AICircuitBreaker:
             # 调用方自行决定哪些异常计入失败
             if isinstance(exc, TransientError):
                 self.record_failure()
+            else:
+                self.release_probe()
             ai_metrics.record_circuit_state(_provider, self._state)
             raise
 
@@ -257,6 +411,27 @@ def resilient_call(func: Callable,
         try:
             kwargs.pop("_cb_provider", None)
             result = retried(*args, **kwargs)
+            if inspect.isawaitable(result):
+                async def await_result():
+                    try:
+                        value = await result
+                    except count_as_failure_exc:
+                        circuit_breaker.record_failure()
+                        from springbootai.ai.observability import ai_metrics
+                        ai_metrics.record_circuit_state(
+                            provider, circuit_breaker.state)
+                        raise
+                    except BaseException:
+                        circuit_breaker.release_probe()
+                        raise
+                    else:
+                        circuit_breaker.record_success()
+                        from springbootai.ai.observability import ai_metrics
+                        ai_metrics.record_circuit_state(
+                            provider, CircuitState.CLOSED)
+                        return value
+
+                return await_result()
             circuit_breaker.record_success()
             from springbootai.ai.observability import ai_metrics
             ai_metrics.record_circuit_state(provider, CircuitState.CLOSED)
@@ -265,6 +440,9 @@ def resilient_call(func: Callable,
             circuit_breaker.record_failure()
             from springbootai.ai.observability import ai_metrics
             ai_metrics.record_circuit_state(provider, circuit_breaker.state)
+            raise
+        except BaseException:
+            circuit_breaker.release_probe()
             raise
 
     return wrapper

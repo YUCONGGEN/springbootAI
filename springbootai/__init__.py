@@ -19,7 +19,7 @@ from .config import *
 from .utils import *
 from .main import create_app, run, SpringApplication, run_cli
 
-__version__ = "2.3.10"
+__version__ = "2.3.11"
 __author__ = "yuconggen"
 __license__ = "MIT"
 

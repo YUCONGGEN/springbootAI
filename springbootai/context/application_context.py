@@ -191,7 +191,9 @@ class ApplicationContext:
             unavailable_beans[bean_name] = exc
             logger = getattr(self, 'logger', None)
             if logger is not None:
-                logger.warning(f"Skipping bean '{bean_name}' during {phase}: {exc}")
+                logger.warning(
+                    f"Skipping bean '{bean_name}' during {phase} "
+                    f"error_type={type(exc).__name__}")
             return None
 
     @classmethod
@@ -249,9 +251,9 @@ class ApplicationContext:
             self._register_scheduled_tasks()
             self._started = True
         except Exception as e:
-            import traceback
-            self.logger.error(f"Failed to refresh application context: {str(e)}")
-            self.logger.error(traceback.format_exc())
+            self.logger.error(
+                "Failed to refresh application context: "
+                f"error_type={type(e).__name__}")
             # 回滚：移除本次 refresh 新注册的 Bean，清理已创建的资源，确保状态一致
             self._rollback_refresh(snapshot)
             raise
@@ -317,7 +319,9 @@ class ApplicationContext:
                 except TypeError:
                     shutdown()
         except Exception as exc:
-            self.logger.warning(f"Failed to stop scheduled tasks: {exc}")
+            self.logger.warning(
+                "Failed to stop scheduled tasks: "
+                f"error_type={type(exc).__name__}")
 
     def _load_config(self) -> None:
         self.config_loader.load_config()
@@ -795,6 +799,17 @@ class ApplicationContext:
         if self.tx_event_publisher is not None:
             return self.tx_event_publisher.publish_event(event)
         return event
+
+    async def publish_event_async(self, event: Any):
+        """Await ordinary event listeners without creating detached tasks.
+
+        Transactional listeners are still registered synchronously because
+        their actual execution belongs to the later transaction phase.
+        """
+        published = await self.event_publisher.publish_event_async(event)
+        if self.tx_event_publisher is not None:
+            return await self.tx_event_publisher.publish_event_async(published)
+        return published
 
     def get_event_publisher(self) -> ApplicationEventPublisher:
         return self.event_publisher

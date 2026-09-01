@@ -25,8 +25,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, HTMLResponse, Response
 
+from springbootai.logging.context import safe_log_field
+
+logger = logging.getLogger("Spring.Web.Actuator")
 actuator_router = APIRouter()
 _application_context = None
+_ACTUATOR_STATE_ATTRIBUTE = "springbootai_actuator_state"
 
 # 敏感键关键词（命中即脱敏，对齐 Spring Boot env 脱敏）
 # 注意：必须同时包含 api_key（下划线）和 api-key（连字符），因为 YAML/JSON 中两种风格都常见
@@ -75,6 +79,7 @@ _admin_dashboard_config = dict(_ADMIN_DASHBOARD_DEFAULTS)
 
 # 告警历史缓存（内存，最多 100 条，由 /actuator/alert POST 写入，/actuator/alerts GET 读取）
 _alert_history: List[Dict[str, Any]] = []
+_alert_history_lock = threading.Lock()
 
 
 def _resolve_actuator_endpoint_flags(config: Any) -> Dict[str, bool]:
@@ -206,6 +211,39 @@ def configure_actuator(application_context) -> None:
         # 配置读取失败时不让运维页失效，回退到框架内置默认配置。
         _admin_dashboard_config = dict(_ADMIN_DASHBOARD_DEFAULTS)
         _actuator_endpoint_enabled = {name: False for name in _OPTIONAL_ACTUATOR_ENDPOINTS}
+    state = {
+        "context": application_context,
+        "secured": _actuator_secured,
+        "roles": frozenset(_actuator_admin_roles),
+        "dashboard": dict(_admin_dashboard_config),
+        "endpoints": dict(_actuator_endpoint_enabled),
+        "configured": _actuator_configured,
+    }
+    try:
+        web_context = getattr(application_context, "web_context", None)
+        app = web_context.get_app() if web_context is not None else None
+        if app is not None:
+            setattr(app.state, _ACTUATOR_STATE_ATTRIBUTE, state)
+    except Exception:
+        logger.debug("Unable to bind per-application actuator state", exc_info=True)
+
+
+def _state_for_request(request: Optional[Request] = None) -> Dict[str, Any]:
+    if request is not None:
+        try:
+            state = getattr(request.app.state, _ACTUATOR_STATE_ATTRIBUTE)
+            if isinstance(state, Mapping):
+                return dict(state)
+        except (AttributeError, RuntimeError):
+            pass
+    return {
+        "context": _application_context,
+        "secured": _actuator_secured,
+        "roles": frozenset(_actuator_admin_roles),
+        "dashboard": dict(_admin_dashboard_config),
+        "endpoints": dict(_actuator_endpoint_enabled),
+        "configured": _actuator_configured,
+    }
 
 
 def _is_actuator_endpoint_enabled(endpoint_name: str) -> bool:
@@ -279,7 +317,10 @@ def _create_actuator_dependency(endpoint_name: str):
 
     def _auth_dependency(request: Request) -> None:
         """验证 Actuator 敏感端点访问权限。"""
-        if not _actuator_secured:
+        state = _state_for_request(request)
+        if not state["endpoints"].get(endpoint_name, False):
+            raise HTTPException(status_code=404, detail="Actuator endpoint disabled")
+        if not state["secured"]:
             return  # 鉴权关闭（开发环境）
 
         auth_header = request.headers.get('Authorization', '')
@@ -291,7 +332,11 @@ def _create_actuator_dependency(endpoint_name: str):
             from springbootai.security.jwt_utils import jwt_utils
             payload = jwt_utils.decode_token(token)
         except Exception as exc:
-            raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid bearer token",
+                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            ) from exc
 
         # 验证 token_type 必须是 access（refresh token 不能访问 actuator）
         if payload.get('token_type') != 'access':
@@ -302,17 +347,18 @@ def _create_actuator_dependency(endpoint_name: str):
 
         # 验证角色
         roles = [r.upper() for r in payload.get('roles', [])]
-        if not any(r in _actuator_admin_roles for r in roles):
+        required_roles = state["roles"]
+        if not any(r in required_roles for r in roles):
             raise HTTPException(
                 status_code=403,
-                detail=f"Insufficient role. Required: {sorted(_actuator_admin_roles)}, got: {roles}"
+                detail="Insufficient role for actuator access",
             )
 
     return _auth_dependency
 
 
-def _get_context():
-    return _application_context
+def _get_context(request: Optional[Request] = None):
+    return _state_for_request(request)["context"]
 
 
 # ==================== 端点目录 ====================
@@ -594,8 +640,12 @@ def get_heapdump(limit: int = 50) -> dict:
         # 如果是临时启动的，停止
         if not result["tracemalloc_active"]:
             tracemalloc.stop()
-    except Exception as e:
-        result["tracemalloc_error"] = str(e)
+    except Exception as exc:
+        logger.warning(
+            "Unable to collect tracemalloc statistics error_type=%s",
+            type(exc).__name__,
+        )
+        result["tracemalloc_error"] = "tracemalloc unavailable"
 
     # GC 统计
     try:
@@ -610,8 +660,12 @@ def get_heapdump(limit: int = 50) -> dict:
             "thresholds": list(gc.get_threshold()),
         }
         result["gc_stats"]["object_count"] = len(gc.get_objects())
-    except Exception as e:
-        result["gc_stats"]["error"] = str(e)
+    except Exception as exc:
+        logger.warning(
+            "Unable to collect GC statistics error_type=%s",
+            type(exc).__name__,
+        )
+        result["gc_stats"]["error"] = "gc statistics unavailable"
 
     return result
 
@@ -644,8 +698,9 @@ _alerts_auth = _create_actuator_dependency("alerts")
 
 
 @actuator_router.get('/env')
-def env_endpoint(_: None = Depends(_env_auth)):
-    return JSONResponse(content=get_env_info(_get_context()), status_code=200)
+def env_endpoint(request: Request, _: None = Depends(_env_auth)):
+    return JSONResponse(
+        content=get_env_info(_get_context(request)), status_code=200)
 
 
 @actuator_router.get('/loggers')
@@ -675,19 +730,21 @@ def metrics_endpoint(_: None = Depends(_metrics_auth)):
 
 
 @actuator_router.get('/beans')
-def beans_endpoint(_: None = Depends(_beans_auth)):
-    return JSONResponse(content=get_beans(_get_context()), status_code=200)
+def beans_endpoint(request: Request, _: None = Depends(_beans_auth)):
+    return JSONResponse(
+        content=get_beans(_get_context(request)), status_code=200)
 
 
 @actuator_router.get('/configprops')
-def configprops_endpoint(_: None = Depends(_configprops_auth)):
-    return JSONResponse(content=get_configprops(_get_context()), status_code=200)
+def configprops_endpoint(request: Request, _: None = Depends(_configprops_auth)):
+    return JSONResponse(
+        content=get_configprops(_get_context(request)), status_code=200)
 
 
 @actuator_router.get('/mappings')
-def mappings_endpoint(_: None = Depends(_mappings_auth)):
+def mappings_endpoint(request: Request, _: None = Depends(_mappings_auth)):
     app = None
-    ctx = _get_context()
+    ctx = _get_context(request)
     if ctx is not None and hasattr(ctx, "web_context"):
         app = ctx.web_context.get_app()
     return JSONResponse(content=get_mappings(app), status_code=200)
@@ -731,9 +788,11 @@ def prometheus_endpoint(_: None = Depends(_prometheus_auth)):
             media_type='text/plain',
             status_code=503,
         )
-    except Exception as e:
+    except Exception as exc:
+        logger.error(
+            "Prometheus endpoint failed error_type=%s", type(exc).__name__)
         return Response(
-            content=f"# error: {e}\n",
+            content="# error: metrics unavailable\n",
             media_type='text/plain',
             status_code=500,
         )
@@ -761,8 +820,12 @@ def get_sysmetrics() -> dict:
         }
     except ImportError:
         return {"error": "psutil not installed"}
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception as exc:
+        logger.error(
+            "System metrics collection failed error_type=%s",
+            type(exc).__name__,
+        )
+        return {"error": "system metrics unavailable"}
 
 
 @actuator_router.get('/sysmetrics')
@@ -779,9 +842,11 @@ def request_metrics_endpoint(_: None = Depends(_request_metrics_auth)):
 
 
 @actuator_router.get('/config-monitor')
-def config_monitor_endpoint(_: None = Depends(_config_monitor_auth)):
+def config_monitor_endpoint(request: Request,
+                            _: None = Depends(_config_monitor_auth)):
     """配置刷新监控端点（默认关闭，开启后只返回脱敏历史）。"""
-    return JSONResponse(content=get_config_monitor_info(_get_context()), status_code=200)
+    return JSONResponse(
+        content=get_config_monitor_info(_get_context(request)), status_code=200)
 
 
 def get_config_monitor_info(context) -> Dict[str, Any]:
@@ -800,7 +865,7 @@ def get_config_monitor_info(context) -> Dict[str, Any]:
         return monitor.snapshot()
     except Exception as exc:
         logging.getLogger("Spring.Web.Actuator.ConfigMonitor").warning(
-            "读取配置监控失败: %s", exc
+            "读取配置监控失败 error_type=%s", type(exc).__name__
         )
         return {"enabled": False, "events": [], "error": "config monitor unavailable"}
 
@@ -809,15 +874,21 @@ def get_config_monitor_info(context) -> Dict[str, Any]:
 
 def get_alert_history() -> List[Dict[str, Any]]:
     """获取已接收的告警历史记录（内存缓存，最多 100 条）。"""
-    return list(_alert_history)
+    with _alert_history_lock:
+        return [dict(item) for item in _alert_history]
 
 
 def add_alert_record(alert: Dict[str, Any]) -> None:
     """添加一条告警记录到历史缓存。"""
-    _alert_history.append(alert)
-    # 保留最近 100 条
-    if len(_alert_history) > 100:
-        _alert_history.pop(0)
+    bounded = {
+        str(key)[:64]: safe_log_field(value, limit=2048)
+        for key, value in alert.items()
+    }
+    with _alert_history_lock:
+        _alert_history.append(bounded)
+        # 保留最近 100 条
+        if len(_alert_history) > 100:
+            _alert_history.pop(0)
 
 
 @actuator_router.post('/alert')
@@ -834,10 +905,21 @@ def alert_webhook(payload: Dict[str, Any] = Body(...), _: None = Depends(_alert_
     _logger = logging.getLogger("Spring.Web.Actuator.Alert")
 
     alerts = payload.get('alerts', [])
+    if not isinstance(alerts, list):
+        raise HTTPException(status_code=400, detail="alerts must be an array")
+    if len(alerts) > 100:
+        raise HTTPException(status_code=413, detail="too many alerts")
     for alert in alerts:
+        if not isinstance(alert, Mapping):
+            raise HTTPException(status_code=400, detail="alert must be an object")
         status = alert.get('status', 'unknown')
         labels = alert.get('labels', {})
         annotations = alert.get('annotations', {})
+        if not isinstance(labels, Mapping) or not isinstance(annotations, Mapping):
+            raise HTTPException(
+                status_code=400,
+                detail="alert labels and annotations must be objects",
+            )
         alert_name = labels.get('alertname', 'Unknown')
         severity = labels.get('severity', 'info')
         instance = labels.get('instance', '')
@@ -857,13 +939,16 @@ def alert_webhook(payload: Dict[str, Any] = Body(...), _: None = Depends(_alert_
         if status == 'firing':
             _logger.warning(
                 "[Alert] %s [%s] %s — %s (instance=%s)",
-                alert_name, severity,
-                annotations.get('summary', ''),
-                annotations.get('description', ''),
-                instance,
+                safe_log_field(alert_name), safe_log_field(severity),
+                safe_log_field(annotations.get('summary', ''), limit=512),
+                safe_log_field(annotations.get('description', ''), limit=1024),
+                safe_log_field(instance),
             )
         else:
-            _logger.info("[Alert] %s RESOLVED (instance=%s)", alert_name, instance)
+            _logger.info(
+                "[Alert] %s RESOLVED (instance=%s)",
+                safe_log_field(alert_name), safe_log_field(instance),
+            )
 
     return JSONResponse(
         content={'status': 'ok', 'received': len(alerts)},
@@ -879,7 +964,11 @@ def alerts_history(_: None = Depends(_alerts_auth)):
 
 # ==================== /admin Spring Boot Admin 可视化面板 ====================
 
-def _build_admin_dashboard_html() -> str:
+def _build_admin_dashboard_html(
+    dashboard_config: Optional[Dict[str, Any]] = None,
+    configured_endpoints: Optional[Dict[str, bool]] = None,
+    configured: Optional[bool] = None,
+) -> str:
     """构建 Spring Boot Admin 风格的可视化面板 HTML。
 
     面板通过 JS fetch 异步调用各 Actuator 端点获取数据，
@@ -1456,22 +1545,23 @@ def _build_admin_dashboard_html() -> str:
     </script>
 </body>
 </html>'''
+    dashboard = dict(dashboard_config or _admin_dashboard_config)
     request_metrics_url = (
-        _admin_dashboard_config["request_metrics_url"]
-        if _admin_dashboard_config["request_metrics_enabled"] else ""
+        dashboard["request_metrics_url"]
+        if dashboard["request_metrics_enabled"] else ""
     )
     request_metrics_card = ""
     if request_metrics_url:
         request_metrics_card = (
             '        <!-- 应用请求持久化监控（由 management.admin.request-metrics 配置） -->\n'
             '        <div class="card">\n'
-            f'            <h2>{escape(_admin_dashboard_config["request_metrics_title"])}</h2>\n'
+            f'            <h2>{escape(dashboard["request_metrics_title"])}</h2>\n'
             '            <div id="request-metrics"><span class="spinner"></span> 加载中...</div>\n'
             '        </div>'
         )
     endpoint_flags = (
-        dict(_actuator_endpoint_enabled)
-        if _actuator_configured else
+        dict(configured_endpoints or _actuator_endpoint_enabled)
+        if (_actuator_configured if configured is None else configured) else
         {name: True for name in _OPTIONAL_ACTUATOR_ENDPOINTS}
     )
     def card(enabled: bool, title: str, body_id: str, *, full: bool = False) -> str:
@@ -1509,9 +1599,9 @@ def _build_admin_dashboard_html() -> str:
     )
     # 文本进入 HTML/JavaScript 前均转义；数值已经在配置解析阶段限制为正整数。
     return (html
-            .replace("__ADMIN_TITLE__", escape(_admin_dashboard_config["title"]))
-            .replace("__ADMIN_SUBTITLE__", escape(_admin_dashboard_config["subtitle"]))
-            .replace("__ADMIN_PAGE_SIZE__", str(_admin_dashboard_config["page_size"]))
+            .replace("__ADMIN_TITLE__", escape(dashboard["title"]))
+            .replace("__ADMIN_SUBTITLE__", escape(dashboard["subtitle"]))
+            .replace("__ADMIN_PAGE_SIZE__", str(dashboard["page_size"]))
             .replace("__REQUEST_METRICS_CARD__", request_metrics_card)
             .replace("__ALERTS_CARD__", alerts_card)
             .replace("__SYSTEM_METRICS_CARD__", system_metrics_card)
@@ -1524,13 +1614,13 @@ def _build_admin_dashboard_html() -> str:
             .replace("__ACTUATOR_ENDPOINTS__", json.dumps(endpoint_flags))
             .replace(
                 "__ADMIN_REFRESH_MS__",
-                str(_admin_dashboard_config["refresh_interval_seconds"] * 1000),
+                str(dashboard["refresh_interval_seconds"] * 1000),
             ))
 
 
 @actuator_router.get('/admin', response_class=HTMLResponse)
 @actuator_router.get('/admin/', response_class=HTMLResponse)
-def admin_dashboard():
+def admin_dashboard(request: Request):
     """Spring Boot Admin 风格可视化面板。
 
     访问 ``/actuator/admin`` 即可打开 HTML 仪表盘，展示：
@@ -1544,4 +1634,7 @@ def admin_dashboard():
 
     面板每 30 秒自动刷新，也可手动点击"刷新"按钮。
     """
-    return HTMLResponse(content=_build_admin_dashboard_html(), status_code=200)
+    state = _state_for_request(request)
+    return HTMLResponse(content=_build_admin_dashboard_html(
+        state["dashboard"], state["endpoints"], state["configured"]),
+        status_code=200)

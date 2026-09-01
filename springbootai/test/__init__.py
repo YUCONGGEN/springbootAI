@@ -34,7 +34,7 @@
 """
 from .slicing import TestPool, SpringBootTest, WebMvcTest, DataJpaTest
 
-__version__ = "2.3.10"
+__version__ = "2.3.11"
 
 __all__ = [
     "TestPool",

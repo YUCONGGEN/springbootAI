@@ -11,18 +11,73 @@
 底层优先复用 LangChain 生态（langchain_openai/langchain_community）做模型适配，
 未安装时降级原生 HTTP（requests），保证开箱即用。
 """
+import atexit
 import json
 import logging
+import math
+import threading
 import time
+import weakref
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
 
+import requests as _requests
+
 from springbootai.ai.core import (
     ChatModel, ChatResponse, EmbeddingModel, Generation, Message, MessageType,
+    _register_stream_cancel,
 )
 from springbootai.logging.context import outbound_request_id
 
 logger = logging.getLogger("Spring.AI")
+
+
+_ORIGINAL_REQUESTS_POST = _requests.post
+_PROVIDER_HTTP_LOCAL = threading.local()
+_PROVIDER_HTTP_SESSIONS = weakref.WeakSet()
+_PROVIDER_HTTP_SESSIONS_LOCK = threading.Lock()
+
+
+def _provider_http_session():
+    """Return a thread-confined pooled HTTP session."""
+    session = getattr(_PROVIDER_HTTP_LOCAL, "session", None)
+    if session is None:
+        session = _requests.Session()
+        adapter = _requests.adapters.HTTPAdapter(
+            pool_connections=16,
+            pool_maxsize=32,
+            max_retries=0,
+            pool_block=False,
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _PROVIDER_HTTP_LOCAL.session = session
+        with _PROVIDER_HTTP_SESSIONS_LOCK:
+            _PROVIDER_HTTP_SESSIONS.add(session)
+    return session
+
+
+def _provider_post(*args, **kwargs):
+    """POST through a pool while retaining the public monkeypatch seam."""
+    timeout = kwargs.pop("timeout", None)
+    if timeout is None:
+        raise ValueError("AI provider HTTP timeout is required")
+    if _requests.post is not _ORIGINAL_REQUESTS_POST:
+        return _requests.post(*args, timeout=timeout, **kwargs)
+    return _provider_http_session().post(*args, timeout=timeout, **kwargs)
+
+
+def _close_provider_http_sessions() -> None:
+    with _PROVIDER_HTTP_SESSIONS_LOCK:
+        sessions = list(_PROVIDER_HTTP_SESSIONS)
+    for session in sessions:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+atexit.register(_close_provider_http_sessions)
 
 
 class ProviderStreamError(RuntimeError):
@@ -230,6 +285,34 @@ def _validate_provider_payload(data, provider: str):
     return data
 
 
+def _validate_embeddings(vectors: Any, expected_count: int,
+                         provider: str) -> List[List[float]]:
+    if not isinstance(vectors, list) or len(vectors) != expected_count:
+        raise ProviderProtocolError(
+            f"{provider} returned an invalid embedding count")
+    normalized: List[List[float]] = []
+    dimension = None
+    for vector in vectors:
+        if not isinstance(vector, list) or not vector:
+            raise ProviderProtocolError(
+                f"{provider} returned an invalid embedding")
+        try:
+            converted = [float(value) for value in vector]
+        except (TypeError, ValueError):
+            raise ProviderProtocolError(
+                f"{provider} returned a non-numeric embedding") from None
+        if not all(math.isfinite(value) for value in converted):
+            raise ProviderProtocolError(
+                f"{provider} returned a non-finite embedding")
+        if dimension is None:
+            dimension = len(converted)
+        elif len(converted) != dimension:
+            raise ProviderProtocolError(
+                f"{provider} returned inconsistent embedding dimensions")
+        normalized.append(converted)
+    return normalized
+
+
 def _first_provider_choice(data: Mapping, provider: str) -> Mapping:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(
@@ -269,7 +352,7 @@ def _http_post_json(url, *, json_body, headers=None, timeout,
     def _do_post():
         resp = None
         try:
-            resp = requests.post(
+            resp = _provider_post(
                 url, json=json_body, headers=request_headers,
                 timeout=timeout, stream=True, allow_redirects=False,
             )
@@ -590,12 +673,23 @@ class OpenAIChatModel(ChatModel):
                tool_registry=None,
                options: Optional[Dict[str, Any]] = None):
         """真流式 - SSE 增量生成器"""
-        if self._llm is not None:
-            iterator = self._stream_via_langchain(messages, options)
-        else:
-            iterator = self._stream_via_http(messages, options)
-        yield from _observed_stream(
-            iterator, provider="openai", model=self.model)
+        tool_response = self._stream_tool_loop_response(
+            messages, tool_registry, options)
+        if tool_response is not None:
+            yield tool_response
+            return
+        provider_options, budget, initial = self._prepare_stream_request(
+            messages, tool_registry, options)
+        with self._provider_capacity():
+            if self._llm is not None:
+                iterator = self._stream_via_langchain(
+                    messages, provider_options)
+            else:
+                iterator = self._stream_via_http(messages, provider_options)
+            yield from _observed_stream(
+                self._bounded_stream(iterator, budget, initial),
+                provider="openai", model=self.model,
+            )
 
     async def astream(self, messages: List[Message],
                       tool_registry=None,
@@ -766,13 +860,14 @@ class OpenAIChatModel(ChatModel):
         for attempt in range(max_attempts):
             emitted = False
             try:
-                with requests.post(
+                with _provider_post(
                     f"{self.base_url}/chat/completions", json=payload, stream=True,
                     headers={"Authorization": f"Bearer {self.api_key}",
                              "Content-Type": "application/json",
                              "X-Request-ID": request_id},
                     timeout=self.timeout, allow_redirects=False,
                 ) as resp:
+                    _register_stream_cancel(getattr(resp, "close", None))
                     _reject_provider_redirect(resp, "openai")
                     resp.raise_for_status()
                     for line in _bounded_stream_lines(resp, "openai"):
@@ -886,13 +981,14 @@ class OpenAIEmbeddingModel(EmbeddingModel):
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         if self._embedder is not None:
-            return _provider_invoke(
+            vectors = _provider_invoke(
                 lambda: self._embedder.embed_documents(texts),
                 max_retries=self.max_retries,
                 retry_delay_ms=self.retry_delay_ms,
                 circuit_breaker=self.circuit_breaker,
                 provider="openai-embedding",
             )
+            return _validate_embeddings(vectors, len(texts), "openai")
         return self._embed_via_http(texts)
 
     def _embed_via_http(self, texts: List[str]) -> List[List[float]]:
@@ -907,7 +1003,27 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             circuit_breaker=self.circuit_breaker,
             provider="openai",
         )
-        return [item["embedding"] for item in data["data"]]
+        items = data.get("data")
+        if not isinstance(items, list):
+            raise ProviderProtocolError(
+                "openai returned an invalid embedding response")
+        ordered = []
+        for position, item in enumerate(items):
+            if not isinstance(item, Mapping) or "embedding" not in item:
+                raise ProviderProtocolError(
+                    "openai returned an invalid embedding response")
+            try:
+                index = int(item.get("index", position))
+            except (TypeError, ValueError):
+                raise ProviderProtocolError(
+                    "openai returned an invalid embedding index") from None
+            ordered.append((index, item["embedding"]))
+        ordered.sort(key=lambda entry: entry[0])
+        if [index for index, _ in ordered] != list(range(len(texts))):
+            raise ProviderProtocolError(
+                "openai returned duplicate or missing embedding indices")
+        return _validate_embeddings(
+            [vector for _, vector in ordered], len(texts), "openai")
 
 
 # ==================== OpenAI 兼容多 Provider（DeepSeek/Moonshot/ZhipuAI） ====================
@@ -1059,30 +1175,43 @@ class OpenAICompatChatModel(ChatModel):
             metadata=meta)
 
     def stream(self, messages, tool_registry=None, options=None):
-        if self._llm is not None:
-            llm = _bind_request_options(
-                self._llm, options, self.max_output_tokens, self._provider)
+        tool_response = self._stream_tool_loop_response(
+            messages, tool_registry, options)
+        if tool_response is not None:
+            yield tool_response
+            return
+        provider_options, budget, initial = self._prepare_stream_request(
+            messages, tool_registry, options)
+        with self._provider_capacity():
+            if self._llm is not None:
+                llm = _bind_request_options(
+                    self._llm, provider_options,
+                    self.max_output_tokens, self._provider)
 
-            def factory():
-                for chunk in llm.stream(_messages_to_langchain(messages)):
-                    content = (chunk.content if hasattr(chunk, "content")
-                               else str(chunk))
-                    if content:
-                        yield ChatResponse(
-                            generations=[Generation(
-                                output=Message.assistant(content))],
-                            metadata={"provider": self._provider, "stream": True})
+                def factory():
+                    for chunk in llm.stream(_messages_to_langchain(messages)):
+                        content = (chunk.content if hasattr(chunk, "content")
+                                   else str(chunk))
+                        if content:
+                            yield ChatResponse(
+                                generations=[Generation(
+                                    output=Message.assistant(content))],
+                                metadata={"provider": self._provider,
+                                          "stream": True})
 
-            iterator = _provider_stream(
-                factory, max_retries=self.max_retries,
-                retry_delay_ms=self.retry_delay_ms,
-                circuit_breaker=self.circuit_breaker,
-                provider=self._provider,
+                iterator = _provider_stream(
+                    factory, max_retries=self.max_retries,
+                    retry_delay_ms=self.retry_delay_ms,
+                    circuit_breaker=self.circuit_breaker,
+                    provider=self._provider,
+                )
+            else:
+                iterator = self._stream_via_http(
+                    messages, provider_options)
+            yield from _observed_stream(
+                self._bounded_stream(iterator, budget, initial),
+                provider=self._provider, model=self.model,
             )
-        else:
-            iterator = self._stream_via_http(messages, options)
-        yield from _observed_stream(
-            iterator, provider=self._provider, model=self.model)
 
     def _stream_via_http(self, messages, options):
         import requests
@@ -1100,7 +1229,7 @@ class OpenAICompatChatModel(ChatModel):
         for attempt in range(max_attempts):
             emitted = False
             try:
-                with requests.post(
+                with _provider_post(
                     f"{self.base_url}/chat/completions", json=payload,
                     stream=True,
                     headers={"Authorization": f"Bearer {self.api_key}",
@@ -1108,6 +1237,7 @@ class OpenAICompatChatModel(ChatModel):
                              "X-Request-ID": request_id},
                     timeout=self.timeout, allow_redirects=False,
                 ) as resp:
+                    _register_stream_cancel(getattr(resp, "close", None))
                     _reject_provider_redirect(resp, self._provider)
                     resp.raise_for_status()
                     for line in _bounded_stream_lines(resp, self._provider):
@@ -1333,10 +1463,21 @@ class OllamaChatModel(ChatModel):
                       **({"tool_calls": tool_calls} if tool_calls else {})})
 
     def stream(self, messages, tool_registry=None, options=None):
-        yield from _observed_stream(
-            self._stream_impl(messages, options),
-            provider="ollama", model=self.model,
-        )
+        tool_response = self._stream_tool_loop_response(
+            messages, tool_registry, options)
+        if tool_response is not None:
+            yield tool_response
+            return
+        provider_options, budget, initial = self._prepare_stream_request(
+            messages, tool_registry, options)
+        with self._provider_capacity():
+            yield from _observed_stream(
+                self._bounded_stream(
+                    self._stream_impl(messages, provider_options),
+                    budget, initial,
+                ),
+                provider="ollama", model=self.model,
+            )
 
     def _stream_impl(self, messages, options):
         import requests
@@ -1348,11 +1489,12 @@ class OllamaChatModel(ChatModel):
         for attempt in range(max_attempts):
             emitted = False
             try:
-                with requests.post(
+                with _provider_post(
                     f"{self.base_url}/api/chat", stream=True, timeout=self.timeout,
                     headers={"X-Request-ID": request_id},
                     json=payload, allow_redirects=False,
                 ) as resp:
+                    _register_stream_cancel(getattr(resp, "close", None))
                     _reject_provider_redirect(resp, "ollama")
                     resp.raise_for_status()
                     for line in _bounded_stream_lines(resp, "ollama"):
@@ -1431,9 +1573,11 @@ class OllamaEmbeddingModel(EmbeddingModel):
                 circuit_breaker=self.circuit_breaker,
                 provider="ollama",
             )
-            return data.get("embedding", [])
+            return _validate_embeddings(
+                [data.get("embedding", [])], 1, "ollama")[0]
 
-        return [_embed_one(t) for t in texts]
+        return _validate_embeddings(
+            [_embed_one(t) for t in texts], len(texts), "ollama")
 
 
 # ==================== 测试用 Fake ====================
@@ -1451,6 +1595,11 @@ class FakeChatModel(ChatModel):
         self.prefix = prefix
         self.simulate_tool_call = simulate_tool_call
         self.call_count = 0
+        # Synthetic LangChain agent tests deliberately echo their full prompt
+        # over several parser-recovery rounds. Keep production model defaults
+        # bounded while giving the non-network fake enough headroom to reach
+        # AgentExecutor's own iteration limit.
+        self.max_total_tokens = 1_000_000
 
     def _raw_call(self, messages, tool_registry=None, options=None):
         self.call_count += 1
@@ -1490,14 +1639,27 @@ class FakeChatModel(ChatModel):
         )
 
     def stream(self, messages, tool_registry=None, options=None):
-        """模拟流式：逐 2 字符 yield（不走工具闭环）"""
-        resp = self._raw_call(messages, tool_registry, options)
-        content = resp.content()
-        for i in range(0, len(content), 2):
-            yield ChatResponse(
-                generations=[Generation(output=Message.assistant(content[i:i+2]))],
-                metadata={"provider": "fake", "stream": True},
-            )
+        """模拟流式：普通回复逐 2 字符，工具调用安全降级为最终回复。"""
+        tool_response = self._stream_tool_loop_response(
+            messages, tool_registry, options)
+        if tool_response is not None:
+            yield tool_response
+            return
+        provider_options, budget, initial = self._prepare_stream_request(
+            messages, tool_registry, options)
+
+        def chunks():
+            resp = self._raw_call(messages, tool_registry, provider_options)
+            content = resp.content()
+            for i in range(0, len(content), 2):
+                yield ChatResponse(
+                    generations=[Generation(
+                        output=Message.assistant(content[i:i+2]))],
+                    metadata={"provider": "fake", "stream": True},
+                )
+
+        with self._provider_capacity():
+            yield from self._bounded_stream(chunks(), budget, initial)
 
 
 class FakeEmbeddingModel(EmbeddingModel):

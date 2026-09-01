@@ -4,6 +4,7 @@
 """
 import logging
 import math
+import threading
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -54,7 +55,7 @@ class NacosDiscoveryClient:
     MAX_TIMEOUT_SECONDS = 60.0
     
     _instance = None
-    _lock = __import__('threading').Lock()
+    _lock = threading.Lock()
     
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -83,6 +84,8 @@ class NacosDiscoveryClient:
         self._service_name: Optional[str] = None
         self._ip: str = "127.0.0.1"
         self._port: int = 8080
+        self._selection_lock = threading.Lock()
+        self._round_robin_counters: Dict[str, int] = {}
         self._initialized = True
 
     def configure(self, server_addr: Optional[str] = None, namespace: Optional[str] = None,
@@ -140,6 +143,8 @@ class NacosDiscoveryClient:
         if changed:
             self._client = None
             self._ready = False
+            with self._selection_lock:
+                self._round_robin_counters.clear()
 
     @classmethod
     def _normalize_timeout(cls, value: Any) -> float:
@@ -203,24 +208,16 @@ class NacosDiscoveryClient:
                         "Unable to apply Nacos credentials error_type=%s",
                         _safe_log_field(type(exc).__name__),
                     )
-            # 测试连接是否正常 - 发送一个测试服务注册
-            self._client.add_naming_instance(
-                service_name="_health_check",
-                ip="127.0.0.1",
-                port=0,
+            # Probe with a read-only API. A liveness check must never create a
+            # registry entry or require write permission in a production RBAC role.
+            list_services = getattr(self._client, "list_naming_services", None)
+            if not callable(list_services):
+                raise RuntimeError("Nacos SDK does not expose a read-only service probe")
+            list_services(
+                page_no=1,
+                page_size=1,
                 group_name=self.group,
-                ephemeral=True
             )
-            # 立即注销测试服务
-            try:
-                self._client.remove_naming_instance(
-                    service_name="_health_check",
-                    ip="127.0.0.1",
-                    port=0,
-                    group_name=self.group
-                )
-            except Exception:
-                pass
             self._ready = True
             logger.info(
                 "Connected to Nacos endpoint=%s",
@@ -424,6 +421,7 @@ class NacosDiscoveryClient:
                             'port': instance.port,
                             'weight': getattr(instance, 'weight', 1.0),
                             'healthy': getattr(instance, 'healthy', True),
+                            'enabled': getattr(instance, 'enabled', True),
                             'metadata': getattr(instance, 'metadata', {})
                         })
                     elif isinstance(instance, dict):
@@ -433,6 +431,7 @@ class NacosDiscoveryClient:
                             'port': instance.get('port', 0),
                             'weight': instance.get('weight', 1.0),
                             'healthy': instance.get('healthy', True),
+                            'enabled': instance.get('enabled', True),
                             'metadata': instance.get('metadata', {})
                         })
             
@@ -460,12 +459,31 @@ class NacosDiscoveryClient:
             return None
         
         # 过滤健康实例
-        healthy_instances = [i for i in instances if i.get('healthy', True)]
+        def eligible(instance: Dict[str, Any]) -> bool:
+            try:
+                port = int(instance.get('port', 0))
+                weight = float(instance.get('weight', 1.0))
+                return bool(
+                    instance.get('healthy', True)
+                    and instance.get('enabled', True)
+                    and instance.get('ip')
+                    and 1 <= port <= 65535
+                    and math.isfinite(weight)
+                    and weight > 0
+                )
+            except (TypeError, ValueError):
+                return False
+
+        healthy_instances = [instance for instance in instances if eligible(instance)]
         if not healthy_instances:
             return None
-        
-        # 使用轮询策略选择实例
-        return healthy_instances[0]
+
+        with self._selection_lock:
+            index = self._round_robin_counters.get(service_name, 0)
+            self._round_robin_counters[service_name] = (
+                index + 1
+            ) % len(healthy_instances)
+        return healthy_instances[index % len(healthy_instances)]
     
     def subscribe(self, service_name: str, callback) -> bool:
         """

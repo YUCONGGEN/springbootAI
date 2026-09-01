@@ -48,18 +48,25 @@ class PagingAndSortingRepository(Generic[T]):
         self.pool = pool
         self.entity_class = entity_class
         self.dialect = dialect.lower()
+        if self.dialect not in {"sqlite", "mysql", "postgresql"}:
+            raise ValueError(
+                "repository dialect must be sqlite, mysql, or postgresql")
         self._table = _parse_entity_table(entity_class)
         self._columns: List[dict] = [c for c in self._table.columns if not c.get("transient")]
-        self._pk = next((c for c in self._columns if c.get("primary_key")), None)
-        if self._pk is None:
+        primary_key = next(
+            (c for c in self._columns if c.get("primary_key")), None)
+        if primary_key is None:
             raise ValueError(
                 f"实体 {entity_class.__name__} 未声明主键（@Id），无法构建 Repository"
             )
+        self._pk: Dict[str, Any] = primary_key
         # py_name -> sql 列名 映射，供 Sort/Specification 翻译
-        self._col_map: Dict[str, str] = {
-            c.get("py_name") or c.get("name"): c.get("name") or c.get("py_name")
-            for c in self._columns
-        }
+        self._col_map: Dict[str, str] = {}
+        for column in self._columns:
+            python_name = column.get("py_name") or column.get("name")
+            sql_name = column.get("name") or column.get("py_name")
+            if python_name is not None and sql_name is not None:
+                self._col_map[str(python_name)] = str(sql_name)
 
     # ==================== 内部工具 ====================
 
@@ -67,6 +74,9 @@ class PagingAndSortingRepository(Generic[T]):
         if self.dialect == "mysql":
             return f"`{str(identifier).replace('`', '``')}`"
         return f'"{str(identifier).replace(chr(34), chr(34) * 2)}"'
+
+    def _placeholder(self) -> str:
+        return "%s" if self.dialect in {"mysql", "postgresql"} else "?"
 
     def _col_resolver(self, prop: str) -> str:
         if prop not in self._col_map:
@@ -89,8 +99,10 @@ class PagingAndSortingRepository(Generic[T]):
     def _execute(self, sql: str, params: list, fetch: bool = False):
         """执行 SQL。fetch=True 返回行列表，否则返回影响行数。"""
         conn = None
+        cursor = None
+        pooled = hasattr(self.pool, "connection")
         try:
-            if hasattr(self.pool, "connection"):
+            if pooled:
                 conn = self.pool.connection()
             else:
                 conn = self.pool
@@ -104,8 +116,20 @@ class PagingAndSortingRepository(Generic[T]):
             affected = cursor.rowcount
             conn.commit()
             return affected
+        except Exception:
+            if conn is not None and hasattr(conn, "rollback"):
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            raise
         finally:
-            if conn is not None and hasattr(self.pool, "connection"):
+            if cursor is not None and hasattr(cursor, "close"):
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn is not None and pooled:
                 try:
                     conn.close()
                 except Exception:
@@ -113,8 +137,10 @@ class PagingAndSortingRepository(Generic[T]):
 
     def _fetchone(self, sql: str, params: list):
         conn = None
+        cursor = None
+        pooled = hasattr(self.pool, "connection")
         try:
-            if hasattr(self.pool, "connection"):
+            if pooled:
                 conn = self.pool.connection()
             else:
                 conn = self.pool
@@ -123,8 +149,58 @@ class PagingAndSortingRepository(Generic[T]):
             row = cursor.fetchone()
             conn.commit()
             return row
+        except Exception:
+            if conn is not None and hasattr(conn, "rollback"):
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            raise
         finally:
-            if conn is not None and hasattr(self.pool, "connection"):
+            if cursor is not None and hasattr(cursor, "close"):
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn is not None and pooled:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def _execute_insert(self, sql: str, params: list,
+                        return_generated_id: bool = False) -> Any:
+        """Execute an INSERT and capture its generated key on the same cursor."""
+        conn = None
+        cursor = None
+        pooled = hasattr(self.pool, "connection")
+        try:
+            conn = self.pool.connection() if pooled else self.pool
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            if return_generated_id and self.dialect == "postgresql":
+                row = cursor.fetchone()
+                generated_id = row[0] if row else None
+            elif return_generated_id:
+                generated_id = getattr(cursor, "lastrowid", None)
+            else:
+                generated_id = None
+            conn.commit()
+            return generated_id
+        except Exception:
+            if conn is not None and hasattr(conn, "rollback"):
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            raise
+        finally:
+            if cursor is not None and hasattr(cursor, "close"):
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn is not None and pooled:
                 try:
                     conn.close()
                 except Exception:
@@ -141,42 +217,49 @@ class PagingAndSortingRepository(Generic[T]):
 
     def _insert(self, entity: T) -> T:
         non_auto = [c for c in self._columns if not c.get("auto_increment")]
-        cols = ", ".join(self._quote(c["name"]) for c in non_auto)
-        placeholders = ", ".join("?" for _ in non_auto)
         params = [self._get_field(entity, c["py_name"]) for c in non_auto]
-        sql = f"INSERT INTO {self._quote(self._table.table_name)} ({cols}) VALUES ({placeholders})"  # nosec B608
-        self._execute(sql, params)
+        if non_auto:
+            cols = ", ".join(self._quote(c["name"]) for c in non_auto)
+            placeholders = ", ".join(
+                self._placeholder() for _ in non_auto)
+            sql = f"INSERT INTO {self._quote(self._table.table_name)} ({cols}) VALUES ({placeholders})"  # nosec B608
+        elif self.dialect == "mysql":
+            sql = f"INSERT INTO {self._quote(self._table.table_name)} () VALUES ()"  # nosec B608
+        else:
+            sql = f"INSERT INTO {self._quote(self._table.table_name)} DEFAULT VALUES"  # nosec B608
+        returns_generated_id = bool(self._pk.get("auto_increment"))
+        if self.dialect == "postgresql" and returns_generated_id:
+            sql += f" RETURNING {self._quote(self._pk['name'])}"
+        generated_id = self._execute_insert(
+            sql, params, return_generated_id=returns_generated_id)
         # 自增主键回填
         if self._pk.get("auto_increment") and self._get_field(entity, self._pk["py_name"]) is None:
-            last = self._fetchone(
-                f"SELECT {self._quote(self._pk['name'])} FROM "  # nosec B608 - quoted entity metadata
-                f"{self._quote(self._table.table_name)} ORDER BY "
-                f"{self._quote(self._pk['name'])} DESC LIMIT 1", []
-            )
-            if last:
-                setattr(entity, self._pk["py_name"], last[0])
+            if generated_id is not None:
+                setattr(entity, self._pk["py_name"], generated_id)
         return entity
 
     def _update(self, entity: T) -> T:
         non_pk = [c for c in self._columns if not c.get("primary_key")]
-        set_parts = ", ".join(f"{self._quote(c['name'])} = ?" for c in non_pk)
+        marker = self._placeholder()
+        set_parts = ", ".join(
+            f"{self._quote(c['name'])} = {marker}" for c in non_pk)
         params = [self._get_field(entity, c["py_name"]) for c in non_pk]
         pk_val = self._get_field(entity, self._pk["py_name"])
         params.append(pk_val)
         sql = (f"UPDATE {self._quote(self._table.table_name)} SET {set_parts} "  # nosec B608
-               f"WHERE {self._quote(self._pk['name'])} = ?")
+               f"WHERE {self._quote(self._pk['name'])} = {marker}")
         self._execute(sql, params)
         return entity
 
     def find_by_id(self, id_: Any) -> Optional[T]:
         sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)} "  # nosec B608
-               f"WHERE {self._quote(self._pk['name'])} = ?")
+               f"WHERE {self._quote(self._pk['name'])} = {self._placeholder()}")
         row = self._fetchone(sql, [id_])
         return self._row_to_entity(row) if row else None
 
     def exists_by_id(self, id_: Any) -> bool:
         sql = (f"SELECT 1 FROM {self._quote(self._table.table_name)} "  # nosec B608
-               f"WHERE {self._quote(self._pk['name'])} = ? LIMIT 1")
+               f"WHERE {self._quote(self._pk['name'])} = {self._placeholder()} LIMIT 1")
         return self._fetchone(sql, [id_]) is not None
 
     def count(self, specification: Optional[Specification] = None) -> int:
@@ -187,7 +270,7 @@ class PagingAndSortingRepository(Generic[T]):
 
     def delete_by_id(self, id_: Any) -> int:
         sql = (f"DELETE FROM {self._quote(self._table.table_name)} "  # nosec B608
-               f"WHERE {self._quote(self._pk['name'])} = ?")
+               f"WHERE {self._quote(self._pk['name'])} = {self._placeholder()}")
         return self._execute(sql, [id_])
 
     def delete(self, entity: T) -> int:
@@ -231,7 +314,8 @@ class PagingAndSortingRepository(Generic[T]):
         order = self._sort_sql(pageable.sort)
         # SQLite/MySQL/PostgreSQL 均支持 LIMIT/OFFSET
         page_sql = (f"SELECT {self._column_list()} FROM {self._quote(self._table.table_name)}"  # nosec B608
-                    f"{where}{order} LIMIT ? OFFSET ?")
+                    f"{where}{order} LIMIT {self._placeholder()} "
+                    f"OFFSET {self._placeholder()}")
         rows = self._execute(page_sql, params + [pageable.limit, pageable.offset], fetch=True)
         content = [self._row_to_entity(r) for r in rows]
         # total 必须带同一 specification，否则分页总数与筛选条件不一致
@@ -242,6 +326,8 @@ class PagingAndSortingRepository(Generic[T]):
         if specification is None:
             return "", []
         sql, params = specification.to_predicate(self._col_resolver)
+        if self._placeholder() != "?":
+            sql = sql.replace("?", self._placeholder())
         return (f" WHERE {sql}" if sql else ""), params
 
     def _sort_sql(self, sort: Sort) -> str:

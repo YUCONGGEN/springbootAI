@@ -1,6 +1,6 @@
 # i18n 国际化 —— 中英文自动切换
 
-> SpringBootAI 2.3.10
+> SpringBootAI 2.3.11
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---

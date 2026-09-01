@@ -65,6 +65,7 @@ from springbootai.orm.pymybatis.annotations import (
 
 # 导入安全模块
 from springbootai.orm.pymybatis.security import (
+    AccessCondition,
     SensitiveDataMasker,
     PasswordEncoder,
     SQLInjectionDetector,
@@ -206,6 +207,7 @@ __all__ = [
     'DataSource',
     'MapperTransactional',
     # 安全模块
+    'AccessCondition',
     'SensitiveDataMasker',
     'PasswordEncoder',
     'SQLInjectionDetector',

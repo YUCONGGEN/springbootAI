@@ -18,7 +18,11 @@ def _config_prefix(config: Any) -> Dict[str, Any]:
         return {}
     getter = getattr(config, "get_prefix_config", None)
     if getter:
-        return getter("springbootai.langgraph") or {}
+        return (
+            getter("spring.langgraph")
+            or getter("springbootai.langgraph")
+            or {}
+        )
     if isinstance(config, dict):
         spring = config.get("spring", {}) or {}
         return dict((spring.get("langgraph", {}) or {}))
@@ -36,7 +40,9 @@ def _register(registry: BeanRegistry, name: str, bean: Any) -> None:
             bf.register_bean_definition(name, BeanDefinition(bean_class=type(bean), bean_name=name))
             bf.register_instance(name, bean)
     except Exception as exc:
-        logger.debug("LangGraph bean factory sync skipped: %s", exc)
+        logger.debug(
+            "LangGraph bean factory sync skipped error_type=%s",
+            type(exc).__name__)
 
 
 def configure_langgraph(
@@ -47,7 +53,7 @@ def configure_langgraph(
     tool_registry: Any = None,
     checkpointer: Any = None,
 ) -> Dict[str, Any]:
-    """Create LangGraph beans only when ``springbootai.langgraph.enabled`` is true.
+    """Create LangGraph beans only when ``spring.langgraph.enabled`` is true.
 
     ``model`` and ``tool_registry`` are normally resolved from ``springbootai.ai``
     by name, so applications keep one model, retry and tool policy.
@@ -57,7 +63,7 @@ def configure_langgraph(
         _config_prefix(config if config is not None else config_loader)
     )
     if not props.enabled:
-        logger.info("springbootai.langgraph.enabled=false; skipping LangGraph auto-configuration")
+        logger.info("spring.langgraph.enabled=false; skipping LangGraph auto-configuration")
         return {}
 
     selected_model = model or registry.get("aiChatModel") or registry.get("lcLangChainModel")

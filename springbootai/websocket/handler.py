@@ -71,7 +71,10 @@ class WebSocketHandler:
         pass
 
     async def handle_transport_error(self, session: WebSocketSession, exception: Exception) -> None:
-        logger.warning("WebSocket transport error on session %s: %s", session.id, exception)
+        logger.warning(
+            "WebSocket transport error session=%s error_type=%s",
+            session.id, type(exception).__name__,
+        )
 
     async def after_connection_closed(self, session: WebSocketSession, reason: str) -> None:
         """连接关闭后调用（默认 no-op）。"""
@@ -188,10 +191,11 @@ class AnnotatedEndpointHandler(WebSocketHandler):
                 await result
         except Exception as exc:
             logger.warning(
-                "ServerEndpoint %s.%s 抛异常: %s",
-                self._endpoint_cls.__name__, method.__name__, exc
+                "ServerEndpoint %s.%s failed error_type=%s",
+                self._endpoint_cls.__name__, method.__name__, type(exc).__name__,
             )
-            raise WebSocketHandlerException(str(exc)) from exc
+            raise WebSocketHandlerException(
+                "server endpoint handler failed") from exc
 
 
 # ==================== 端点发现 ====================

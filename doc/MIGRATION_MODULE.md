@@ -1,6 +1,6 @@
 # SpringBootAI 数据库迁移（Migration）—— 使用指南
 
-> SpringBootAI 2.3.10
+> SpringBootAI 2.3.11
 > 源码位置：`springbootai/orm/migration.py`
 > 对齐 Java：Flyway / Liquibase
 

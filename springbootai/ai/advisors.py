@@ -2,6 +2,7 @@
 Advisor 实现 - QuestionAnswerAdvisor（RAG）与 MessageChatMemoryAdvisor（会话记忆）。
 """
 import inspect
+import hashlib
 from urllib.parse import quote
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -27,8 +28,14 @@ class MessageChatMemoryAdvisor(Advisor):
 
     @staticmethod
     def _build_namespace(context: dict) -> str:
-        tenant = quote(str(context.get("tenant_id", "")).strip()[:128], safe="-_.~")
-        user = quote(str(context.get("user_id", "")).strip()[:128], safe="-_.~")
+        def identity_part(value: Any) -> str:
+            raw = str(value or "").strip()
+            if len(raw) > 128:
+                raw = "sha256-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            return quote(raw, safe="-_.~")
+
+        tenant = identity_part(context.get("tenant_id", ""))
+        user = identity_part(context.get("user_id", ""))
         parts = [p for p in (tenant, user) if p]
         return ":".join(parts) if parts else ""
 
@@ -52,9 +59,17 @@ class MessageChatMemoryAdvisor(Advisor):
             kwargs["namespace"] = namespace
         return method(*args, **kwargs)
 
-    def __init__(self, memory: ChatMemory, max_messages: int = 20):
+    def __init__(self, memory: ChatMemory, max_messages: int = 20,
+                 allow_global_namespace: bool = False):
+        if isinstance(max_messages, bool) or not isinstance(max_messages, int):
+            raise TypeError("max_messages must be an integer")
+        if not 1 <= max_messages <= 100_000:
+            raise ValueError("max_messages must be in [1, 100000]")
+        if not isinstance(allow_global_namespace, bool):
+            raise TypeError("allow_global_namespace must be a boolean")
         self.memory = memory
         self.max_messages = max_messages
+        self.allow_global_namespace = allow_global_namespace
 
     def advise_request(self, request: AdvisorRequest) -> AdvisorRequest:
         conv_id = request.context.get("conversation_id")
@@ -69,6 +84,14 @@ class MessageChatMemoryAdvisor(Advisor):
         # Namespace is passed per operation. Never mutate a shared memory bean:
         # concurrent requests may belong to different tenants.
         ns = self._build_namespace(request.context)
+        if not ns and not self.allow_global_namespace:
+            request.context["memory_disabled"] = True
+            logger = __import__("logging").getLogger("Spring.AI")
+            logger.debug(
+                "MessageChatMemoryAdvisor: authenticated tenant/user identity "
+                "is missing; skipping global memory access")
+            return request
+        request.context.pop("memory_disabled", None)
         request.context["memory_namespace"] = ns
 
         history = self._call_memory(
@@ -82,7 +105,7 @@ class MessageChatMemoryAdvisor(Advisor):
     def advise_response(self, response: ChatResponse,
                         request: AdvisorRequest) -> ChatResponse:
         conv_id = request.context.get("conversation_id")
-        if not conv_id:
+        if not conv_id or request.context.get("memory_disabled"):
             return response
         ns = str(request.context.get("memory_namespace") or
                  self._build_namespace(request.context))
@@ -120,7 +143,20 @@ class QuestionAnswerAdvisor(Advisor):
                  embedding_model=None,
                  harden_injection: bool = True,
                  filter_metadata: Optional[Dict[str, Any]] = None,
-                 filter_context_keys: Sequence[str] = ("tenant_id",)):
+                 filter_context_keys: Sequence[str] = ("tenant_id",),
+                 max_context_chars: int = 100_000,
+                 max_document_chars: int = 25_000):
+        if isinstance(top_k, bool) or not isinstance(top_k, int):
+            raise TypeError("top_k must be an integer")
+        if not 1 <= top_k <= 1000:
+            raise ValueError("top_k must be in [1, 1000]")
+        for name, value in (
+                ("max_context_chars", max_context_chars),
+                ("max_document_chars", max_document_chars)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if not 1 <= value <= 10_000_000:
+                raise ValueError(f"{name} must be in [1, 10000000]")
         self.vector_store = vector_store
         self.prompt_template = prompt_template or self.DEFAULT_PROMPT_TEMPLATE
         self.top_k = top_k
@@ -128,6 +164,8 @@ class QuestionAnswerAdvisor(Advisor):
         self.harden_injection = harden_injection
         self.filter_metadata = dict(filter_metadata or {})
         self.filter_context_keys = tuple(filter_context_keys)
+        self.max_context_chars = max_context_chars
+        self.max_document_chars = max_document_chars
 
     def advise_request(self, request: AdvisorRequest) -> AdvisorRequest:
         # 取最后一条用户消息作为查询
@@ -160,10 +198,49 @@ class QuestionAnswerAdvisor(Advisor):
             filter_metadata=filters or None,
         )
         docs = self.vector_store.similarity_search(search_req)
+        # Missing identity must never become an implicit "all tenants" scope.
+        # Public documents (without tenant/user metadata) remain available for
+        # single-tenant and public-knowledge use cases.
+        identity_keys = set(self.filter_context_keys) | {"user_id"}
+        identity_scoped = any(key in filters for key in identity_keys)
+        if not identity_scoped:
+            docs = [
+                doc for doc in docs
+                if isinstance(doc.metadata, dict)
+                and not any(
+                    doc.metadata.get(key) not in (None, "")
+                    for key in identity_keys
+                )
+            ]
         if not docs:
             return request
 
-        context = "\n---\n".join(d.content for d in docs)
+        selected_docs = []
+        context_parts: List[str] = []
+        remaining = self.max_context_chars
+        truncated = False
+        separator = "\n---\n"
+        for doc in docs:
+            content = str(doc.content or "")
+            if len(content) > self.max_document_chars:
+                content = content[:self.max_document_chars]
+                truncated = True
+            separator_cost = len(separator) if context_parts else 0
+            available = remaining - separator_cost
+            if available <= 0:
+                truncated = True
+                break
+            if len(content) > available:
+                content = content[:available]
+                truncated = True
+            if not content:
+                continue
+            context_parts.append(content)
+            selected_docs.append(doc)
+            remaining -= separator_cost + len(content)
+        if not context_parts:
+            return request
+        context = separator.join(context_parts)
         system_text = self.prompt_template.format(context=context)
         if self.harden_injection:
             # Prompt 注入加固：把外部文档与指令清晰隔离，并要求模型将上下文
@@ -179,8 +256,10 @@ class QuestionAnswerAdvisor(Advisor):
         request.messages = new_messages
         # 记录引用文档
         request.context["retrieved_documents"] = [
-            {"id": d.id, "content": d.content[:200]} for d in docs
+            {"id": d.id, "content": str(d.content)[:200]}
+            for d in selected_docs
         ]
+        request.context["retrieval_truncated"] = truncated
         return request
 
 
@@ -190,11 +269,24 @@ class SimpleLoggerAdvisor(Advisor):
     """
     order = 0
 
-    def __init__(self):
+    def __init__(self, max_events: int = 1000):
+        if isinstance(max_events, bool) or not isinstance(max_events, int) \
+                or max_events <= 0 or max_events > 100_000:
+            raise ValueError("max_events must be between 1 and 100000")
+        import threading
+        self.max_events = max_events
         self.events: List[Dict[str, Any]] = []
+        self._events_lock = threading.RLock()
+
+    def _record(self, event: Dict[str, Any]) -> None:
+        with self._events_lock:
+            self.events.append(event)
+            overflow = len(self.events) - self.max_events
+            if overflow > 0:
+                del self.events[:overflow]
 
     def advise_request(self, request: AdvisorRequest) -> AdvisorRequest:
-        self.events.append({
+        self._record({
             "phase": "request",
             "message_count": len(request.messages),
             "tools": len(request.tool_registry.names())
@@ -204,7 +296,7 @@ class SimpleLoggerAdvisor(Advisor):
 
     def advise_response(self, response: ChatResponse,
                         request: AdvisorRequest) -> ChatResponse:
-        self.events.append({
+        self._record({
             "phase": "response",
             "content_length": len(response.content()),
         })

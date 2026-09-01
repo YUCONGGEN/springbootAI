@@ -13,7 +13,7 @@ class LangGraphConfigurationError(ValueError):
 
 @dataclass(frozen=True)
 class LangGraphProperties:
-    """Configuration bound from ``springbootai.langgraph``.
+    """Configuration bound from ``spring.langgraph``.
 
     The module is disabled by default.  An in-memory checkpointer is explicitly
     opt-in because it is suitable for tests only and is lost on process restart.
@@ -27,11 +27,15 @@ class LangGraphProperties:
     allow_in_memory: bool = False
     require_thread_id: bool = True
     max_input_bytes: int = 65_536
+    max_output_bytes: int = 10 * 1024 * 1024
+    max_stream_events: int = 10_000
+    max_concurrent_executions: int = 16
+    acquire_timeout_seconds: float = 1.0
     stream_mode: str = "updates"
 
     def validate(self) -> "LangGraphProperties":
         if not self.name or len(self.name) > 128:
-            raise LangGraphConfigurationError("springbootai.langgraph.name must be 1-128 characters")
+            raise LangGraphConfigurationError("spring.langgraph.name must be 1-128 characters")
         if self.timeout_seconds <= 0 or self.timeout_seconds > 600:
             raise LangGraphConfigurationError("timeout_seconds must be in (0, 600]")
         if self.max_steps < 1 or self.max_steps > 1000:
@@ -44,6 +48,16 @@ class LangGraphProperties:
             )
         if self.max_input_bytes < 1024 or self.max_input_bytes > 10 * 1024 * 1024:
             raise LangGraphConfigurationError("max_input_bytes must be in [1024, 10485760]")
+        if self.max_output_bytes < 1024 or self.max_output_bytes > 100 * 1024 * 1024:
+            raise LangGraphConfigurationError("max_output_bytes must be in [1024, 104857600]")
+        if self.max_stream_events < 1 or self.max_stream_events > 1_000_000:
+            raise LangGraphConfigurationError("max_stream_events must be in [1, 1000000]")
+        if self.max_concurrent_executions < 1 or self.max_concurrent_executions > 1024:
+            raise LangGraphConfigurationError(
+                "max_concurrent_executions must be in [1, 1024]"
+            )
+        if self.acquire_timeout_seconds <= 0 or self.acquire_timeout_seconds > 60:
+            raise LangGraphConfigurationError("acquire_timeout_seconds must be in (0, 60]")
         if self.stream_mode not in {"values", "updates", "messages", "debug", "custom"}:
             raise LangGraphConfigurationError("unsupported stream_mode")
         return self
@@ -82,7 +96,7 @@ def _float(value: Any, default: float) -> float:
 
 
 def bind_langgraph_config(data: Mapping[str, Any] | None = None) -> LangGraphProperties:
-    """Bind a ``springbootai.langgraph`` mapping and environment overrides."""
+    """Bind a ``spring.langgraph`` mapping and environment overrides."""
 
     data = data or {}
     def env_or(key: str, env_name: str, default: Any) -> Any:
@@ -108,6 +122,25 @@ def bind_langgraph_config(data: Mapping[str, Any] | None = None) -> LangGraphPro
         ),
         "max_input_bytes": _int(
             env_or("max_input_bytes", "LG_MAX_INPUT_BYTES", 65_536), 65_536
+        ),
+        "max_output_bytes": _int(
+            env_or("max_output_bytes", "LG_MAX_OUTPUT_BYTES", 10 * 1024 * 1024),
+            10 * 1024 * 1024,
+        ),
+        "max_stream_events": _int(
+            env_or("max_stream_events", "LG_MAX_STREAM_EVENTS", 10_000), 10_000
+        ),
+        "max_concurrent_executions": _int(
+            env_or(
+                "max_concurrent_executions",
+                "LG_MAX_CONCURRENT_EXECUTIONS",
+                16,
+            ),
+            16,
+        ),
+        "acquire_timeout_seconds": _float(
+            env_or("acquire_timeout_seconds", "LG_ACQUIRE_TIMEOUT_SECONDS", 1.0),
+            1.0,
         ),
         "stream_mode": str(
             env_or("stream_mode", "LG_STREAM_MODE", "updates")

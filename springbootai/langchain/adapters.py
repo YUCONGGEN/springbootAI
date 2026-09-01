@@ -148,7 +148,9 @@ def _make_langchain_chat_model(spring_chat_model: ChatModel):
                 try:
                     registry.register(name, func, description=desc)
                 except Exception as exc:
-                    logger.debug("工具 %s 注册失败: %s", name, exc)
+                    logger.debug(
+                        "工具 %s 注册失败 error_type=%s",
+                        name, type(exc).__name__)
             # 返回新实例，持有 tool_registry（不污染原适配器）
             return _SpringChatModelAdapter(
                 spring_model=self._spring_model, tool_registry=registry)
@@ -220,7 +222,9 @@ class LangChainModelToSpring(ChatModel):
         try:
             result = model.invoke(lc_messages)
         except Exception as exc:
-            logger.error("langchain 模型调用失败: %s", exc)
+            logger.error(
+                "langchain 模型调用失败 error_type=%s",
+                type(exc).__name__)
             raise
         content = getattr(result, "content", str(result))
         usage = getattr(result, "usage_metadata", None) or {}

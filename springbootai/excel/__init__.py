@@ -33,7 +33,7 @@ from .reader import ExcelReader
 from .writer import ExcelWriter
 from .easy_excel import EasyExcel, read_excel, write_excel
 
-__version__ = "2.3.10"
+__version__ = "2.3.11"
 
 __all__ = [
     # 异常

@@ -1,4 +1,4 @@
-"""Synchronous application event publication for managed beans."""
+"""Deterministic synchronous and asynchronous application event publication."""
 
 import asyncio
 import inspect
@@ -37,28 +37,62 @@ class ApplicationEventPublisher:
             ]
 
     def publish_event(self, event: Any) -> ApplicationEvent:
-        if not isinstance(event, ApplicationEvent):
-            event = ApplicationEvent(source=event)
+        event, listeners = self._matching_listeners(event)
 
-        with self._lock:
-            listeners = list(self._listeners)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = False
+        else:
+            running_loop = True
 
-        for event_type, callback, _, _ in listeners:
-            if event_type is not None and not isinstance(event, event_type):
-                continue
+        if running_loop and any(
+            inspect.iscoroutinefunction(callback)
+            for _, callback, _, _ in listeners
+        ):
+            raise RuntimeError(
+                "async event listeners require 'await publish_event_async(...)' "
+                "when an event loop is running"
+            )
+
+        for _, callback, _, _ in listeners:
             result = callback(event)
             if inspect.isawaitable(result):
-                self._finish_awaitable(result)
+                if running_loop:
+                    close = getattr(result, "close", None)
+                    if callable(close):
+                        close()
+                    raise RuntimeError(
+                        "an event listener returned an awaitable; use "
+                        "'await publish_event_async(...)'"
+                    )
+                asyncio.run(result)
         return event
 
-    @staticmethod
-    def _finish_awaitable(awaitable) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(awaitable)
-        else:
-            loop.create_task(awaitable)
+    async def publish_event_async(self, event: Any) -> ApplicationEvent:
+        """Publish an event and await every matching listener in order.
+
+        Exceptions are propagated to the publisher instead of being lost in a
+        detached task, so callers can apply transaction/retry semantics.
+        """
+        event, listeners = self._matching_listeners(event)
+        for _, callback, _, _ in listeners:
+            result = callback(event)
+            if inspect.isawaitable(result):
+                await result
+        return event
+
+    def _matching_listeners(
+        self, event: Any
+    ) -> Tuple[ApplicationEvent, List[ListenerEntry]]:
+        if not isinstance(event, ApplicationEvent):
+            event = ApplicationEvent(source=event)
+        with self._lock:
+            listeners = [
+                entry for entry in self._listeners
+                if entry[0] is None or isinstance(event, entry[0])
+            ]
+        return event, listeners
 
     def listener_count(self) -> int:
         with self._lock:

@@ -288,9 +288,13 @@ class NacosConfigClient:
                                 interval * 32,
                             )
                         if self._listener_failures in {1, 2, 4, 6} or callback_failed:
-                            logger.error("Ignoring Nacos config refresh failure: %s", exc)
+                            logger.error(
+                                "Ignoring Nacos config refresh failure "
+                                "error_type=%s", type(exc).__name__)
                         else:
-                            logger.debug("Ignoring Nacos config refresh failure: %s", exc)
+                            logger.debug(
+                                "Ignoring Nacos config refresh failure "
+                                "error_type=%s", type(exc).__name__)
             finally:
                 with self._state_lock:
                     if self._listener_generation == generation:

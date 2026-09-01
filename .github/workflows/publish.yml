@@ -15,7 +15,7 @@ name: Publish
 #
 # 版本：pyproject.toml 是单一来源。GitHub Release 必须使用严格匹配
 # v<version> 的 tag；手动触发时允许从当前分支发布，便于修复发布工作流
-# 后重新执行尚未上传的版本。
+# 后重新执行尚未上传的版本；两种触发方式都要求当前提交的 CI 已成功。
 # ====================================================================
 
 on:
@@ -34,6 +34,7 @@ jobs:
       # PyPI Trusted Publishing（OIDC）要求 id-token 写权限
       id-token: write
       contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +43,31 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Resolve release commit
+        id: release-commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Require successful CI for this commit
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = '${{ steps.release-commit.outputs.sha }}';
+            const response = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              head_sha: sha,
+              status: 'completed',
+              per_page: 100,
+            });
+            const passed = response.data.workflow_runs.some(
+              run => run.conclusion === 'success'
+            );
+            if (!passed) {
+              core.setFailed(`No successful CI run found for commit ${sha}`);
+            }
 
       - name: Install build tooling
         run: |
@@ -78,8 +104,18 @@ jobs:
           pip install -r requirements-ai.txt
           pip install -r requirements-langgraph.txt
           pip install -r requirements-mcp.txt
-          pip install bandit==1.9.4 pip-audit==2.10.1
-          pytest tests/ tests/runtime/ -q --cov=springbootai --cov-report=term --cov-fail-under=60 \
+          pip install bandit==1.9.4 pip-audit==2.10.1 ruff==0.16.2 mypy==1.18.2
+          ruff check springbootai --select E9,F63,F7,F82,F601
+          ruff check \
+            springbootai/ai/tools.py springbootai/cloud/bus.py \
+            springbootai/cloud/tracer.py springbootai/mcp/client.py \
+            springbootai/mcp/config.py springbootai/monitoring/prometheus.py \
+            springbootai/orm/pymybatis/core/sql_session.py \
+            springbootai/orm/pymybatis/security/access_control.py \
+            springbootai/tx/synchronization.py \
+            --select E9,F63,F7,F82,F601,B,ASYNC
+          python -m mypy
+          pytest tests/ tests/runtime/ -q --cov=springbootai --cov-report=term --cov-fail-under=68 \
             --deselect tests/test_mcp_module.py::test_real_stdio_subprocess_transport \
             --deselect tests/test_mcp_module.py::test_real_streamable_http_transport \
             --deselect tests/runtime/test_runtime_hardening.py::test_sync_controller_runs_outside_event_loop \
@@ -87,7 +123,7 @@ jobs:
             --deselect tests/test_ai_module.py::TestObservability::test_autoconfig_creates_circuit_breaker_for_provider \
             --deselect tests/test_ai_module.py::TestAIPropertiesBinding::test_configure_ai_uses_typed_props_for_openai_circuit_breaker \
             --deselect tests/test_langchain_module.py::TestAutoConfig::test_configure_langchain_disabled
-          bandit -r springbootai/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ -lll -q
+          bandit -r springbootai/ examples/example_langchain/ examples/example_langgraph/ examples/example_mcp/ -ll -q
           pip-audit -r requirements-lock.txt --timeout 60 --progress-spinner off
           pip-audit -r requirements-ai.txt --timeout 60 --progress-spinner off
           pip-audit -r requirements-langgraph.txt --timeout 60 --progress-spinner off
@@ -107,6 +143,10 @@ jobs:
               exit 1
             }
           done
+          python -m zipfile -l dist/*.whl | grep "springbootai/py.typed" || {
+            echo "::error::springbootai/py.typed marker not found in wheel"
+            exit 1
+          }
 
       - name: Verify wheel installs from a clean environment
         run: |

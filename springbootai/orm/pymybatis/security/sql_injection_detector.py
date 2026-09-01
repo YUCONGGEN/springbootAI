@@ -19,6 +19,8 @@ from collections.abc import Mapping, Sequence, Set as AbstractSet
 from typing import Optional, Any, Dict, Set
 from enum import Enum
 
+from springbootai.logging.context import safe_log_field
+
 logger = logging.getLogger(__name__)
 
 
@@ -264,9 +266,12 @@ class SQLInjectionDetector:
 
             # 检查AST结构中的危险模式
             return self._analyze_ast(parsed)
-        except Exception as e:
+        except Exception as exc:
             # 解析失败，可能是恶意输入
-            logger.debug(f"AST解析失败，可能存在注入风险: {e}")
+            logger.debug(
+                "AST解析失败，可能存在注入风险 error_type=%s",
+                type(exc).__name__,
+            )
             return SQLInjectionLevel.MEDIUM
 
     def _analyze_ast(self, parsed) -> SQLInjectionLevel:
@@ -332,7 +337,10 @@ class SQLInjectionDetector:
         # 首先使用正则检测
         for pattern in self.DDL_PATTERNS:
             if pattern.pattern.search(sql.strip()):
-                logger.warning(f"检测到DDL语句: {sql}")
+                logger.warning(
+                    "检测到DDL语句 type=%s sql_length=%d",
+                    pattern.description, len(sql),
+                )
                 return True
 
         # 如果启用了AST验证，进行二次验证
@@ -344,7 +352,10 @@ class SQLInjectionDetector:
                     for node in parsed.walk():
                         node_type = type(node).__name__
                         if node_type in ['Drop', 'Truncate', 'Alter', 'Create', 'Grant', 'Revoke']:
-                            logger.warning(f"AST检测到DDL语句: {sql}")
+                            logger.warning(
+                                "AST检测到DDL语句 type=%s sql_length=%d",
+                                node_type, len(sql),
+                            )
                             return True
                 except Exception:
                     pass
@@ -389,7 +400,11 @@ class SQLInjectionDetector:
 
         # 检查白名单模式
         if re.search(r"(?:;|--|/\*|\*/|['\"`]|\x00|[\r\n\t])", param_value):
-            logger.warning(f"${{{param_name}}} 参数值包含SQL控制字符: {param_value}")
+            logger.warning(
+                "原始SQL参数被拒绝 name=%s reason=control_character "
+                "value_length=%d",
+                safe_log_field(param_name), len(param_value),
+            )
             return False
 
         for pattern in self.RAW_PARAM_WHITELIST_PATTERNS:
@@ -398,16 +413,26 @@ class SQLInjectionDetector:
                 if param_type == 'table' and self.allowed_tables:
                     if param_value.lower() in [t.lower() for t in self.allowed_tables]:
                         return True
-                    logger.warning(f"${{{param_name}}} 参数值不在允许的表名单中: {param_value}")
+                    logger.warning(
+                        "原始SQL参数被拒绝 name=%s reason=table_not_allowed",
+                        safe_log_field(param_name),
+                    )
                     return False
                 if param_type == 'column' and self.allowed_columns:
                     if param_value.lower() in [c.lower() for c in self.allowed_columns]:
                         return True
-                    logger.warning(f"${{{param_name}}} 参数值不在允许的字段名单中: {param_value}")
+                    logger.warning(
+                        "原始SQL参数被拒绝 name=%s reason=column_not_allowed",
+                        safe_log_field(param_name),
+                    )
                     return False
                 return True
 
-        logger.warning(f"${{{param_name}}} 参数值不在白名单中: {param_value}")
+        logger.warning(
+            "原始SQL参数被拒绝 name=%s reason=invalid_identifier "
+            "value_length=%d",
+            safe_log_field(param_name), len(param_value),
+        )
         return False
 
     def validate_table_name(self, table_name: str) -> bool:
@@ -620,8 +645,8 @@ class SQLInjectionDetector:
                     ast_analysis = 'valid'
                 else:
                     ast_analysis = 'sqlglot_not_available'
-            except Exception as e:
-                ast_analysis = f'parse_error: {str(e)[:50]}'
+            except Exception as exc:
+                ast_analysis = f'parse_error:{type(exc).__name__}'
 
         return {
             'level': max_level.name,

@@ -11,6 +11,7 @@
 - 缺失 Authorization 头 / 无效 Bearer 前缀 / scope 不足
 """
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -28,11 +29,45 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from springbootai.security.oauth2 import (
-    OAuth2ResourceServer,
+    JwksCache, OAuth2ResourceServer,
     OAuth2TokenValidationError,
     init_oauth2,
     oauth2_resource_server,
 )
+
+
+def test_jwks_cache_singleflights_concurrent_refresh(monkeypatch):
+    cache = JwksCache(
+        "https://issuer.example/jwks", request_timeout=1,
+        refresh_interval=60,
+    )
+    calls = 0
+    calls_lock = threading.Lock()
+
+    def fetch():
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        time.sleep(0.04)
+        return {"key-1": {"kid": "key-1", "kty": "RSA"}}
+
+    monkeypatch.setattr(cache, "_fetch_jwks", fetch)
+    barrier = threading.Barrier(8)
+    results = []
+
+    def lookup():
+        barrier.wait()
+        results.append(cache.get_key("key-1"))
+
+    threads = [threading.Thread(target=lookup) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert calls == 1
+    assert len(results) == 8
+    assert all(result["kid"] == "key-1" for result in results)
 
 
 # ==================== 测试常量 ====================

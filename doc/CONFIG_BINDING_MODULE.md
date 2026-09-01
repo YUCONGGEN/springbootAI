@@ -1,6 +1,6 @@
 # 配置绑定 —— 把 YAML 配置自动变成 Python 对象
 
-> SpringBootAI 2.3.10
+> SpringBootAI 2.3.11
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---
@@ -185,6 +185,7 @@ JSON 结构，顶层包含 `version`、`metadata` 和 `properties` 三部分：
 | `jwt.expires_in` | Integer | `3600` | Access Token 过期时间（秒） |
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` | String | — | OAuth2 Authorization Server 的 Issuer URI |
 | `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` | String | — | OAuth2 JWKS 公钥集 URI |
+| `spring.security.oauth2.resourceserver.jwt.jwks-max-stale-age` | Integer | `86400` | 刷新失败时允许使用旧 JWKS 的最大秒数，超过后拒绝旧密钥 |
 | `rabbitmq.host` | String | `localhost` | RabbitMQ 主机 |
 | `rabbitmq.port` | Integer | `5672` | RabbitMQ 端口 |
 | `spring.kafka.bootstrap-servers` | String | `localhost:9092` | Kafka Bootstrap Servers |

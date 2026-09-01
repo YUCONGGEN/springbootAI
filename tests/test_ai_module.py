@@ -233,6 +233,38 @@ class TestVectorStore:
         results = store.similarity_search(SearchRequest(query=""))
         assert results == []
 
+    def test_search_request_rejects_invalid_top_k(self):
+        with pytest.raises(ValueError, match="greater than zero"):
+            SearchRequest(query="x", embedding=[1.0], top_k=0)
+        with pytest.raises(ValueError, match="greater than zero"):
+            SearchRequest(query="x", embedding=[1.0], top_k=-1)
+
+    def test_async_inmemory_retriever_does_not_block_event_loop(self):
+        import asyncio
+        import time
+
+        class SlowEmbedding:
+            def embed_one(self, _text):
+                time.sleep(0.08)
+                return [1.0, 0.0]
+
+        store = SimpleInMemoryVectorStore(SlowEmbedding())
+        store.add([VectorDocument("1", "doc", [1.0, 0.0])])
+        retriever = store.as_retriever()
+
+        async def scenario():
+            started = time.perf_counter()
+
+            async def heartbeat():
+                await asyncio.sleep(0.01)
+                return time.perf_counter() - started
+
+            _, heartbeat_delay = await asyncio.gather(
+                retriever.ainvoke("query"), heartbeat())
+            return heartbeat_delay
+
+        assert asyncio.run(scenario()) < 0.05
+
     def test_langchain_vectorstore_adapter(self):
         """LangChainVectorStore 包装 langchain 向量库（用 stub 模拟）"""
         emb = FakeEmbeddingModel(dim=4)
@@ -390,7 +422,8 @@ class TestAdvisors:
         """MessageChatMemoryAdvisor 请求注入历史、响应保存对话"""
         model = FakeChatModel(prefix="AI:")
         memory = InMemoryChatMemory()
-        advisor = MessageChatMemoryAdvisor(memory)
+        advisor = MessageChatMemoryAdvisor(
+            memory, allow_global_namespace=True)
         client = (ChatClientBuilder(model)
                   .default_advisors(advisor).build())
 
@@ -630,7 +663,8 @@ class TestIntegrationScenarios:
         model = FakeChatModel(prefix="AI:")
         memory = InMemoryChatMemory()
         client = (ChatClientBuilder(model)
-                  .default_advisors(MessageChatMemoryAdvisor(memory)).build())
+                  .default_advisors(MessageChatMemoryAdvisor(
+                      memory, allow_global_namespace=True)).build())
 
         client.prompt().user("我叫张三").param("conversation_id", "u1").call()
         client.prompt().user("我叫什么").param("conversation_id", "u1").call()
@@ -1222,11 +1256,11 @@ class TestP1Fixes:
             store.add([Document(id=f"doc-{i}", content=f"text{i}",
                                 embedding=[float(i)])])
         assert store.count() == 5  # count 不受限
-        # similarity_search 应受 max_scan 限制
+        # 超过 max_scan 时必须失败而不是在 Redis 的任意子集上返回伪精确结果
         from springbootai.ai.vectorstore import SearchRequest
-        results = store.similarity_search(SearchRequest(
-            query="", embedding=[0.0], top_k=10))
-        assert len(results) <= 2  # max_scan=2
+        with pytest.raises(RuntimeError, match="exceeding max_scan"):
+            store.similarity_search(SearchRequest(
+                query="", embedding=[0.0], top_k=10))
 
     def test_circuit_breaker_accepts_redis_client(self):
         """AICircuitBreaker 接受 redis_client 参数，Redis 可用时同步状态"""
@@ -1291,7 +1325,8 @@ class TestOptimizationFixes:
         from springbootai.ai import (ChatClientBuilder, FakeChatModel,
                                InMemoryChatMemory, MessageChatMemoryAdvisor)
         memory = InMemoryChatMemory(max_messages=20)
-        advisor = MessageChatMemoryAdvisor(memory)
+        advisor = MessageChatMemoryAdvisor(
+            memory, allow_global_namespace=True)
         model = FakeChatModel(prefix="AI:")
         client = (ChatClientBuilder(model).default_advisors(advisor).build())
         # 消费完整流式

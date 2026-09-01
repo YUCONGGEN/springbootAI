@@ -101,6 +101,8 @@ class JwtUtils:
             # 检测到用户仍配置为旧版硬编码默认值，拒绝并生成随机密钥
             secret_key = _generate_random_secret_key()
             _warn_insecure_key("检测到旧版硬编码默认密钥，已自动替换为随机密钥")
+        elif len(str(secret_key).encode("utf-8")) < 32:
+            raise ValueError("JWT secret_key must be at least 32 bytes")
         self.secret_key = secret_key
         self.algorithm = normalized_algorithm
         self.issuer = issuer

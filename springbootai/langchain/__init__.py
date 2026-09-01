@@ -90,7 +90,7 @@ from springbootai.langchain.annotations import (
     bind_langchain_client,
 )
 
-__version__ = "2.3.10"
+__version__ = "2.3.11"
 
 __all__ = [
     # core

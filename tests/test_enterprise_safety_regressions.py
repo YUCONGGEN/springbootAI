@@ -1,6 +1,7 @@
 """Regression coverage for production-safety boundaries."""
 import asyncio
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -316,3 +317,70 @@ def test_seata_at_mode_invokes_registered_commit_and_rollback_callbacks():
     finally:
         manager._cleanup_context()
         manager.set_mode(previous_mode)
+
+
+def test_health_and_actuator_contexts_are_isolated_per_application():
+    from springbootai.web.actuator import actuator_router, configure_actuator
+    from springbootai.web.health import configure_health_checks, health_router
+
+    class WebContext:
+        def __init__(self, app):
+            self._app = app
+
+        def get_app(self):
+            return self._app
+
+    class Context:
+        def __init__(self, app, name):
+            self.web_context = WebContext(app)
+            self._config = {
+                "spring": {"application": {"name": name}},
+                "management": {"endpoints": {"web": {
+                    "security": {"enabled": False},
+                }}},
+            }
+
+        def get_config(self):
+            return self._config
+
+    apps = []
+    for name in ("application-a", "application-b"):
+        app = FastAPI()
+        context = Context(app, name)
+        configure_health_checks(context)
+        configure_actuator(context)
+        app.include_router(health_router, prefix="/actuator")
+        app.include_router(actuator_router, prefix="/actuator")
+        apps.append(app)
+
+    first = TestClient(apps[0])
+    second = TestClient(apps[1])
+    assert first.get("/actuator/info").json()["application"]["name"] == "application-a"
+    assert second.get("/actuator/info").json()["application"]["name"] == "application-b"
+    first_env = first.get("/actuator/env").json()
+    second_env = second.get("/actuator/env").json()
+    assert first_env["propertySources"][0]["properties"]["spring"]["application"]["name"] == "application-a"
+    assert second_env["propertySources"][0]["properties"]["spring"]["application"]["name"] == "application-b"
+
+
+def test_unexposed_actuator_endpoint_returns_not_found():
+    from springbootai.web.actuator import actuator_router, configure_actuator
+
+    app = FastAPI()
+
+    class Context:
+        def __init__(self, application):
+            self.web_context = SimpleNamespace(
+                get_app=lambda: application)
+
+        @staticmethod
+        def get_config():
+            return {"management": {"endpoints": {"web": {
+                "security": {"enabled": True},
+                "exposure": {"include": []},
+            }}}}
+
+    configure_actuator(Context(app))
+    app.include_router(actuator_router, prefix="/actuator")
+    response = TestClient(app).get("/actuator/env")
+    assert response.status_code == 404

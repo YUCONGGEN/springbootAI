@@ -7,6 +7,12 @@ SpringBootAI AI 核心抽象 - 对齐 Spring AI 的 ChatClient / ChatModel / Emb
 - Advisor 封装 RAG / Memory 等横切模式，在模型调用前后介入
 """
 import logging
+import json
+import math
+import threading
+import contextvars
+from collections.abc import Mapping
+from contextlib import contextmanager
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -20,6 +26,68 @@ class TokenBudgetExceededError(RuntimeError):
 
 class ToolLoopLimitExceededError(RuntimeError):
     """Raised when a model continues requesting tools past the configured limit."""
+
+
+class AIConcurrencyLimitError(RuntimeError):
+    """Raised when provider capacity cannot be acquired within the limit."""
+
+
+_capacity_owner: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar(
+    "springbootai_ai_capacity_owner", default=None)
+
+
+class _StreamCancellation:
+    """Thread-safe cancellation callbacks for a blocking provider stream."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._callbacks = set()
+        self._cancelled = False
+
+    def register(self, callback):
+        with self._lock:
+            if self._cancelled:
+                invoke_now = True
+            else:
+                self._callbacks.add(callback)
+                invoke_now = False
+        if invoke_now:
+            try:
+                callback()
+            except Exception:
+                pass
+
+        def unregister():
+            with self._lock:
+                self._callbacks.discard(callback)
+
+        return unregister
+
+    def cancel(self):
+        with self._lock:
+            self._cancelled = True
+            callbacks = list(self._callbacks)
+            self._callbacks.clear()
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                pass
+
+
+_stream_cancellation_owner: contextvars.ContextVar[
+    Optional[_StreamCancellation]
+] = contextvars.ContextVar(
+    "springbootai_ai_stream_cancellation", default=None)
+
+
+def _register_stream_cancel(callback):
+    if not callable(callback):
+        return lambda: None
+    owner = _stream_cancellation_owner.get()
+    if owner is None:
+        return lambda: None
+    return owner.register(callback)
 
 
 # ==================== 消息与响应 ====================
@@ -97,6 +165,156 @@ class ChatModel(ABC):
 
     MAX_TOOL_ITERATIONS = 5
     MAX_TOTAL_TOKENS = 100_000
+    MAX_INPUT_BYTES = 2 * 1024 * 1024
+    MAX_CONCURRENT_REQUESTS = 32
+    CONCURRENCY_ACQUIRE_TIMEOUT = 30.0
+    _capacity_setup_lock = threading.Lock()
+
+    def _capacity_semaphore(self):
+        capacity = max(1, int(getattr(
+            self, "max_concurrent_requests", self.MAX_CONCURRENT_REQUESTS)))
+        state = getattr(self, "_springbootai_capacity_state", None)
+        if state is not None and state[0] == capacity:
+            return state[1]
+        with self._capacity_setup_lock:
+            state = getattr(self, "_springbootai_capacity_state", None)
+            if state is None or state[0] != capacity:
+                state = (capacity, threading.BoundedSemaphore(capacity))
+                setattr(self, "_springbootai_capacity_state", state)
+            return state[1]
+
+    def _capacity_timeout(self) -> float:
+        value = float(getattr(
+            self, "concurrency_acquire_timeout",
+            self.CONCURRENCY_ACQUIRE_TIMEOUT))
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(
+                "concurrency_acquire_timeout must be a positive finite number")
+        return value
+
+    @contextmanager
+    def _provider_capacity(self):
+        if _capacity_owner.get() == id(self):
+            yield
+            return
+        semaphore = self._capacity_semaphore()
+        if not semaphore.acquire(timeout=self._capacity_timeout()):
+            raise AIConcurrencyLimitError(
+                "AI provider concurrency limit acquisition timed out")
+        token = _capacity_owner.set(id(self))
+        try:
+            yield
+        finally:
+            _capacity_owner.reset(token)
+            semaphore.release()
+
+    async def _acquire_provider_capacity_async(self):
+        import asyncio
+        semaphore = self._capacity_semaphore()
+        deadline = asyncio.get_running_loop().time() + self._capacity_timeout()
+        while not semaphore.acquire(blocking=False):
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AIConcurrencyLimitError(
+                    "AI provider concurrency limit acquisition timed out")
+            await asyncio.sleep(0.01)
+        return semaphore
+
+    @staticmethod
+    def _estimate_tokens(messages: List[Message], response=None) -> int:
+        encoded_units = 0
+        for message in messages:
+            encoded_units += len(str(getattr(
+                message, "content", "")).encode("utf-8")) + 12
+            metadata = getattr(message, "metadata", None)
+            if metadata:
+                try:
+                    encoded_units += len(json.dumps(
+                        metadata, ensure_ascii=False,
+                        default=lambda value: f"<{type(value).__name__}>",
+                    ).encode("utf-8"))
+                except Exception:
+                    encoded_units += 64
+        if response is not None:
+            for generation in getattr(response, "generations", ()) or ():
+                encoded_units += len(str(getattr(
+                    getattr(generation, "output", None), "content", ""
+                )).encode("utf-8"))
+        # Four UTF-8 bytes per token is a local fallback only.  It remains
+        # inexpensive for Latin text while charging multi-byte CJK content
+        # substantially more than a character-count heuristic.
+        return max(1, math.ceil(encoded_units / 4))
+
+    def _validate_input_size(self, messages: List[Message], tool_registry,
+                             max_input_bytes: int) -> None:
+        if max_input_bytes <= 0:
+            raise ValueError("max_input_bytes must be greater than zero")
+        payload = []
+        for message in messages:
+            serialized = message.to_dict()
+            if message.metadata:
+                serialized["metadata"] = message.metadata
+            payload.append(serialized)
+        if _is_tool_registry(tool_registry):
+            payload.append({"tools": tool_registry.schemas()})
+        try:
+            encoded = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":"),
+                default=lambda value: f"<{type(value).__name__}>",
+            ).encode("utf-8")
+        except Exception as exc:
+            raise ValueError("AI request must be JSON serializable") from exc
+        if len(encoded) > max_input_bytes:
+            raise TokenBudgetExceededError(
+                f"AI input exceeds byte limit ({len(encoded)}>{max_input_bytes})")
+
+    def _prepare_stream_request(self, messages, tool_registry, options):
+        if options is not None and not isinstance(options, Mapping):
+            raise ValueError("AI provider options must be a mapping")
+        provider_options = dict(options or {})
+        try:
+            max_input_bytes = int(provider_options.pop(
+                "max_input_bytes", getattr(
+                    self, "max_input_bytes", self.MAX_INPUT_BYTES)))
+            token_budget = int(provider_options.pop(
+                "max_total_tokens", getattr(
+                    self, "max_total_tokens", self.MAX_TOTAL_TOKENS)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("AI stream limits must be integers") from exc
+        if token_budget <= 0:
+            raise ValueError("max_total_tokens must be greater than zero")
+        provider_options.pop("max_tool_iterations", None)
+        self._validate_input_size(messages, tool_registry, max_input_bytes)
+        initial_tokens = self._estimate_tokens(messages)
+        if initial_tokens > token_budget:
+            raise TokenBudgetExceededError(
+                f"AI input exceeds token budget ({initial_tokens}>{token_budget})")
+        return provider_options or None, token_budget, initial_tokens
+
+    @staticmethod
+    def _bounded_stream(iterator, token_budget: int, initial_tokens: int):
+        output_bytes = 0
+        for response in iterator:
+            for generation in getattr(response, "generations", ()) or ():
+                output_bytes += len(str(getattr(
+                    getattr(generation, "output", None), "content", ""
+                )).encode("utf-8"))
+            estimated = initial_tokens + math.ceil(output_bytes / 4)
+            metadata = getattr(response, "metadata", None)
+            if metadata is None:
+                response.metadata = {}
+                metadata = response.metadata
+            usage = metadata.get("usage") if isinstance(metadata, dict) else None
+            reported = usage.get("total_tokens") if isinstance(usage, dict) else None
+            try:
+                consumed = max(estimated, int(reported or 0))
+            except (TypeError, ValueError, OverflowError):
+                consumed = estimated
+            metadata["cumulative_tokens"] = consumed
+            metadata["token_budget"] = token_budget
+            if consumed > token_budget:
+                raise TokenBudgetExceededError(
+                    f"AI stream exceeded token budget ({consumed}>{token_budget})")
+            yield response
 
     @abstractmethod
     def _raw_call(self, messages: List[Message],
@@ -117,6 +335,13 @@ class ChatModel(ABC):
         working = list(messages)
         provider_options = dict(options or {})
         try:
+            max_input_bytes = int(provider_options.pop(
+                "max_input_bytes", getattr(
+                    self, "max_input_bytes", self.MAX_INPUT_BYTES)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_input_bytes must be an integer") from exc
+        self._validate_input_size(working, tool_registry, max_input_bytes)
+        try:
             token_budget = int(provider_options.pop(
                 "max_total_tokens", getattr(self, "max_total_tokens",
                                              self.MAX_TOTAL_TOKENS)))
@@ -124,6 +349,10 @@ class ChatModel(ABC):
             raise ValueError("max_total_tokens must be an integer") from exc
         if token_budget <= 0:
             raise ValueError("max_total_tokens must be greater than zero")
+        initial_estimate = self._estimate_tokens(working)
+        if initial_estimate > token_budget:
+            raise TokenBudgetExceededError(
+                f"AI input exceeds token budget ({initial_estimate}>{token_budget})")
         try:
             max_tool_iterations = int(provider_options.pop(
                 "max_tool_iterations", getattr(
@@ -136,19 +365,37 @@ class ChatModel(ABC):
         cumulative_tokens = 0
         resp = None
         for iteration in range(max_tool_iterations + 1):
-            resp = self._raw_call(
-                working, tool_registry, provider_options or None)
+            # Tool results become provider input on subsequent rounds. Recheck
+            # both byte and cumulative token limits before incurring another
+            # external call; validating only the original user prompt lets a
+            # large tool response bypass request limits.
+            self._validate_input_size(
+                working, tool_registry, max_input_bytes)
+            if iteration > 0:
+                projected = cumulative_tokens + self._estimate_tokens(working)
+                if projected > token_budget:
+                    raise TokenBudgetExceededError(
+                        "AI tool conversation would exceed token budget "
+                        f"({projected}>{token_budget})")
+            with self._provider_capacity():
+                resp = self._raw_call(
+                    working, tool_registry, provider_options or None)
             resp.metadata = resp.metadata or {}
             resp.metadata["tool_iterations"] = iteration
             usage = resp.metadata.get("usage") or {}
-            total = usage.get("total_tokens")
-            if total is None:
+            total = usage.get("total_tokens") if isinstance(usage, dict) else None
+            if total is None and isinstance(usage, dict):
                 total = (usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0) + (
                     usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
             try:
-                cumulative_tokens += max(0, int(total or 0))
+                numeric_total = max(0, int(total or 0))
             except (TypeError, ValueError):
                 logger.debug("Provider returned non-numeric token usage: %r", total)
+                numeric_total = 0
+            if numeric_total <= 0:
+                numeric_total = self._estimate_tokens(working, resp)
+                resp.metadata["usage_estimated"] = True
+            cumulative_tokens += numeric_total
             resp.metadata["cumulative_tokens"] = cumulative_tokens
             resp.metadata["token_budget"] = token_budget
             if cumulative_tokens > token_budget:
@@ -164,43 +411,109 @@ class ChatModel(ABC):
                     f"AI tool loop exceeded {max_tool_iterations} iterations")
 
             # 有工具调用 → 追加 assistant 消息 + 执行工具 + 回填
-            working.append(resp.output)
+            assistant_message = resp.output or Message.assistant("")
+            if not assistant_message.metadata.get("tool_calls"):
+                assistant_message.metadata["tool_calls"] = tool_calls
+            working.append(assistant_message)
             for tc in tool_calls:
-                func = tc.get("function", {})
-                name = func.get("name", "")
-                args_raw = func.get("arguments", "{}")
+                args: Any = {}
+                name = ""
+                tool_call_id = ""
                 try:
+                    if not isinstance(tc, dict):
+                        raise ValueError("tool call must be an object")
+                    tool_call_id = str(tc.get("id", "") or "")
+                    func = tc.get("function", {})
+                    if not isinstance(func, dict):
+                        raise ValueError("tool call function must be an object")
+                    name = str(func.get("name", "") or "")
+                    if not name:
+                        raise ValueError("tool call name is required")
+                    args_raw = func.get("arguments", "{}")
                     args = (_json.loads(args_raw) if isinstance(args_raw, str)
                             else args_raw)
                     # Request-scoped identity and authorization data must reach
                     # the registry policy. Do not ask tools to infer identity
                     # from mutable globals or model-controlled arguments.
                     result = tool_registry.execute(name, args, context=context)
-                    ai_metrics.record_tool_call(name, "success")
+                    metric_name = (
+                        name if hasattr(tool_registry, "names")
+                        and name in tool_registry.names() else "<invalid>"
+                    )
+                    ai_metrics.record_tool_call(metric_name, "success")
                 except Exception as exc:
                     # 安全：异常消息脱敏后返回，防止泄露连接字符串、路径、凭据等敏感信息
                     # 仅透传异常类型和首段描述，完整 traceback 记录在服务端日志
                     err_type = type(exc).__name__
                     raw_msg = str(exc)
                     # 截断异常消息（最大 200 字符），防止工具异常返回超大字符串
-                    safe_msg = raw_msg[:200] if len(raw_msg) > 200 else raw_msg
+                    from springbootai.logging.context import (
+                        redact_log_data, redact_sensitive,
+                    )
+                    safe_msg = redact_sensitive(raw_msg)[:200]
+                    try:
+                        safe_args = _json.dumps(
+                            redact_log_data(args), ensure_ascii=False,
+                            default=lambda value: f"<{type(value).__name__}>",
+                        )[:500]
+                    except Exception:
+                        safe_args = "<unrenderable>"
                     logger.warning("工具执行失败: %s args=%s error=%s", name,
-                                   _json.dumps(args, ensure_ascii=False)[:500], safe_msg)
+                                   safe_args, safe_msg)
                     result = f"[工具执行错误] {err_type}"
-                    ai_metrics.record_tool_call(name, "failure")
+                    metric_name = (
+                        name if name and hasattr(tool_registry, "names")
+                        and name in tool_registry.names() else "<invalid>"
+                    )
+                    ai_metrics.record_tool_call(metric_name, "failure")
                 working.append(Message(
                     content=str(result)[:10000], type=MessageType.TOOL, name=name,
-                    metadata={"tool_call_id": tc.get("id", "")},
+                    metadata={"tool_call_id": tool_call_id},
                 ))
 
         raise ToolLoopLimitExceededError(
             f"AI tool loop exceeded {max_tool_iterations} iterations")
 
+    def _stream_tool_loop_response(
+        self,
+        messages: List[Message],
+        tool_registry,
+        options: Optional[Dict[str, Any]],
+    ) -> Optional[ChatResponse]:
+        """Run the complete tool loop before yielding a streaming response.
+
+        Provider tool calls arrive as fragmented deltas and cannot safely be
+        executed as ordinary text chunks.  Until a provider-native delta
+        assembler is used, degrade tool-enabled streaming to one final response
+        rather than silently omitting tool schemas or tool execution.
+        """
+        if not _is_tool_registry(tool_registry):
+            return None
+        schemas = tool_registry.schemas()
+        if not schemas:
+            return None
+        response = self.call(
+            messages, tool_registry=tool_registry, options=options)
+        response.metadata = response.metadata or {}
+        response.metadata["stream"] = False
+        response.metadata["stream_fallback"] = "tool_loop"
+        return response
+
     def stream(self, messages: List[Message],
                tool_registry=None,
                options: Optional[Dict[str, Any]] = None):
         """流式调用（SSE delta 生成器），默认降级为单次 yield"""
-        yield self._raw_call(messages, tool_registry, options)
+        tool_response = self._stream_tool_loop_response(
+            messages, tool_registry, options)
+        if tool_response is not None:
+            yield tool_response
+            return
+        provider_options, budget, initial = self._prepare_stream_request(
+            messages, tool_registry, options)
+        with self._provider_capacity():
+            iterator = iter((self._raw_call(
+                messages, tool_registry, provider_options),))
+            yield from self._bounded_stream(iterator, budget, initial)
 
     async def astream(self, messages: List[Message],
                       tool_registry=None,
@@ -212,47 +525,132 @@ class ChatModel(ABC):
         等请求级上下文在 Provider 线程中可见。
         """
         import asyncio
+        import concurrent.futures
+        import contextvars
+        import threading
 
         iterator = iter(self.stream(
             messages, tool_registry=tool_registry, options=options))
-        exhausted = object()
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        stop = threading.Event()
+        capacity_released = threading.Event()
+        stream_cancellation = _StreamCancellation()
+        context = None
+        semaphore = None
 
-        def pull_next():
-            try:
-                return next(iterator)
-            except StopIteration:
-                # StopIteration 不能直接穿过 asyncio Future。
-                return exhausted
+        def release_capacity() -> None:
+            if (semaphore is not None
+                    and not capacity_released.is_set()):
+                capacity_released.set()
+                semaphore.release()
 
-        try:
+        def publish(kind: str, value: Any = None,
+                    acknowledgement=None) -> bool:
+            future = asyncio.run_coroutine_threadsafe(
+                queue.put((kind, value, acknowledgement)), loop)
             while True:
                 try:
-                    chunk = await asyncio.to_thread(pull_next)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    # Provider/SDK 异常常夹带 URL、凭据或响应体。
-                    # 异步边界只暴露稳定类型，详情由服务端日志记录。
+                    future.result(timeout=0.1)
+                    return True
+                except concurrent.futures.TimeoutError:
+                    if stop.is_set():
+                        future.cancel()
+                        return False
+                except (RuntimeError, asyncio.CancelledError,
+                        concurrent.futures.CancelledError):
+                    return False
+
+        def produce() -> None:
+            try:
+                while not stop.is_set():
+                    try:
+                        chunk = next(iterator)
+                    except StopIteration:
+                        publish("done")
+                        return
+                    acknowledgement = threading.Event()
+                    if stop.is_set() or not publish(
+                            "item", chunk, acknowledgement):
+                        return
+                    # Do not pull another provider chunk until the async
+                    # consumer resumes after yielding this one.  A size-one
+                    # queue alone still permits one speculative ``next``.
+                    while not acknowledgement.wait(0.1):
+                        if stop.is_set():
+                            return
+            except BaseException as exc:
+                if not stop.is_set():
+                    publish("error", exc)
+            finally:
+                closer = getattr(iterator, "close", None)
+                if callable(closer):
+                    try:
+                        closer()
+                    except (RuntimeError, ValueError):
+                        pass
+                release_capacity()
+
+        worker = threading.Thread(
+            target=lambda: context.run(produce),
+            name=f"spring-ai-stream-{type(self).__name__}",
+            daemon=True,
+        )
+        semaphore = await self._acquire_provider_capacity_async()
+        capacity_token = _capacity_owner.set(id(self))
+        # Capture the ownership marker after acquisition so provider ``stream``
+        # does not attempt to acquire the same semaphore again in its worker.
+        cancellation_token = _stream_cancellation_owner.set(
+            stream_cancellation)
+        try:
+            context = contextvars.copy_context()
+        finally:
+            _stream_cancellation_owner.reset(cancellation_token)
+        worker_started = False
+        try:
+            worker.start()
+            worker_started = True
+            while True:
+                kind, value, acknowledgement = await queue.get()
+                if kind == "done":
+                    break
+                if kind == "error":
                     logger.warning(
                         "异步流式生产者异常 error_type=%s",
-                        type(exc).__name__,
+                        type(value).__name__,
                     )
+                    if isinstance(value, (
+                            TokenBudgetExceededError,
+                            AIConcurrencyLimitError,
+                            ToolLoopLimitExceededError)):
+                        raise value
                     raise RuntimeError(
-                        f"stream error: {type(exc).__name__}"
+                        f"stream error: {type(value).__name__}"
                     ) from None
-                if chunk is exhausted:
-                    break
-                yield chunk
-        finally:
-            # 消费者 break/aclose 时立即尝试关闭底层生成器，
-            # 从而退出 requests Response 上下文。若此时工作线程
-            # 正阻塞在 socket read，generator.close 可能拒绝并由读超时兜底。
-            closer = getattr(iterator, "close", None)
-            if callable(closer):
                 try:
-                    closer()
-                except (RuntimeError, ValueError):
+                    yield value
+                finally:
+                    acknowledgement.set()
+        finally:
+            stop.set()
+            # Built-in HTTP providers register the active response's close
+            # method, allowing downstream cancellation to interrupt a blocking
+            # socket read instead of occupying capacity until read timeout.
+            stream_cancellation.cancel()
+            # Provider-specific iterators may expose a thread-safe cancellation
+            # hook. Generic generators are closed by their owning worker once a
+            # bounded socket read returns; no default executor worker is leaked.
+            cancel = getattr(iterator, "cancel", None)
+            if callable(cancel):
+                try:
+                    cancel()
+                except Exception:
                     pass
+            _capacity_owner.reset(capacity_token)
+            if not worker_started:
+                release_capacity()
+            elif not capacity_released.is_set():
+                await asyncio.to_thread(capacity_released.wait, 0.5)
 
     async def acall(self, messages: List[Message],
                     tool_registry=None,
@@ -260,8 +658,14 @@ class ChatModel(ABC):
                     context: Optional[Dict[str, Any]] = None) -> ChatResponse:
         """异步调用，默认降级为同步 call（子类可覆盖实现真异步）"""
         import asyncio
-        return await asyncio.to_thread(
-            self.call, messages, tool_registry, options, context)
+        semaphore = await self._acquire_provider_capacity_async()
+        capacity_token = _capacity_owner.set(id(self))
+        try:
+            return await asyncio.to_thread(
+                self.call, messages, tool_registry, options, context)
+        finally:
+            _capacity_owner.reset(capacity_token)
+            semaphore.release()
 
 
 class EmbeddingModel(ABC):
@@ -381,6 +785,13 @@ class PromptSpec:
             self._resolve_registry(), self._context, self._options,
         )
 
+    async def acall(self) -> ChatResponse:
+        """异步调用，不阻塞 ASGI 事件循环。"""
+        return await self._client._aexecute(
+            self._messages, self._advisors,
+            self._resolve_registry(), self._context, self._options,
+        )
+
     def stream(self):
         """流式调用生成器"""
         yield from self._client._execute_stream(
@@ -388,8 +799,18 @@ class PromptSpec:
             self._resolve_registry(), self._context, self._options,
         )
 
+    async def astream(self):
+        """异步流式调用。"""
+        async for chunk in self._client._aexecute_stream(
+                self._messages, self._advisors,
+                self._resolve_registry(), self._context, self._options):
+            yield chunk
+
     def content(self) -> str:
         return self.call().content()
+
+    async def acontent(self) -> str:
+        return (await self.acall()).content()
 
 
 class ChatClient:
@@ -452,6 +873,36 @@ class ChatClient:
             response = advisor.advise_response(response, request)
         return response
 
+    @staticmethod
+    async def _call_advisor(callback, *args):
+        import asyncio
+        import inspect
+        if inspect.iscoroutinefunction(callback):
+            return await callback(*args)
+        result = await asyncio.to_thread(callback, *args)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def _aexecute(self, messages: List[Message], advisors: List[Advisor],
+                        tool_registry, context: Dict[str, Any],
+                        options: Optional[Dict[str, Any]] = None) -> ChatResponse:
+        request = AdvisorRequest(
+            messages=list(messages), chat_model=self.chat_model,
+            tool_registry=tool_registry, context=dict(context),
+            options=dict(options or {}) or None,
+        )
+        for advisor in sorted(advisors, key=lambda a: a.order):
+            request = await self._call_advisor(advisor.advise_request, request)
+        response = await self.chat_model.acall(
+            request.messages, tool_registry=request.tool_registry,
+            options=request.options, context=request.context,
+        )
+        for advisor in sorted(advisors, key=lambda a: a.order, reverse=True):
+            response = await self._call_advisor(
+                advisor.advise_response, response, request)
+        return response
+
     def _execute_stream(self, messages: List[Message], advisors: List[Advisor],
                         tool_registry, context: Dict[str, Any],
                         options: Optional[Dict[str, Any]] = None):
@@ -467,7 +918,25 @@ class ChatClient:
         for advisor in sorted(advisors, key=lambda a: a.order):
             request = advisor.advise_request(request)
 
-        chunks: List[ChatResponse] = []
+        aggregate_limit = 100_000
+        aggregate_parts: List[str] = []
+        aggregate_size = 0
+        aggregate_truncated = False
+        last_metadata: Dict[str, Any] = {}
+
+        def remember(chunk: ChatResponse) -> None:
+            nonlocal aggregate_size, aggregate_truncated, last_metadata
+            last_metadata = chunk.metadata or {}
+            content = chunk.content()
+            available = aggregate_limit - aggregate_size
+            if available <= 0:
+                aggregate_truncated = aggregate_truncated or bool(content)
+                return
+            if len(content) > available:
+                content = content[:available]
+                aggregate_truncated = True
+            aggregate_parts.append(content)
+            aggregate_size += len(content)
         has_tools = (
             request.tool_registry is not None
             and hasattr(request.tool_registry, "names")
@@ -483,25 +952,106 @@ class ChatClient:
                 options=request.options,
                 context=request.context,
             )
-            chunks.append(chunk)
+            remember(chunk)
             yield chunk
         else:
-            for chunk in self.chat_model.stream(
-                    request.messages, tool_registry=request.tool_registry,
-                    options=request.options):
-                chunks.append(chunk)
-                yield chunk
+            iterator = iter(self.chat_model.stream(
+                request.messages, tool_registry=request.tool_registry,
+                options=request.options,
+            ))
+            completed = False
+            try:
+                for chunk in iterator:
+                    remember(chunk)
+                    yield chunk
+                completed = True
+            finally:
+                if not completed:
+                    closer = getattr(iterator, "close", None)
+                    if callable(closer):
+                        closer()
 
         # 聚合全部流式块，回调响应阶段 advisor（触发记忆保存/日志/审计等副作用）
-        if chunks:
+        if aggregate_parts:
             combined = ChatResponse(
                 generations=[Generation(output=Message.assistant(
-                    "".join(c.content() for c in chunks)))],
-                metadata={"provider": (chunks[-1].metadata or {}).get("provider"),
-                          "stream": True, "combined": True},
+                    "".join(aggregate_parts)))],
+                metadata={"provider": last_metadata.get("provider"),
+                          "stream": True, "combined": True,
+                          "aggregate_truncated": aggregate_truncated},
             )
             for advisor in sorted(advisors, key=lambda a: a.order, reverse=True):
                 combined = advisor.advise_response(combined, request)
+
+    async def _aexecute_stream(self, messages: List[Message], advisors: List[Advisor],
+                               tool_registry, context: Dict[str, Any],
+                               options: Optional[Dict[str, Any]] = None):
+        request = AdvisorRequest(
+            messages=list(messages), chat_model=self.chat_model,
+            tool_registry=tool_registry, context=dict(context),
+            options=dict(options or {}) or None,
+        )
+        for advisor in sorted(advisors, key=lambda a: a.order):
+            request = await self._call_advisor(advisor.advise_request, request)
+
+        aggregate_limit = 100_000
+        aggregate_parts: List[str] = []
+        aggregate_size = 0
+        aggregate_truncated = False
+        last_metadata: Dict[str, Any] = {}
+
+        def remember(chunk: ChatResponse) -> None:
+            nonlocal aggregate_size, aggregate_truncated, last_metadata
+            last_metadata = chunk.metadata or {}
+            content = chunk.content()
+            available = aggregate_limit - aggregate_size
+            if available <= 0:
+                aggregate_truncated = aggregate_truncated or bool(content)
+                return
+            if len(content) > available:
+                content = content[:available]
+                aggregate_truncated = True
+            aggregate_parts.append(content)
+            aggregate_size += len(content)
+
+        has_tools = (
+            request.tool_registry is not None
+            and hasattr(request.tool_registry, "names")
+            and bool(request.tool_registry.names())
+        )
+        if has_tools:
+            chunk = await self.chat_model.acall(
+                request.messages, tool_registry=request.tool_registry,
+                options=request.options, context=request.context)
+            remember(chunk)
+            yield chunk
+        else:
+            iterator = self.chat_model.astream(
+                request.messages, tool_registry=request.tool_registry,
+                options=request.options)
+            completed = False
+            try:
+                async for chunk in iterator:
+                    remember(chunk)
+                    yield chunk
+                completed = True
+            finally:
+                if not completed:
+                    closer = getattr(iterator, "aclose", None)
+                    if callable(closer):
+                        await closer()
+
+        if aggregate_parts:
+            combined = ChatResponse(
+                generations=[Generation(output=Message.assistant(
+                    "".join(aggregate_parts)))],
+                metadata={"provider": last_metadata.get("provider"),
+                          "stream": True, "combined": True,
+                          "aggregate_truncated": aggregate_truncated},
+            )
+            for advisor in sorted(advisors, key=lambda a: a.order, reverse=True):
+                combined = await self._call_advisor(
+                    advisor.advise_response, combined, request)
 
 
 class ChatClientBuilder:

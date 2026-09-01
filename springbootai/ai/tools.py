@@ -7,13 +7,28 @@
 import inspect
 import json
 import logging
+import math
+import re
 import threading
+import types
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set, get_type_hints
+from enum import Enum
+from typing import (
+    Annotated, Any, Callable, Dict, List, Literal, Optional, Set, Union,
+    get_args, get_origin, get_type_hints,
+)
 
 
 logger = logging.getLogger("Spring.AI.Tools")
+
+try:  # Python 3.10-3.12 expose the parser under ``re``.
+    from re import _constants as _re_constants  # type: ignore[attr-defined]
+    from re import _parser as _re_parser  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - compatibility fallback
+    import sre_constants as _re_constants
+    import sre_parse as _re_parser
 _CANCELLATION_PARAMETER = "cancellation_token"
 
 
@@ -25,6 +40,210 @@ _PY_TO_JSON_TYPE = {
     list: "array",
     dict: "object",
 }
+
+
+def _type_to_schema(type_hint: Any) -> Dict[str, Any]:
+    """Convert common Python typing forms into an honest JSON Schema."""
+    if type_hint in (Any, inspect.Parameter.empty):
+        return {}
+    if type_hint is None or type_hint is type(None):
+        return {"type": "null"}
+    if isinstance(type_hint, type) and issubclass(type_hint, Enum):
+        values = [item.value for item in type_hint]
+        schema: Dict[str, Any] = {"enum": values}
+        if values and all(type(item) is type(values[0]) for item in values):
+            schema.update(_type_to_schema(type(values[0])))
+        return schema
+
+    origin = get_origin(type_hint)
+    args = get_args(type_hint)
+    if origin is Annotated:
+        return _type_to_schema(args[0]) if args else {}
+    if origin is Literal:
+        values = list(args)
+        schema = {"enum": values}
+        if values and all(type(item) is type(values[0]) for item in values):
+            schema.update(_type_to_schema(type(values[0])))
+        return schema
+    if origin in (Union, types.UnionType):
+        return {"anyOf": [_type_to_schema(item) for item in args]}
+    if origin in (list, List, set, Set, tuple):
+        item_schema = _type_to_schema(args[0]) if args else {}
+        return {"type": "array", "items": item_schema}
+    if origin in (dict, Dict, Mapping):
+        value_schema = _type_to_schema(args[1]) if len(args) > 1 else {}
+        return {"type": "object", "additionalProperties": value_schema}
+    json_type = _PY_TO_JSON_TYPE.get(type_hint)
+    return {"type": json_type} if json_type else {"type": "string"}
+
+
+def _schema_error(path: str, detail: str) -> "ToolExecutionError":
+    return ToolExecutionError(f"tool arguments failed schema validation at {path}: {detail}")
+
+
+def _compile_safe_pattern(pattern: Any) -> re.Pattern:
+    text = str(pattern)
+    if len(text) > 256:
+        raise ValueError("pattern exceeds 256 characters")
+    parsed = _re_parser.parse(text)
+    repeat_ops = {
+        _re_constants.MAX_REPEAT,
+        _re_constants.MIN_REPEAT,
+    }
+    possessive = getattr(_re_constants, "POSSESSIVE_REPEAT", None)
+    if possessive is not None:
+        repeat_ops.add(possessive)
+    forbidden_ops = {
+        _re_constants.ASSERT,
+        _re_constants.ASSERT_NOT,
+        _re_constants.GROUPREF,
+        _re_constants.GROUPREF_EXISTS,
+    }
+
+    def walk(node: Any, *, repeated: bool = False, depth: int = 0) -> None:
+        if depth > 32:
+            raise ValueError("pattern nesting exceeds 32 levels")
+        for operation, argument in node:
+            if operation in forbidden_ops:
+                raise ValueError("lookarounds and backreferences are not allowed")
+            if operation in repeat_ops:
+                if repeated:
+                    raise ValueError("nested quantifiers are not allowed")
+                walk(argument[2], repeated=True, depth=depth + 1)
+            elif operation is _re_constants.BRANCH:
+                if repeated:
+                    raise ValueError("alternation inside a quantified group is not allowed")
+                for branch in argument[1]:
+                    walk(branch, repeated=False, depth=depth + 1)
+            elif operation is _re_constants.SUBPATTERN:
+                walk(argument[-1], repeated=repeated, depth=depth + 1)
+
+    walk(parsed)
+    return re.compile(text)
+
+
+def _validate_json_schema(
+    value: Any,
+    schema: Any,
+    path: str = "$",
+    _depth: int = 0,
+) -> None:
+    """Validate the bounded JSON Schema subset accepted by tool registries.
+
+    Model-generated arguments are untrusted input. Provider-side schema hints
+    are therefore never treated as an execution-time validation boundary.
+    """
+    if not isinstance(schema, Mapping):
+        raise _schema_error(path, "schema must be an object")
+    if _depth > 32:
+        raise _schema_error(path, "schema nesting exceeds 32 levels")
+
+    alternatives = schema.get("anyOf") or schema.get("oneOf")
+    if alternatives is not None:
+        if (not isinstance(alternatives, list) or not alternatives
+                or len(alternatives) > 32):
+            raise _schema_error(path, "schema alternatives must be a non-empty list")
+        matches = 0
+        for candidate in alternatives:
+            try:
+                _validate_json_schema(value, candidate, path, _depth + 1)
+                matches += 1
+            except ToolExecutionError:
+                continue
+        if matches == 0 or ("oneOf" in schema and matches != 1):
+            raise _schema_error(path, "value does not match the allowed alternatives")
+        return
+
+    expected = schema.get("type")
+    if isinstance(expected, list):
+        if not any(_matches_json_type(value, item) for item in expected):
+            raise _schema_error(path, f"expected one of {expected!r}")
+    elif expected and not _matches_json_type(value, expected):
+        raise _schema_error(path, f"expected {expected}")
+
+    if "enum" in schema and value not in schema["enum"]:
+        raise _schema_error(path, "value is not in enum")
+    if "const" in schema and value != schema["const"]:
+        raise _schema_error(path, "value does not match const")
+
+    if isinstance(value, Mapping):
+        properties = schema.get("properties", {})
+        if properties is None:
+            properties = {}
+        elif not isinstance(properties, Mapping):
+            raise _schema_error(path, "properties must be an object")
+        if len(properties) > 256:
+            raise _schema_error(path, "schema has too many properties")
+        required = schema.get("required", [])
+        if not isinstance(required, list):
+            raise _schema_error(path, "required must be a list")
+        for name in required:
+            if name not in value:
+                raise _schema_error(path, f"missing required property {name!r}")
+        for name, item in value.items():
+            child_path = f"{path}.{name}"
+            if name in properties:
+                _validate_json_schema(
+                    item, properties[name], child_path, _depth + 1)
+                continue
+            additional = schema.get("additionalProperties", True)
+            if additional is False:
+                raise _schema_error(child_path, "additional property is not allowed")
+            if isinstance(additional, Mapping):
+                _validate_json_schema(item, additional, child_path, _depth + 1)
+        _check_size(value, schema, path, "minProperties", "maxProperties")
+
+    if isinstance(value, list):
+        _check_size(value, schema, path, "minItems", "maxItems")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, Mapping):
+            for index, item in enumerate(value):
+                _validate_json_schema(
+                    item, item_schema, f"{path}[{index}]", _depth + 1)
+
+    if isinstance(value, str):
+        _check_size(value, schema, path, "minLength", "maxLength")
+        pattern = schema.get("pattern")
+        if pattern is not None:
+            try:
+                if _compile_safe_pattern(pattern).search(value) is None:
+                    raise _schema_error(path, "string does not match pattern")
+            except (re.error, ValueError) as exc:
+                raise _schema_error(
+                    path, "schema contains an unsafe or invalid pattern") from exc
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not math.isfinite(float(value)):
+            raise _schema_error(path, "number must be finite")
+        for key, predicate in (
+            ("minimum", lambda current, bound: current >= bound),
+            ("maximum", lambda current, bound: current <= bound),
+            ("exclusiveMinimum", lambda current, bound: current > bound),
+            ("exclusiveMaximum", lambda current, bound: current < bound),
+        ):
+            if key in schema and not predicate(value, schema[key]):
+                raise _schema_error(path, f"number violates {key}")
+
+
+def _matches_json_type(value: Any, expected: Any) -> bool:
+    return {
+        "null": value is None,
+        "boolean": isinstance(value, bool),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "string": isinstance(value, str),
+        "array": isinstance(value, list),
+        "object": isinstance(value, Mapping),
+    }.get(str(expected), False)
+
+
+def _check_size(value: Any, schema: Mapping, path: str,
+                minimum_key: str, maximum_key: str) -> None:
+    size = len(value)
+    if minimum_key in schema and size < int(schema[minimum_key]):
+        raise _schema_error(path, f"value violates {minimum_key}")
+    if maximum_key in schema and size > int(schema[maximum_key]):
+        raise _schema_error(path, f"value violates {maximum_key}")
 
 
 class ToolExecutionError(RuntimeError):
@@ -154,6 +373,8 @@ class ToolRegistry:
     def __init__(self, policy: Optional[ToolExecutionPolicy] = None):
         self._tools: Dict[str, ToolDefinition] = {}
         self.policy = policy or ToolExecutionPolicy()
+        self._quarantined_tools: Set[str] = set()
+        self._state_lock = threading.RLock()
 
     def register(self, name: str, func: Callable,
                  description: str = "", return_description: str = "",
@@ -174,17 +395,17 @@ class ToolRegistry:
                 pname,
                 param.annotation if param.annotation is not inspect.Parameter.empty else str,
             )
-            json_type = _PY_TO_JSON_TYPE.get(py_type, "string")
             required = param.default is inspect.Parameter.empty
-            prop = {"type": json_type, "__required": required}
+            prop = _type_to_schema(py_type)
+            prop["__required"] = required
             properties[pname] = prop
 
         # 返回类型
         ret_type = "string"
         if sig.return_annotation is not inspect.Signature.empty:
-            ret_type = _PY_TO_JSON_TYPE.get(
-                type_hints.get("return", sig.return_annotation), "string"
-            )
+            ret_type = _type_to_schema(
+                type_hints.get("return", sig.return_annotation)
+            ).get("type", "string")
 
         desc = description or (func.__doc__ or "").strip().split("\n")[0]
         tool = ToolDefinition(name=name, description=desc, func=func,
@@ -254,6 +475,10 @@ class ToolRegistry:
 
     def execute(self, name: str, arguments: Dict[str, Any], context: Any = None) -> Any:
         """按名称执行工具"""
+        with self._state_lock:
+            if name in self._quarantined_tools:
+                raise ToolExecutionError(
+                    f"tool is quarantined after an uncertain timeout: {name}")
         tool = self._tools.get(name)
         if tool is None:
             raise KeyError(f"工具未注册: {name}")
@@ -265,6 +490,7 @@ class ToolRegistry:
         if not isinstance(arguments, dict):
             raise ToolExecutionError("tool arguments must be an object")
         self.policy.validate(tool, arguments, context)
+        _validate_json_schema(arguments, tool.to_schema()["function"]["parameters"])
 
         call_arguments = dict(arguments)
         if tool.accepts_cancellation:
@@ -289,8 +515,29 @@ class ToolRegistry:
                 result = tool.func(**call_arguments)
                 if inspect.isawaitable(result):
                     import asyncio
-                    result = asyncio.run(result)
-                result_holder["value"] = result
+                    async def await_result(awaitable):
+                        return await awaitable
+                    result = asyncio.run(await_result(result))
+                # Rendering and JSON validation are part of the bounded tool
+                # operation.  A hostile ``__str__``/``__repr__`` must not run
+                # later on the request thread after the timeout has ended.
+                if isinstance(result, str):
+                    rendered = result
+                    normalized = result
+                else:
+                    try:
+                        rendered = json.dumps(
+                            result, ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        normalized = result
+                    except (TypeError, ValueError):
+                        rendered = str(result)
+                        normalized = rendered
+                if len(rendered) > self.policy.max_result_chars:
+                    raise ToolExecutionError(
+                        "tool result exceeds the configured size limit")
+                result_holder["value"] = normalized
             except BaseException as exc:  # propagate the original tool error
                 error_holder["error"] = exc
 
@@ -304,33 +551,34 @@ class ToolRegistry:
                     f"the reserved '{_CANCELLATION_PARAMETER}' parameter"
                 )
             worker = threading.Thread(
-                target=invoke, name=f"spring-ai-tool-{name}", daemon=False)
+                target=invoke, name=f"spring-ai-tool-{name}", daemon=True)
             worker.start()
             worker.join(timeout)
             if worker.is_alive():
                 cancellation_token.cancel()
                 worker.join(self.policy.cancellation_grace_seconds)
                 if worker.is_alive():
-                    # Do not return while a timed-out side effect is still
-                    # executing. Cooperative tools should never reach this
-                    # branch; waiting is safer than reporting a false failure
-                    # that may cause the caller to retry the operation.
+                    # Python cannot safely terminate an arbitrary thread. Keep
+                    # the request timeout truthful, quarantine this tool to
+                    # prevent automatic retries, and report the outcome as
+                    # uncertain while the daemon worker winds down.
+                    with self._state_lock:
+                        self._quarantined_tools.add(name)
                     logger.error(
-                        "Tool %s ignored cancellation; waiting for safe completion",
+                        "Tool %s ignored cancellation; quarantined with uncertain outcome",
                         name,
                     )
-                    worker.join()
+                    raise ToolExecutionError(
+                        f"tool execution timed out with uncertain outcome: {name}")
                 raise ToolExecutionError(f"tool execution timed out: {name}")
         if "error" in error_holder:
             raise error_holder["error"]
-        result = result_holder.get("value")
-        rendered = str(result)
-        if len(rendered) > self.policy.max_result_chars:
-            raise ToolExecutionError("tool result exceeds the configured size limit")
-        return result
+        return result_holder.get("value")
 
     def clear(self) -> None:
         self._tools.clear()
+        with self._state_lock:
+            self._quarantined_tools.clear()
 
     def __len__(self) -> int:
         return len(self._tools)
