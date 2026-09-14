@@ -103,7 +103,7 @@ jobs:
         echo "SafeEval verification passed — no dangerous eval() in langchain module"
 
     - name: Upload security reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: security-reports
