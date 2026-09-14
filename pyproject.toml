@@ -127,7 +127,7 @@ langchain = [
     "pydantic==2.13.4",
     # 默认安装的向量库、文档和工具依赖
     "faiss-cpu>=1.7.4,<2",
-    "pypdf>=4.0.0,<6",
+    "pypdf>=4.0.0,<7",
     "beautifulsoup4>=4.12.0,<5",
     "sqlalchemy>=2.0.0,<3",
     # 常用 partner 包；其他 provider 见 PARTNER_REGISTRY，按需安装。
@@ -236,7 +236,7 @@ full = [
     "pydantic==2.13.4",
     # LangChain 模块增强（对齐 springbootAI[langchain]）
     "faiss-cpu>=1.7.4,<2",
-    "pypdf>=4.0.0,<6",
+    "pypdf>=4.0.0,<7",
     "beautifulsoup4>=4.12.0,<5",
     "langchain-experimental>=0.3.0,<2",
     # 常用 partner 包；其他 provider 可按需安装对应包。
