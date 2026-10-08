@@ -51,7 +51,7 @@ alibabacloud-tea==0.4.3
     #   alibabacloud-credentials
     #   alibabacloud-tea-util
     #   alibabacloud-tea-xml
-alibabacloud-tea-openapi==0.3.16
+alibabacloud-tea-openapi==0.4.5
     # via
     #   alibabacloud-kms20160120
     #   nacos-sdk-python
