@@ -17,7 +17,7 @@ python-dotenv==1.2.2
 redis==8.1.0
 
 # 数据库 ORM
-sqlalchemy==2.0.40
+sqlalchemy==2.0.52
 psycopg2-binary==2.9.12
 PyMySQL==1.2.0
 
