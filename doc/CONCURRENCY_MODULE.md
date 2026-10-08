@@ -1,6 +1,6 @@
 # SpringBootAI 并发与弹性模块指南
 
-> SpringBootAI 2.3.11
+> SpringBootAI 2.3.12
 
 ---
 
@@ -521,8 +521,16 @@ class CacheService:
 
 ```python
 @Idempotent(key="{user_id}-{amount}")      # 用 user_id 和 amount 组合
+def pay(user_id: int, amount: int):
+    ...
+
 @Lock(key="{product_id}")                  # 用 product_id
+def update_stock(product_id: int):
+    ...
+
 @RateLimit(key="{username}")               # 按 username 分别限流
+def login(username: str):
+    ...
 ```
 
 框架会把这些占位符替换成实际参数值，作为键的一部分。

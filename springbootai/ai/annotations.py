@@ -19,11 +19,12 @@ class AiClient(SpringAnnotation):
     """
     @AiClient - 标注一个服务类使用 AI 客户端。
 
-    框架启动时为该类注入对应的 ChatClient（按 provider 配置自动创建）。
+    当前只记录元数据，不会自动创建或注入 ChatClient。
+    实际模型参数由 configure_ai 配置或 ChatClientBuilder 设置。
 
     参数：
-        provider: 模型提供者，如 openai/ollama；为空时读取 spring.ai.default-provider
-        model: 具体模型名覆盖（如 gpt-4o-mini / llama3）
+        provider: 模型提供者标签，如 openai/ollama
+        model: 具体模型名标签（如 gpt-4o-mini / llama3）
     """
     _annotation_type = "ai"
 
@@ -35,10 +36,11 @@ class AiClient(SpringAnnotation):
 
 class Tool(SpringAnnotation):
     """
-    @Tool - 将一个函数注册为可被 LLM 调用的工具（Function Calling）。
+    @Tool - 为工具函数记录元数据（Function Calling）。
 
-    框架从函数签名 + docstring 自动生成 tool schema，模型决定调用时由
-    ToolRegistry 执行并回填结果。
+    必须显式调用 ToolRegistry.register 并将工具表传给客户端。
+    注册器从函数签名和 docstring 或显式 description 生成 schema，
+    当前不读取此注解的 name/description/return_description。
 
     用法：
         @Tool(description="查询订单状态")
@@ -56,9 +58,9 @@ class Tool(SpringAnnotation):
 
 class AiAdvisor(SpringAnnotation):
     """
-    @AiAdvisor - 标注一个类为 Advisor Bean（RAG / Memory 等横切逻辑）。
+    @AiAdvisor - 为 Advisor 类记录元数据（RAG / Memory 等横切逻辑）。
 
-    被 @AiAdvisor 标注的类会被注册到 BeanRegistry，并自动附加到 ChatClient。
+    当前不会注册 Bean 或自动附加到 ChatClient，需使用 default_advisors。
     """
     _annotation_type = "ai"
 
@@ -68,7 +70,9 @@ class AiAdvisor(SpringAnnotation):
 
 class AiMemory(SpringAnnotation):
     """
-    @AiMemory - 标注一个 ChatClient/Service 启用会话记忆。
+    @AiMemory - 记录 ChatClient/Service 的会话记忆配置意图。
+
+    当前不会自动启用记忆；请通过配置或 MessageChatMemoryAdvisor 装配。
 
     参数：
         store: 存储类型，inmemory / redis
@@ -92,7 +96,13 @@ class AiMemory(SpringAnnotation):
 
 
 class Prompt(SpringAnnotation):
-    """声明式 Prompt 模板。模板参数使用 ``str.format`` 绑定方法参数。"""
+    """声明式 Prompt；模板用 ``str.format`` 绑定参数。
+
+    方法体可以写 ``...``：无模板时自动使用 question/query/text/user_input/
+    prompt 参数，或唯一的业务参数。有返回文本的旧方法仍作为 query 工厂。
+    返回类型为 Pydantic 模型时自动提示 JSON Schema 并校验/绑定结果，
+    显式 ``@StructuredOutput`` 优先。注解由 IoC 容器应用到 Service Bean。
+    """
     _annotation_type = "ai"
 
     def __init__(self, template: str = "", system: str = "",
@@ -102,7 +112,11 @@ class Prompt(SpringAnnotation):
 
 
 class RAG(SpringAnnotation):
-    """让方法自动使用框架 VectorStore 检索并调用 ChatClient。"""
+    """自动检索 VectorStore 并调用 ChatClient，支持 ``...`` 方法体。
+
+    输入和 Pydantic 返回类型的推断规则与 ``@Prompt`` 相同；可组合
+    ``@Prompt`` 来定义查询模板和 system 提示，仍然执行知识库检索。
+    """
     _annotation_type = "ai"
 
     def __init__(self, top_k: int = 4, vector_store: str = "aiVectorStore",
@@ -183,6 +197,8 @@ class AiCache(SpringAnnotation):
     一个看似临时的缓存错误地变成永久的全局内存引用。默认缓存最多保留
     ``max_size`` 条目，运行时使用线程安全的 LRU 淘汰策略。这里的缓存是
     进程内缓存，跨进程/多副本场景应改用 Redis 等共享缓存。
+    缓存键自动包含安全上下文中的用户、租户和会话，即使配置自定义 key
+    也会隔离身份。依赖不断变化的聊天历史时应禁用缓存或将历史版本加入 key。
     """
     _annotation_type = "ai"
 

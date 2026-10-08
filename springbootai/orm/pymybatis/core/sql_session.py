@@ -2267,7 +2267,26 @@ class SqlSession:
                 if self._transaction_rollback_only:
                     connection.rollback()
                     raise RuntimeError("事务已标记为仅回滚，不能提交")
-                connection.commit()
+                try:
+                    connection.commit()
+                except BaseException:
+                    # A deferred constraint or transport failure can leave the
+                    # physical transaction open even after our depth resets.
+                    # Roll back before this session can start another boundary,
+                    # preserving the commit error if cleanup also fails.
+                    try:
+                        connection.rollback()
+                    except Exception as rollback_error:
+                        logger.error(
+                            "提交失败后回滚连接失败 error_type=%s",
+                            type(rollback_error).__name__,
+                        )
+                        # The pool resets or disposes the failed connection;
+                        # never leave it attached for the next transaction.
+                        self.return_connection()
+                    if self._transaction_dirty and self._transaction_flush_cache:
+                        self.sql_cache.clear()
+                    raise
                 if self._transaction_dirty and self._transaction_flush_cache:
                     self.sql_cache.clear()
         finally:
@@ -2325,10 +2344,14 @@ class SqlSession:
         """关闭SqlSession"""
         if self._closed:
             return
-        if self._in_transaction and self._current_connection is not None:
-            self._current_connection.rollback()
-            self._transaction_depth = 0
+        # Pool return already rolls back and disposes broken connections.  A
+        # separate rollback here could raise before the lease is released.
         self.return_connection()
+        self._transaction_depth = 0
+        self._transaction_rollback_only = False
+        self._transaction_dirty = False
+        self._transaction_flush_cache = False
+        self._transaction_isolation = None
         if self._owns_connection_pool:
             self.connection_pool.close()
         self._closed = True

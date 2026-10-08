@@ -419,4 +419,4 @@ def test_runtime_and_distribution_versions_match():
     ).read_text(encoding="utf-8")
     match = re.search(r'^version = "([^"]+)"$', pyproject, re.MULTILINE)
     assert match is not None
-    assert springbootai.__version__ == match.group(1) == "2.3.11"
+    assert springbootai.__version__ == match.group(1)

@@ -1,4 +1,4 @@
-from typing import Type, Any, Dict, Callable, List, Optional, get_args, get_origin, Union
+from typing import Type, Any, Dict, Callable, List, Optional, get_args, get_origin, get_type_hints, Union
 import asyncio
 import json
 import logging
@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from springbootai.context.application_context import ApplicationContext
 from springbootai.annotations.core import (
     RestController,
@@ -564,6 +565,17 @@ class WebApplicationContext:
         from fastapi import Path as FastPath, Query as FastQuery, Body as FastBody, File as FastFile
 
         sig = inspect.signature(method)
+        # Resolve postponed annotations before moving them onto the adapter:
+        # FastAPI otherwise resolves model names in this module's namespace.
+        type_hints = get_type_hints(
+            inspect.unwrap(method),
+            localns=dict(vars(controller_instance.__class__)),
+            include_extras=True,
+        )
+        sig = sig.replace(parameters=[
+            param.replace(annotation=type_hints.get(name, param.annotation))
+            for name, param in sig.parameters.items()
+        ])
         param_infos = []
 
         for param_name, param in sig.parameters.items():
@@ -665,7 +677,7 @@ class WebApplicationContext:
             if info['kind'] == 'path':
                 endpoint_params.append(inspect.Parameter(
                     info['name'], inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    default=FastPath(...), annotation=info['annotation'],
+                    default=FastPath(..., alias=info['http_name']), annotation=info['annotation'],
                 ))
             elif info['kind'] == 'query':
                 alias = info['http_name'] if info['http_name'] != info['name'] else None
@@ -770,6 +782,8 @@ class WebApplicationContext:
                         if inspect.isawaitable(result):
                             result = await result
 
+                    if isinstance(result, Response):
+                        return result
                     if not isinstance(result, Result):
                         result = Result.success(data=result)
                     if response_status is not None:
@@ -780,6 +794,10 @@ class WebApplicationContext:
                         )
                     return self._result_response(result)
 
+                except StarletteHTTPException:
+                    # Let FastAPI preserve the application's deliberate HTTP
+                    # status, detail, headers and registered exception handler.
+                    raise
                 except _SyncHandlerOverloaded as e:
                     return JSONResponse(
                         status_code=503,
@@ -831,6 +849,8 @@ class WebApplicationContext:
                             handler_result = handler(e)
                             if inspect.isawaitable(handler_result):
                                 handler_result = await handler_result
+                            if isinstance(handler_result, Response):
+                                return handler_result
                             if isinstance(handler_result, Result):
                                 return self._result_response(handler_result)
                             return self._result_response(

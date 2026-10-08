@@ -33,7 +33,7 @@
 1. [安装可选依赖](#1-安装可选依赖)
 2. [五分钟跑通 demo](#2-五分钟跑通-demo)
 3. [看懂最小代码](#3-看懂最小代码)
-4. [把 Fake 模型换成 springbootai.ai](#4-把-fake-模型换成-springai)
+4. [把 Fake 模型换成 springbootai.ai](#4-把-fake-模型换成-springbootaiai)
 5. [写条件分支](#5-写条件分支)
 6. [人工审核和恢复](#6-人工审核和恢复)
 7. [application.yml 配置](#7-applicationyml-配置)

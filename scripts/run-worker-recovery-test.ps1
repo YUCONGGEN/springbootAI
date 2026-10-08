@@ -85,7 +85,7 @@ os.kill(victim, signal.SIGTERM)
         observed_workers = @($seen)
         recovery_limit_seconds = $RecoverySeconds
     }
-    $reportPath = Join-Path $repoRoot "tests_performance\results\worker-recovery-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+    $reportPath = Join-Path $repoRoot "tests\performance\results\worker-recovery-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
     $report | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 $reportPath
 
     if (-not $newWorker) {

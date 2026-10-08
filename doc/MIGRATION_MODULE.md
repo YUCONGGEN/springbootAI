@@ -1,6 +1,6 @@
 # SpringBootAI 数据库迁移（Migration）—— 使用指南
 
-> SpringBootAI 2.3.11
+> SpringBootAI 2.3.12
 > 源码位置：`springbootai/orm/migration.py`
 > 对齐 Java：Flyway / Liquibase
 
@@ -199,7 +199,7 @@ sql/migrations/
 
 ### MigrationManager 构造函数
 
-```python
+```text
 MigrationManager(
     connection_pool,
     migrations_dir: str,
@@ -253,7 +253,7 @@ manager = MigrationManager(
 
 ### migrate() 执行迁移
 
-```python
+```text
 manager.migrate(baseline: bool = False) -> List[MigrationRecord]
 ```
 
@@ -291,7 +291,7 @@ manager.migrate(baseline=True)
 
 ### rollback() 回滚迁移
 
-```python
+```text
 manager.rollback(target_version: str = None) -> List[MigrationRecord]
 ```
 
@@ -301,14 +301,14 @@ manager.rollback(target_version: str = None) -> List[MigrationRecord]
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `target_version` | `str` | `None` | 回滚到指定版本（**不包含**该版本）。`None` 表示只回滚最后一个版本 |
+| `target_version` | `str` | `None` | 回滚到指定版本，**保留该版本**及更早版本。`None` 表示只回滚最后一个版本 |
 
 **返回值：** 本次回滚的 `MigrationRecord` 列表
 
 **回滚规则：**
 
 - `rollback()` 或 `rollback(None)`：只回滚最后已应用的一个版本
-- `rollback("2")`：回滚到 V2 之前（执行 U3、U2，保留 V1）
+- `rollback("2")`：若已应用 V1、V2、V3，则只执行 U3，保留 V1、V2
 - `rollback("0")`：回滚所有已应用版本
 
 **示例：**
@@ -339,11 +339,11 @@ manager.rollback(target_version="0")
 
 ### validate() 校验
 
-```python
+```text
 manager.validate() -> bool
 ```
 
-校验已执行迁移的 checksum 是否一致，**不执行任何 SQL**（只读操作）。
+校验已执行迁移的 checksum 是否一致。该方法会查询数据库中的成功迁移记录，但不执行迁移脚本或修改数据库；构造 `MigrationManager` 时仍可能创建历史表。
 
 **返回值：** `True` 校验通过，`False` 存在 checksum 不匹配或迁移文件缺失
 
@@ -372,7 +372,7 @@ else:
 
 ### status() 查询状态
 
-```python
+```text
 manager.status() -> Dict
 ```
 
@@ -404,7 +404,8 @@ manager.status() -> Dict
 | `SUCCESS` | 已成功执行，且 checksum 匹配 |
 | `PENDING` | 待执行 |
 | `CHECKSUM_MISMATCH` | 已执行但文件被修改，checksum 不匹配 |
-| `FAILED` | 执行失败（记录在 `schema_version` 表中 `success=0`） |
+
+当前 `status()` 不输出 `FAILED` 状态：只列出已发现的脚本，并按成功记录判断上述三种状态。
 
 **示例：**
 
@@ -423,7 +424,7 @@ for m in status['migrations']:
 
 ### repair() 修复
 
-```python
+```text
 manager.repair() -> int
 ```
 
@@ -433,7 +434,7 @@ manager.repair() -> int
 
 **用途：**
 
-当某条迁移执行失败后，`schema_version` 表会留下一条 `success=0` 的记录，导致后续迁移被阻塞。修复后可以重新执行该迁移。
+用于清理历史表中已有的 `success=0` 记录，例如外部写入或旧版本遗留记录。当前执行失败路径抛出 `MigrationError`，不会自动插入失败记录；因此 `repair()` 可能返回 0。它也不修复 checksum 不匹配，不能替代失败后的数据库状态检查。
 
 **示例：**
 
@@ -819,7 +820,7 @@ print(f"✅ 重新执行了 {len(applied)} 条迁移")
 | **Undo 迁移文件名** | `U1__rollback.sql`（仅付费版） | `U1__rollback.sql` ✅ 免费支持 |
 | **版本号格式** | `1`、`1.1`、`20210101.1200` | `1`、`1.1`（不支持时间戳格式） |
 | **历史表名** | `flyway_schema_history` | `schema_version` |
-| **checksum 算法** | CRC32 | SHA-256（取前 63 位） |
+| **checksum 算法** | CRC32 | SHA-256 十六进制摘要的前 63 个字符 |
 | **数据库方言** | MySQL / PostgreSQL / SQLite / Oracle / SQL Server 等 | MySQL / PostgreSQL / SQLite |
 | **变量替换** | `${var}` | `${var}` ✅ 一致 |
 | **baseline** | `baselineOnMigrate` 配置 | `migrate(baseline=True)` 参数 |

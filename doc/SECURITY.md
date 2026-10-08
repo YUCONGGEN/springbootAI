@@ -1,6 +1,6 @@
 # SpringBootAI 安全模块 —— 小白也能看懂的 Web 安全指南
 
-> SpringBootAI 2.3.11
+> SpringBootAI 2.3.12
 
 ---
 
@@ -340,11 +340,10 @@ SELECT * FROM users WHERE username='admin' --' AND password='whatever'
 ```python
 # ✅ 安全写法：用 ? 占位符
 spec = Specification()
-spec.to_predicate 返回的是 ("username = ? AND password = ?", [username, password], "AND")
+# spec.to_predicate 返回条件 SQL、绑定参数列表和逻辑连接符
+# 例如 ("username = ? AND password = ?", [username, password], "AND")
 # 用户输入 'admin' -- 被当成一个普通的字符串值，不会改变 SQL 结构
-# 实际执行的 SQL：
-# SELECT * FROM users WHERE username='admin'' --' AND password='...'
-#                         这一对引号被自动转义了 ↑
+# 执行时把 SQL 模板和参数交给驱动分别绑定；不要自行拼成带引号的 SQL
 ```
 
 **一句话总结：永远不要用字符串拼接构建 SQL。用框架提供的参数绑定（`?` 占位符）。**

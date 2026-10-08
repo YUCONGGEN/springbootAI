@@ -1,7 +1,7 @@
 # SpringBootAI LangChain 模块使用指南 —— 小白也能看懂
 
 > 把 [LangChain](https://github.com/langchain-ai/langchain) 全套能力（Chains / Agents / Memory / Retrievers / VectorStores / Parsers / Loaders）封装为 Spring 风格 Bean，配合 30+ 第三方模型提供商（OpenAI / Anthropic / Ollama / DeepSeek / ZhipuAI / Tongyi …）开箱即用。
-> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.3.11
+> 安装：`pip install springbootAI[langchain]` ｜ 框架版本：SpringBootAI 2.3.12
 
 ---
 
@@ -527,14 +527,16 @@ service = ChainService(lcLangChainModel=lc_model)
 print(service.run_llm_chain("回答问题：{q}", q="什么是 SpringBootAI？"))
 # 输出: [AI] SpringBootAI是一个Python Web框架...
 
-# 2. 带记忆多轮（memory 不传时自动创建 buffer）
-print(service.run_conversation("我叫张三"))
+# 2. 多轮必须复用同一个 memory；不传则每次创建新 buffer，不会积累历史
+from springbootai.langchain.memory.memory import MemoryFactory
+memory = MemoryFactory.create("buffer")
+print(service.run_conversation("我叫张三", memory=memory))
 # 输出: [AI] 你好张三，有什么可以帮助你的？
-print(service.run_conversation("我叫什么？"))
+print(service.run_conversation("我叫什么？", memory=memory))
 # 输出: [AI] 你叫张三（因为记住了）
 
 # 3. 串联：先翻译再总结
-from langchain.chains import LLMChain
+from langchain_classic.chains import LLMChain
 from langchain_core.prompts import PromptTemplate
 t_chain = LLMChain(llm=lc_model, prompt=PromptTemplate.from_template("翻译成英文：{input}"))
 s_chain = LLMChain(llm=lc_model, prompt=PromptTemplate.from_template("一句话总结：{input}"))
@@ -953,7 +955,7 @@ configure_ai(registry=registry)              # 1. 先装 springbootai.ai
 configure_langchain(registry=registry)        # 2. 再装 springbootai.langchain（复用 aiChatModel）
 ```
 
-想用 Spring AI 风格的 `ChatClient` 链式 API + Advisor？用 `springbootai.ai`。想用 LangChain 的 `Chain` / `Agent` / `Memory` 抽象？用 `springbootai.langchain`。两者底层是同一个模型 Bean，不会重复计费。
+想用 Spring AI 风格的 `ChatClient` 链式 API + Advisor，可以用 `springbootai.ai`；需要 LangChain 的 `Chain` / `Agent` / `Memory` 抽象，可以用 `springbootai.langchain`。当 `default-llm=auto` 且已注册 `aiChatModel` 时，LangChain 复用该模型 Bean。复用实例不会自动去重请求，Chain、Agent 和工具闭环仍可能发起多次模型调用，费用取决于实际用量。
 
 ---
 

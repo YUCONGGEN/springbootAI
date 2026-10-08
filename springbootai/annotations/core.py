@@ -105,6 +105,8 @@ class EventListener(SpringAnnotation):
 
 
 class SpringBootApplication(SpringAnnotation):
+    """Configure application scanning: None uses the entry package; [] disables it."""
+
     _annotation_type = "boot"
 
     def __init__(self, scan_base_packages: Optional[List[str]] = None):
@@ -112,6 +114,8 @@ class SpringBootApplication(SpringAnnotation):
 
 
 class ComponentScan(SpringAnnotation):
+    """Select component packages; an explicit empty list disables scanning."""
+
     _annotation_type = "scan"
 
     def __init__(self, base_packages: Optional[List[str]] = None):

@@ -1,6 +1,6 @@
 # SpringBootAI Excel 模块 —— 小白也能看懂的使用指南
 
-> 模块随 SpringBootAI 2.3.11 发布
+> 模块随 SpringBootAI 2.3.12 发布
 
 ---
 
@@ -124,25 +124,25 @@ from springbootai.excel import ExcelProperty, ExcelIgnore, ExcelSheet, BigDecima
 @ExcelSheet("用户列表", freeze_head=True, auto_width=True)
 class UserExport:
     # 长 ID：big_number=True 强制按文本写入，防止 Excel 把 76543210987654321 变成 7.65432E+16
-    id = ExcelProperty("用户ID", order=1, big_number=True)
+    id: int = ExcelProperty("用户ID", order=1, big_number=True)
 
     # width=15：列宽 15 个字符
-    name = ExcelProperty("姓名", order=2, width=15)
+    name: str = ExcelProperty("姓名", order=2, width=15)
 
     # 普通字段：不需要特殊设置
-    age = ExcelProperty("年龄", order=3)
+    age: int = ExcelProperty("年龄", order=3)
 
     # BigDecimalConverter：金额用 Decimal 类型，保留精确精度
-    amount = ExcelProperty("账户余额", order=4, converter=BigDecimalConverter)
+    amount: Decimal = ExcelProperty("账户余额", order=4, converter=BigDecimalConverter)
 
     # date_format：日期的显示格式
-    created_at = ExcelProperty("注册时间", order=5, date_format="%Y-%m-%d %H:%M:%S")
+    created_at: datetime = ExcelProperty("注册时间", order=5, date_format="%Y-%m-%d %H:%M:%S")
 
     # bool 类型自动转 "是"/"否"
-    active = ExcelProperty("是否激活", order=6)
+    active: bool = ExcelProperty("是否激活", order=6)
 
     # 这个字段不导出
-    remark = ExcelIgnore()
+    remark: str = ExcelIgnore()
 
     def __init__(self, id=None, name=None, age=None, amount=None,
                  created_at=None, active=None, remark=None):
@@ -240,15 +240,20 @@ rows2 = read_excel("用户列表.xlsx", UserExport)
 
 ```python
 # demo/controller/export_controller.py
-from springbootai.web import RestController, GetMapping
-from springbootai.http import FileResponse
+import os
+from tempfile import NamedTemporaryFile
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
+from springbootai.annotations import Autowired, RestController, RequestMapping, GetMapping
 from springbootai.excel import write_excel
 from demo.excel_entity import UserExport
 from demo.service.user_service import UserService
 
 
-@RestController("/api/export")
+@RestController
+@RequestMapping("/api/export")
 class ExportController:
+    @Autowired
     def __init__(self, user_service: UserService):
         self.user_service = user_service
 
@@ -269,11 +274,18 @@ class ExportController:
         ]
 
         # 导出到临时文件
-        filepath = "/tmp/用户列表_export.xlsx"
-        write_excel(filepath, UserExport, export_data)
+        # 每个请求独立文件，先关闭句柄以兼容 Windows
+        with NamedTemporaryFile(suffix=".xlsx", delete=False) as temp:
+            filepath = temp.name
+        try:
+            write_excel(filepath, UserExport, export_data)
+        except Exception:
+            os.unlink(filepath)
+            raise
 
         # 返回文件下载
-        return FileResponse(filepath, filename="用户列表.xlsx")
+        return FileResponse(filepath, filename="用户列表.xlsx",
+                            background=BackgroundTask(os.unlink, filepath))
 ```
 
 ---

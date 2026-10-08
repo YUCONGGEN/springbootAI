@@ -455,6 +455,14 @@ class BeanFactory:
 
     def _resolve_constructor_args(self, constructor: Callable, definition: BeanDefinition) -> list:
         sig = inspect.signature(constructor)
+        from typing import get_type_hints
+        try:
+            type_hints = get_type_hints(
+                inspect.unwrap(constructor), localns=dict(vars(definition.bean_class)),
+                include_extras=True,
+            )
+        except (NameError, TypeError):
+            type_hints = {}
         args = []
         autowired = next(
             (
@@ -480,7 +488,10 @@ class BeanFactory:
                 args.append(self._resolve_value(param.default))
                 continue
 
-            param_type, inline_qualifier, optional_type = self._unwrap_dependency_annotation(param.annotation)
+            hint = type_hints.get(param_name, param.annotation)
+            if isinstance(hint, str) and param_name in definition.dependencies:
+                hint = definition.dependencies[param_name]
+            param_type, inline_qualifier, optional_type = self._unwrap_dependency_annotation(hint)
             if param_type is inspect.Parameter.empty:
                 if param.default is not inspect.Parameter.empty:
                     args.append(param.default)
@@ -878,6 +889,10 @@ class BeanFactory:
                 ) from exc
 
         def should_rollback(exc: BaseException) -> bool:
+            # Cancellation and process-control signals must never become the
+            # deferred exception on a successful commit path.
+            if not isinstance(exc, Exception):
+                return True
             if annotation.no_rollback_for and any(
                 isinstance(exc, exc_type) for exc_type in annotation.no_rollback_for
             ):

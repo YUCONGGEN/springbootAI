@@ -1,6 +1,6 @@
 # SpringBootAI Swagger / OpenAPI 模块使用文档
 
-> SpringBootAI 2.3.11
+> SpringBootAI 2.3.12
 
 ---
 

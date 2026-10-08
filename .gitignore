@@ -5,6 +5,7 @@ __pycache__/
 .coverage
 coverage.xml
 tests_performance/results/*.json
+tests/performance/results/*.json
 htmlcov/
 build/
 dist/

@@ -1,6 +1,6 @@
 # 声明式 AOP、后置鉴权与重试恢复指南
 
-> SpringBootAI 2.3.11
+> SpringBootAI 2.3.12
 >
 > 适用范围：`@Aspect` 通知、`@PostAuthorize` 返回后鉴权、`@Recover` 重试失败兜底。
 
@@ -262,6 +262,8 @@ class DocumentService:
 
 ```python
 @PostAuthorize("#returnObject.owner == authentication.name")
+def get_document(self, document_id: int):
+    return self.repository.find_by_id(document_id)
 ```
 
 ### 3. 支持的表达式

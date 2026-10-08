@@ -70,7 +70,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 Invoke-Docker @('info', '--format', '{{.ServerVersion}}')
 
-$resultsDir = Join-Path $repoRoot 'tests_performance\results'
+$resultsDir = Join-Path $repoRoot 'tests\performance\results'
 New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 
 try {

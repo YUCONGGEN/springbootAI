@@ -56,7 +56,7 @@ SpringBootAI 是一个采用 Spring 风格注解和分层结构的 Python 应用
 | AI 与编排 | 模型调用、Tools、RAG、Chain、状态图、MCP client/server | LangChain / LangGraph / 官方 MCP SDK |
 | 生产治理 | 健康检查、Prometheus、限流熔断、追踪、Swagger | prometheus-client / OpenTelemetry / OpenAPI |
 
-当前版本是 `2.3.11`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 是无 TC 全局锁的单进程受限补偿模式，不应当作跨服务强一致方案。
+当前版本是 `2.3.12`；支持 Python 3.10、3.11 和 3.12，许可证为 MIT。项目仍标记为 Beta。用于公网高并发、合规敏感或支付/订单/库存等核心系统前，必须完成目标数据库、流量模型、故障恢复和安全基线验证。内嵌 Gateway 适合内部路由，不替代公网 Nginx/Kong/WAF；Seata `distributed` 对接官方 TC + TCC 回调；`at` 是无 TC 全局锁的单进程受限补偿模式，不应当作跨服务强一致方案。
 
 [新手指南](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/BEGINNER_GUIDE.md) | [全部文档](https://github.com/YUCONGGEN/springbootAI/tree/master/doc) | [变更日志](https://github.com/YUCONGGEN/springbootAI/blob/master/CHANGELOG.md) | [安全报告](https://github.com/YUCONGGEN/springbootAI/blob/master/SECURITY.md) | [发布检查](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/RELEASE_CHECKLIST.md)
 
@@ -187,10 +187,10 @@ SpringBootAI 是一个 **Python Web 框架**。它把 Java Spring Boot 的"注�
 
 | 组件 | 当前版本 |
 |------|----------|
-| `springbootai` 框架 API | 2.3.11 |
-| `springbootai.orm.pymybatis` | 2.3.11 |
-| `springbootai.ai` AI 模块 | 2.3.11 |
-| `springbootai.langchain` LangChain 模块 | 2.3.11 |
+| `springbootai` 框架 API | 2.3.12 |
+| `springbootai.orm.pymybatis` | 2.3.12 |
+| `springbootai.ai` AI 模块 | 2.3.12 |
+| `springbootai.langchain` LangChain 模块 | 2.3.12 |
 | Python | 3.10+ |
 
 ### 1.4 适合什么场景
@@ -1164,7 +1164,12 @@ class RegistrationService:
 
 ```python
 @Transactional(propagation="REQUIRED")
+def required_operation():
+    ...
+
 @Transactional(propagation="NESTED")
+def nested_operation():
+    ...
 ```
 
 `NESTED` 在已有事务中创建 savepoint；`REQUIRES_NEW` 使用独立 Session/连接，连接池 `max_size` 至少应能容纳并发的外层和内层连接。
@@ -1324,6 +1329,26 @@ class CleanupJob:
 > 完整文档：[AI_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AI_MODULE.md)。安装：`pip install springbootAI[ai]`。
 >
 > 提供 ChatClient（链式对话）、Advisor（对话顾问）、Tools（工具调用）、RAG（知识库检索增强生成）、Function Calling 等能力。支持 OpenAI / Ollama / DeepSeek / Moonshot 等多家大模型。
+
+以下便捷功能自 **2.3.12** 起提供，安装时运行 `pip install -U "springbootAI[ai]>=2.3.12"`。普通聊天只需 `client.chat("你好")`，异步使用 `await client.achat("你好")`；文本流使用 `client.stream_text(...)` / `client.astream_text(...)`。
+
+容器管理的 Service 可以只写提示词和签名：
+
+```python
+from springbootai.annotations import Prompt, RAG, Service
+
+@Service
+class Assistant:
+    @Prompt("用三句话总结：{text}")
+    def summarize(self, text: str) -> str:
+        ...
+
+    @RAG(top_k=3)
+    def answer(self, question: str) -> str:
+        ...
+```
+
+应用显式设置 `spring.ai.enabled: true` 并配置 Provider 后，框架自动调用模型、执行检索；RAG 数据先用向量库的 `add_texts(...)` 入库。返回类型声明为 Pydantic 模型时，自动生成 JSON 格式要求并校验结果，无需另写 `@StructuredOutput`。详见 [最少代码用法](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/AI_MODULE.md#常用功能最少代码写法)。
 
 ### 12.2 LangChain 模块
 
@@ -1829,5 +1854,7 @@ pip install springbootAI[mcp]
 ```
 
 完整配置、FastAPI 挂载、stdio、认证、白名单、Spring AI/LangChain/LangGraph 组合方式和测试命令见 [MCP_MODULE.md](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/MCP_MODULE.md)。
+
+可运行的 [Agent 调用 MCP 案例](https://github.com/YUCONGGEN/springbootAI/blob/master/doc/MCP_AGENT_EXAMPLE.md) 演示订单与物流查询，支持一条命令启动本地 MCP 服务、连接 HTTP 服务和切换真实模型。
 
 LangChain 也支持 `@LangChainClient` + `@LangChainCall`，LangGraph 支持 `@LangGraph` + `@GraphNode` + `@GraphEdge` + `@GraphRoute` + `@GraphInvoke`。这些注解复用现有运行时，不会重新实现 LangChain、LangGraph 或 MCP 协议。

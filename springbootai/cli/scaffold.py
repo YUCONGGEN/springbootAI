@@ -232,7 +232,7 @@ def _version() -> str:
         from springbootai import __version__
         return __version__
     except Exception:
-        return "2.3.11"
+        return "2.3.12"
 
 
 def _replace(template: str, **values: object) -> str:

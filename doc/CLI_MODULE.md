@@ -1,6 +1,6 @@
 # SpringBootAI CLI 与项目脚手架 —— 使用指南
 
-> 框架版本：SpringBootAI 2.3.11
+> 框架版本：SpringBootAI 2.3.12
 > 源码位置：`springbootai/cli/main.py`、`springbootai/cli/scaffold.py`
 > 对齐 Java：Spring Boot CLI / Spring Initializr
 
@@ -86,7 +86,7 @@ springbootai version
 预期输出：
 
 ```
-SpringBootAI v2.3.11
+SpringBootAI v2.3.12
   Python: 3.11.5
   Platform: Windows-10-10.0.22621-SP0
   Installation: e:\交付\springbootAI
@@ -111,7 +111,7 @@ springbootai info
 ============================================================
 SpringBootAI 运行环境信息
 ============================================================
-SpringBootAI 2.3.11
+SpringBootAI 2.3.12
 Python 版本: 3.11.5 (main, ...)
 Python 路径: /usr/bin/python3
 操作系统: Linux-5.15.0-x86_64
@@ -548,7 +548,7 @@ redis:
 
 ```
 # my-app 依赖（由 SpringBootAI 脚手架生成）
-springbootAI==2.3.11
+springbootAI==2.3.12
 PyMySQL==1.2.0          # MySQL 驱动
 redis==8.1.0            # Redis 客户端
 ```
@@ -732,7 +732,7 @@ pip install -r requirements.txt
 
 ```
 # blog-system 依赖（由 SpringBootAI 脚手架生成）
-springbootAI==2.3.11
+springbootAI==2.3.12
 PyMySQL==1.2.0                 # MySQL 驱动
 langchain-openai==1.4.2        # AI OpenAI 适配器（按需）
 langchain-core==1.5.4          # AI 核心类型（按需）
@@ -763,7 +763,7 @@ blog-system/
 ```python
 """blog-system controllers"""
 
-from springbootai.annotations import RestController, GetMapping, PostMapping
+from springbootai.annotations import RestController, RequestMapping, GetMapping, PostMapping
 
 
 @RestController
@@ -775,7 +775,8 @@ class HelloController:
         return {"message": "Hello from blog-system!"}
 
 
-@RestController("/api/posts")
+@RestController
+@RequestMapping("/api/posts")
 class PostController:
     """文章控制器"""
 
@@ -818,23 +819,23 @@ server:
 spring:
   application:
     name: blog-system
-
-# ORM 配置
-spring:
-  datasource:
-    url: sqlite:///blog.db
-    driver: sqlite
-  jpa:
-    ddl-auto:
-      mode: update
-    entity-packages:
-      - blog_system.models
-
-# AI 配置
-spring:
   ai:
-    model: gpt-4o-mini
-    api-key: ${OPENAI_API_KEY}
+    enabled: true  # 2.3.12 起支持启动自动装配
+    default-provider: openai
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      chat:
+        model: gpt-4o-mini
+
+# ORM 配置：使用框架实际读取的 database.* 键
+database:
+  enabled: true
+  orm: mybatis
+  driver: sqlite
+  database: ./blog.db
+  ddl-auto:
+    mode: update
+    entity_packages: blog_system.models
 
 logging:
   level: INFO

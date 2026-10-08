@@ -1,6 +1,6 @@
 # 配置绑定 —— 把 YAML 配置自动变成 Python 对象
 
-> SpringBootAI 2.3.11
+> SpringBootAI 2.3.12
 > 返回 [README 模块导航](../README.md#模块文档导航)
 
 ---

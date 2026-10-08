@@ -46,7 +46,7 @@ class SecurityContext:
     
     @roles.setter
     def roles(self, value: List[str]):
-        self._roles = value
+        self._roles = self._normalize_authorities(value)
     
     @property
     def permissions(self) -> List[str]:
@@ -54,7 +54,19 @@ class SecurityContext:
     
     @permissions.setter
     def permissions(self, value: List[str]):
-        self._permissions = value
+        self._permissions = self._normalize_authorities(value)
+
+    @staticmethod
+    def _normalize_authorities(value) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if not isinstance(value, (list, tuple, set, frozenset)) or any(
+            not isinstance(item, str) for item in value
+        ):
+            raise ValueError("Roles and permissions must contain string values")
+        return list(value)
     
     def is_authenticated(self) -> bool:
         """判断当前用户是否已认证"""
@@ -124,12 +136,18 @@ class SecurityContextHolder:
     @classmethod
     def set_authentication(cls, authentication: Dict[str, Any]):
         """设置当前认证信息"""
-        context = cls.get_context()
-        context.authentication = authentication
-        context.principal = authentication.get('principal')
-        context.credentials = authentication.get('credentials')
+        # asyncio copies ContextVar bindings, not their mutable values.  Replace
+        # the context so a child task cannot overwrite its parent's identity.
+        context = SecurityContext()
+        snapshot = dict(authentication)
         context.roles = authentication.get('roles', [])
         context.permissions = authentication.get('permissions', [])
+        snapshot['roles'] = list(context.roles)
+        snapshot['permissions'] = list(context.permissions)
+        context.authentication = snapshot
+        context.principal = snapshot.get('principal')
+        context.credentials = snapshot.get('credentials')
+        cls.set_context(context)
     
     @classmethod
     def get_principal(cls) -> Optional[Any]:

@@ -245,6 +245,7 @@ class ApplicationContext:
             self._scan_components()
             self._register_feign_clients()
             self._register_configuration_beans()
+            self._configure_ai_defaults()
             self._autowire_configuration_properties()
             self._autowire_value_annotations()
             self._register_event_listeners()
@@ -365,11 +366,11 @@ class ApplicationContext:
         annotations = getattr(self.main_class, '__spring_annotations__', [])
         for annotation in annotations:
             if isinstance(annotation, SpringBootApplication):
-                if annotation.scan_base_packages:
+                if annotation.scan_base_packages is not None:
                     return annotation.scan_base_packages
                 return [self._extract_package_name(self.main_class)]
             elif isinstance(annotation, ComponentScan):
-                if annotation.base_packages:
+                if annotation.base_packages is not None:
                     return annotation.base_packages
         return [self._extract_package_name(self.main_class)]
 
@@ -515,6 +516,25 @@ class ApplicationContext:
                             inline_qualifier or qualifier,
                             required=autowired.required,
                         )
+
+    def _configure_ai_defaults(self) -> None:
+        """Explicit AI enablement installs defaults before Service creation."""
+        ai_config = (
+            self.config_loader.get_prefix_config("springbootai.ai")
+            or self.config_loader.get_prefix_config("spring.ai")
+            or self.config_loader.get("ai", {})
+            or {}
+        )
+        if not isinstance(ai_config, dict):
+            return
+        enabled = str(ai_config.get("enabled", False)).strip().lower()
+        if enabled not in {"true", "1", "yes", "on"}:
+            return
+        # A user-defined client owns its model/advisor configuration.
+        if self.bean_factory.contains_bean("aiChatClient"):
+            return
+        from springbootai.ai.autoconfig import configure_ai
+        configure_ai(config=self.config_loader, bean_factory=self.bean_factory)
 
     def _register_configuration_beans(self) -> None:
         for bean_name in self.bean_factory.get_bean_names():

@@ -1,6 +1,6 @@
 # SpringBootAI CSV 模块 —— 小白也能看懂的使用指南
 
-> 模块随 SpringBootAI 2.3.11 发布
+> 模块随 SpringBootAI 2.3.12 发布
 > CSV 模块基于 Python 标准库 `csv`，**零额外依赖**，`pip install springbootAI` 即可用。
 
 ---
@@ -355,14 +355,18 @@ class Article:
 
 ❌ **错误想法**：反正都是 UTF-8。
 
-✅ **实际情况**：`utf-8-sig` 在文件开头加了一个 BOM（字节序标记 `\ufeff`），Windows Excel 看到 BOM 才知道这是 UTF-8 编码。没有 BOM 的话 Excel 按 ANSI 解码，中文就乱了。
+✅ **实际情况**：`utf-8-sig` 写入时在文件开头加 BOM（字节序标记 `\ufeff`），读取时去掉可选的 BOM。部分 Windows Excel 打开方式会把无 BOM 的 UTF-8 当作本地编码，因此加 BOM 可减少中文乱码；具体行为取决于版本及导入方式。
 
 ```python
 # ❌ 乱码风险
 @CsvFile(encoding="utf-8")  # Windows Excel 打开可能乱码
+class PlainUtf8Rows:
+    name: str
 
 # ✅ 推荐
 @CsvFile(encoding="utf-8-sig")  # Windows Excel 能正确显示中文
+class ExcelUtf8Rows:
+    name: str
 ```
 
 ---
@@ -371,12 +375,12 @@ class Article:
 
 ❌ **错误想法**：编码是写文件的人才需要关心的事。
 
-✅ **实际情况**：读文件时编码必须和写文件时一致。如果你用 `utf-8-sig` 写，就必须用 `utf-8-sig` 读。编码不匹配会导致乱码或读取失败。
+✅ **实际情况**：读取编码要匹配实际字节。`utf-8` 能解码带 BOM 的 UTF-8，但会保留开头的 `\ufeff`，可能影响首列表头匹配；`utf-8-sig` 会去掉 BOM，也能读取没有 BOM 的 UTF-8。它们并非一定互相读取失败。
 
 ```python
 # ❌ 写入用 utf-8-sig，读取用 utf-8
 write_csv("data.csv", User, data, encoding="utf-8-sig")
-rows = read_csv("data.csv", User, encoding="utf-8")  # 编码不匹配！
+rows = read_csv("data.csv", User, encoding="utf-8")  # 首列表头可能残留 BOM
 
 # ✅ 读写编码一致
 write_csv("data.csv", User, data, encoding="utf-8-sig")
@@ -502,18 +506,22 @@ rows = EasyCsv.read("file.csv", head=User).has_header(True).doRead()
 
 ---
 
-### 报错 5：写入后 Windows 记事本不换行
+### 报错 5：旧版 Windows 文本工具不识别换行
 
 **现象**：生成的 CSV 在 Windows 记事本里全显示在一行。
 
-**原因**：行终止符不匹配。
+**原因**：部分旧版文本工具只识别 CRLF；现代记事本一般也支持 LF。
 
 **解决**：
 
 ```python
 @CsvFile(line_terminator="\r\n")  # Windows 换行（默认）
-# 或
+class WindowsRows:
+    name: str
+
 @CsvFile(line_terminator="\n")    # Linux 换行
+class UnixRows:
+    name: str
 ```
 
 ---

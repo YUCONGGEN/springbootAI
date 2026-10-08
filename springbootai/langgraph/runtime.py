@@ -206,7 +206,17 @@ class LangGraphWorkflow:
             raise TimeoutError("LangGraph execution capacity is exhausted")
 
     async def _acquire_execution_async(self) -> None:
-        await asyncio.to_thread(self._acquire_execution)
+        slots = self._ensure_runtime_controls()
+        timeout = float(getattr(self.properties, "acquire_timeout_seconds", 1.0))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        # A cancelled to_thread waiter can acquire a slot in the background
+        # with nobody left to release it. Poll without a blocking worker.
+        while not slots.acquire(blocking=False):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError("LangGraph execution capacity is exhausted")
+            await asyncio.sleep(min(0.01, remaining))
 
     def _release_execution(self) -> None:
         self._ensure_runtime_controls().release()

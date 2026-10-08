@@ -659,13 +659,31 @@ class ChatModel(ABC):
         """异步调用，默认降级为同步 call（子类可覆盖实现真异步）"""
         import asyncio
         semaphore = await self._acquire_provider_capacity_async()
-        capacity_token = _capacity_owner.set(id(self))
+        copied_context = contextvars.copy_context()
+
+        def invoke():
+            capacity_token = _capacity_owner.set(id(self))
+            try:
+                return self.call(messages, tool_registry, options, context)
+            finally:
+                _capacity_owner.reset(capacity_token)
+                # Cancelling the waiter cannot stop a blocking provider call.
+                # Keep its permit until the worker actually finishes.
+                semaphore.release()
+
         try:
-            return await asyncio.to_thread(
-                self.call, messages, tool_registry, options, context)
-        finally:
-            _capacity_owner.reset(capacity_token)
+            future = asyncio.get_running_loop().run_in_executor(
+                None, copied_context.run, invoke)
+        except BaseException:
             semaphore.release()
+            raise
+
+        def observe_completion(completed):
+            if not completed.cancelled():
+                completed.exception()
+
+        future.add_done_callback(observe_completion)
+        return await asyncio.shield(future)
 
 
 class EmbeddingModel(ABC):
@@ -801,10 +819,14 @@ class PromptSpec:
 
     async def astream(self):
         """异步流式调用。"""
-        async for chunk in self._client._aexecute_stream(
-                self._messages, self._advisors,
-                self._resolve_registry(), self._context, self._options):
-            yield chunk
+        stream = self._client._aexecute_stream(
+            self._messages, self._advisors,
+            self._resolve_registry(), self._context, self._options)
+        try:
+            async for chunk in stream:
+                yield chunk
+        finally:
+            await stream.aclose()
 
     def content(self) -> str:
         return self.call().content()
@@ -849,6 +871,52 @@ class ChatClient:
         if self._default_system:
             spec._messages.insert(0, Message.system(self._default_system))
         return spec
+
+    def _simple_prompt(self, text: str, system: Optional[str],
+                       conversation_id: Optional[str], options: Dict[str, Any]) -> PromptSpec:
+        from springbootai.ai.annotation_runtime import _trusted_request_context
+        spec = self.prompt()
+        if system is not None:
+            spec.system(system)
+        spec.user(text)
+        if conversation_id is not None:
+            spec.param("conversation_id", conversation_id)
+        for key, value in _trusted_request_context({"conversation_id": conversation_id}).items():
+            spec.param(key, value)
+        for key, value in options.items():
+            spec.option(key, value)
+        return spec
+
+    def chat(self, text: str, *, system: Optional[str] = None,
+             conversation_id: Optional[str] = None, **options: Any) -> str:
+        """One-line chat with the existing advisors, tools and provider options."""
+        return self._simple_prompt(text, system, conversation_id, options).call().content()
+
+    async def achat(self, text: str, *, system: Optional[str] = None,
+                    conversation_id: Optional[str] = None, **options: Any) -> str:
+        """Async counterpart of :meth:`chat`."""
+        response = await self._simple_prompt(text, system, conversation_id, options).acall()
+        return response.content()
+
+    def stream_text(self, text: str, *, system: Optional[str] = None,
+                    conversation_id: Optional[str] = None, **options: Any):
+        """Yield text chunks through the normal streaming advisor pipeline."""
+        stream = self._simple_prompt(text, system, conversation_id, options).stream()
+        try:
+            for response in stream:
+                yield response.content()
+        finally:
+            stream.close()
+
+    async def astream_text(self, text: str, *, system: Optional[str] = None,
+                          conversation_id: Optional[str] = None, **options: Any):
+        """Yield async text chunks; closing the iterator closes the provider."""
+        stream = self._simple_prompt(text, system, conversation_id, options).astream()
+        try:
+            async for response in stream:
+                yield response.content()
+        finally:
+            await stream.aclose()
 
     def _execute(self, messages: List[Message], advisors: List[Advisor],
                  tool_registry, context: Dict[str, Any],

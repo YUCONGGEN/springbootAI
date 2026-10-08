@@ -324,8 +324,13 @@ def authenticate_decorator(annotation):
             context.authentication = authentication
             context.principal = authentication['principal']
             context.credentials = token
-            context.roles = authentication['roles']
-            context.permissions = authentication['permissions']
+            try:
+                context.roles = authentication['roles']
+                context.permissions = authentication['permissions']
+            except ValueError as exc:
+                raise AuthenticationError("Invalid token") from exc
+            authentication['roles'] = list(context.roles)
+            authentication['permissions'] = list(context.permissions)
             return SecurityContextHolder.set_context(context)
 
         if inspect.iscoroutinefunction(func):

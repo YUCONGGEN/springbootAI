@@ -35,7 +35,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 Invoke-Docker @('info', '--format', '{{.ServerVersion}}')
 
-$resultsDir = Join-Path $repoRoot 'tests_performance\results'
+$resultsDir = Join-Path $repoRoot 'tests\performance\results'
 New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 
 try {
@@ -48,7 +48,7 @@ try {
     Invoke-Docker @(
         'compose', '-p', $projectName, '-f', $composeFile,
         'run', '--rm', '--no-deps', 'app',
-        'python', 'tests_performance/conditional_assembly.py',
+        'python', 'tests/performance/conditional_assembly.py',
         '--iterations', [string]$Iterations,
         '--components', [string]$Components,
         '--warmup', [string]$Warmup,

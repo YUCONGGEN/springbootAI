@@ -5,7 +5,7 @@ services:
     image: springbootai-performance-app:local
     build:
       context: .
-      dockerfile: tests_performance/Dockerfile
+      dockerfile: tests/performance/Dockerfile
     init: true
     environment:
       SYNC_MAX_WORKERS: ${APP_SYNC_WORKERS:-40}
@@ -17,7 +17,7 @@ services:
       - python
       - -m
       - uvicorn
-      - tests_performance.benchmark_app:app
+      - tests.performance.benchmark_app:app
       - --host
       - 0.0.0.0
       - --port
@@ -28,7 +28,7 @@ services:
     ports:
       - "${APP_PORT:-8088}:8080"
     volumes:
-      - ./tests_performance/results:/results
+      - ./tests/performance/results:/results
     healthcheck:
       test:
         - CMD
@@ -80,6 +80,6 @@ services:
       SPRINGPY_AUTH_TOKEN: ${SPRINGPY_AUTH_TOKEN:-}
       SPRINGPY_EXPECTED_STATUS: ${SPRINGPY_EXPECTED_STATUS:-200}
     volumes:
-      - ./tests_performance/k6:/scripts:ro
-      - ./tests_performance/results:/results
+      - ./tests/performance/k6:/scripts:ro
+      - ./tests/performance/results:/results
     command: ["run", "/scripts/load.js"]

@@ -34,7 +34,7 @@ from .security import AccessCondition, SensitiveDataMasker, SQLInjectionDetector
 from .interceptor import Interceptor
 from .type_handler import TypeHandler
 
-__version__ = "2.3.11"
+__version__ = "2.3.12"
 __author__ = "PyMyBatis Team"
 
 # 基础导出列表

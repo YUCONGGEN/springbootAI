@@ -32,7 +32,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker CLI was not found in PATH.'
 }
 Invoke-Docker @('info', '--format', '{{.ServerVersion}}')
-New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot 'tests_performance\results') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot 'tests\performance\results') | Out-Null
 
 try {
     if (-not $SkipBuild) {
@@ -44,13 +44,13 @@ try {
     Invoke-Docker @(
         'compose', '-p', $projectName, '-f', $composeFile,
         'run', '--rm', '--no-deps', 'app',
-        'python', '-m', 'tests_performance.test_slice_assembly',
+        'python', '-m', 'tests.performance.test_slice_assembly',
         '--iterations', [string]$Iterations,
         '--warmup', [string]$Warmup,
         '--p95-ms', [string]$P95Ms,
         '--output', $resultContainerPath
     )
-    Write-Host "Test-slice benchmark passed. Result: $(Join-Path $repoRoot "tests_performance\results\$resultName")"
+    Write-Host "Test-slice benchmark passed. Result: $(Join-Path $repoRoot "tests\performance\results\$resultName")"
 }
 finally {
     & docker compose -p $projectName -f $composeFile down --remove-orphans

@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # Distribution name: springbootAI (pip install springbootAI); import package: springbootai.
 name = "springbootAI"
-version = "2.3.11"
+version = "2.3.12"
 description = "Spring-style Python framework with Web, ORM, Cloud and AI integrations"
 readme = "README.md"
 license = "MIT"
@@ -47,9 +47,10 @@ dependencies = [
     "DBUtils==3.1.2",
     "cryptography==50.0.0",
     "bcrypt==5.0.0",
-    "pyjwt==2.13.0",
+    "pyjwt==2.15.0",
     "pydantic==2.13.4",
     "requests==2.34.2",
+    "urllib3==2.8.0",
     "httpx==0.28.1",
     "defusedxml==0.7.1",
 ]
@@ -76,7 +77,7 @@ kafka = ["kafka-python==2.0.2"]
 # ========================================
 # 服务发现——类似 Spring Cloud Alibaba Nacos
 # ========================================
-nacos = ["nacos-sdk-python==2.0.11"]
+nacos = ["nacos-sdk-python==2.0.11", "multidict==6.9.1"]
 
 # ========================================
 # 监控和日志——类似 Spring Boot Actuator + Micrometer
@@ -216,6 +217,7 @@ full = [
     "redis==8.1.0",
     "pika==1.4.4",
     "nacos-sdk-python==2.0.11",
+    "multidict==6.9.1",
     # 监控 / 日志 / 安全
     "prometheus-client==0.26.0",
     "loguru==0.7.3",

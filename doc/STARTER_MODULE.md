@@ -1,6 +1,6 @@
 # SpringBootAI Starter 机制 —— 依赖管理指南
 
-> SpringBootAI 2.3.11
+> SpringBootAI 2.3.12
 > 配置位置：`pyproject.toml` 的 `[project.optional-dependencies]` 段
 > 对齐 Java：Spring Boot Starter（`spring-boot-starter-*`）
 
@@ -10,7 +10,7 @@
 
 - [模块概述](#模块概述)
 - [可用 Starter 列表](#可用-starter-列表)
-- [组合 Starter](#组合-starter-webcloudall)
+- [组合 Starter](#组合-starterwebcloudall)
 - [使用示例](#使用示例)
 - [与 Java Spring Boot Starter 对照表](#与-java-spring-boot-starter-对照表)
 - [最佳实践](#最佳实践)
@@ -320,7 +320,8 @@ database:
 ```
 
 ```python
-from springbootai.annotations import SpringBootApplication, MapperScan
+from springbootai.annotations import SpringBootApplication
+from springbootai.orm import MapperScan
 
 
 @SpringBootApplication(scan_base_packages=["app"])
@@ -341,28 +342,28 @@ pip install "springbootAI[cloud]"
 spring:
   application:
     name: order-service
-  cloud:
-    nacos:
-      discovery:
-        server-addr: localhost:8848
 
 database:
   enabled: true
   driver: mysql
   host: localhost
   port: 3306
+  username: ${DB_USERNAME:root}
+  password: ${DB_PASSWORD:}
   database: orders
 
-spring:
-  redis:
-    host: localhost
-    port: 6379
+redis:
+  enabled: true
+  host: localhost
+  port: 6379
 
-spring:
-  rabbitmq:
-    host: localhost
-    port: 5672
+rabbitmq:
+  enabled: true
+  host: localhost
+  port: 5672
 ```
+
+各外部服务需先启动并配置凭证。服务发现参数另见 [微服务指南](CLOUD_MODULE.md)，不要把 Java Spring 的配置键直接当作本框架的配置键。
 
 ### 示例 4：AI 应用
 
@@ -409,12 +410,12 @@ pip install "springbootAI[web,mysql,dev]"
 
 ```
 # requirements.txt
-springbootAI[web,mysql]==2.3.11
+springbootAI[web,mysql]==2.3.12
 ```
 
 ```
 # 或者用组合 Starter
-springbootAI[cloud]==2.3.11
+springbootAI[cloud]==2.3.12
 ```
 
 ### 示例 8：在 pyproject.toml 中使用（自己的项目）
@@ -425,7 +426,7 @@ springbootAI[cloud]==2.3.11
 name = "my-app"
 version = "1.0.0"
 dependencies = [
-    "springbootAI[web,mysql]==2.3.11",
+    "springbootAI[web,mysql]==2.3.12",
 ]
 ```
 
@@ -476,7 +477,7 @@ pip install "springbootAI[web]"
 # 或在 pyproject.toml
 [project]
 dependencies = [
-    "springbootAI[web]==2.3.11",
+    "springbootAI[web]==2.3.12",
 ]
 ```
 
@@ -530,23 +531,23 @@ pip install "springbootAI[all]"
 pip install "springbootAI[web]"
 
 # ✅ 安全：锁定版本
-pip install "springbootAI[web]==2.3.11"
+pip install "springbootAI[web]==2.3.12"
 ```
 
 ```
 # requirements.txt
-springbootAI[web,mysql]==2.3.11
+springbootAI[web,mysql]==2.3.12
 ```
 
 ### 3. 开发/生产环境分开
 
 ```
 # requirements.txt（生产）
-springbootAI[web,mysql]==2.3.11
+springbootAI[web,mysql]==2.3.12
 
 # requirements-dev.txt（开发，额外加测试工具）
 -r requirements.txt
-springbootAI[dev]==2.3.11
+springbootAI[dev]==2.3.12
 ```
 
 ```bash
@@ -649,7 +650,7 @@ A: 不需要。`web` Starter 已经包含 `fastapi==0.141.1`，直接 `pip insta
 **Q4: Starter 里的版本号能改吗？**
 
 A: 可以，但不推荐。Starter 内的版本号经过测试验证，改了可能不兼容。如果必须改（比如安全漏洞），建议：
-1. 在 `requirements.txt` 中固定框架和覆盖依赖：`springbootAI[web]==2.3.11` + `fastapi==0.141.1`
+1. 在 `requirements.txt` 中固定框架和覆盖依赖：`springbootAI[web]==2.3.12` + `fastapi==0.141.1`
 2. 充分测试后部署
 
 **Q5: `web` Starter 里的 FastAPI 与核心依赖版本一致吗？**

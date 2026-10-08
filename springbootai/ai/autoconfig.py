@@ -563,7 +563,7 @@ def _resolve_redis_client(props: AIProperties,
 
 def configure_ai(registry: Optional[BeanRegistry] = None,
                  config: Optional[Any] = None,
-                 redis_client=None) -> Dict[str, Any]:
+                 redis_client=None, bean_factory=None) -> Dict[str, Any]:
     """
     AI 模块自动配置入口 - 读取配置、绑定 AIProperties、构建并注册 Bean。
 
@@ -571,6 +571,7 @@ def configure_ai(registry: Optional[BeanRegistry] = None,
         registry: BeanRegistry（默认全局单例）
         config: 配置加载器（默认全局 config_loader）
         redis_client: 可选 Redis 客户端（启用 redis 记忆/向量存储时传入）
+        bean_factory: 应用启动时传入，使默认组件可由 IoC 注入和 AI 注解解析
 
     Returns:
         已注册的 Bean 名称 -> Bean 映射
@@ -599,25 +600,32 @@ def configure_ai(registry: Optional[BeanRegistry] = None,
 
     beans: Dict[str, Any] = {}
 
+    def component(name, build):
+        if bean_factory is not None and bean_factory.contains_bean(name):
+            bean = bean_factory.get_bean(name)
+        else:
+            bean = build()
+        registry.register(name, bean)
+        beans[name] = bean
+        # Publish dependencies before constructing custom components (for
+        # example a user VectorStore whose constructor injects EmbeddingModel).
+        if bean_factory is not None and not bean_factory.contains_bean(name):
+            from springbootai.context.bean_definition import BeanDefinition
+            bean_factory.register_bean_definition(name, BeanDefinition(type(bean), name))
+            bean_factory.register_instance(name, bean)
+        return bean
+
     # 1. ChatModel（含熔断器）
-    chat_model = _build_chat_model(props, redis_client=redis_client)
-    registry.register("aiChatModel", chat_model)
-    beans["aiChatModel"] = chat_model
+    chat_model = component("aiChatModel", lambda: _build_chat_model(props, redis_client=redis_client))
 
     # 2. EmbeddingModel（含熔断器）- RAG 自动可用
-    embedding_model = _build_embedding_model(props, redis_client=redis_client)
-    registry.register("aiEmbeddingModel", embedding_model)
-    beans["aiEmbeddingModel"] = embedding_model
+    embedding_model = component("aiEmbeddingModel", lambda: _build_embedding_model(props, redis_client=redis_client))
 
     # 3. VectorStore（注入 EmbeddingModel，RAG 检索自动嵌入）
-    vector_store = _build_vector_store(props, embedding_model, redis_client)
-    registry.register("aiVectorStore", vector_store)
-    beans["aiVectorStore"] = vector_store
+    component("aiVectorStore", lambda: _build_vector_store(props, embedding_model, redis_client))
 
-    # 4. ChatClient（注入默认 Memory Advisor — 可通过 spring.ai.memory.auto-advisor=false 禁用）
-    memory = _build_memory(props, redis_client)
-    registry.register("aiChatMemory", memory)
-    beans["aiChatMemory"] = memory
+    # 4. ChatClient（默认 Memory Advisor 可通过 SPRING_AI_MEMORY_AUTO_ADVISOR=false 禁用）
+    memory = component("aiChatMemory", lambda: _build_memory(props, redis_client))
 
     auto_advisor = str(
         os.environ.get("SPRING_AI_MEMORY_AUTO_ADVISOR",
@@ -631,8 +639,7 @@ def configure_ai(registry: Optional[BeanRegistry] = None,
                        .default_advisors(memory_advisor).build())
     else:
         chat_client = ChatClient(chat_model)
-    registry.register("aiChatClient", chat_client)
-    beans["aiChatClient"] = chat_client
+    component("aiChatClient", lambda: chat_client)
 
     logger.info("AI 模块自动配置完成: provider=%s, beans=%d",
                 props.default_provider, len(beans))

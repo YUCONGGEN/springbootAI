@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import inspect
 import json
 import logging
@@ -15,7 +16,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, get_type_hints
 
 from springbootai.ai.annotations import (
     Agent, AiCache, AiRetry, ContentModeration, Embedding, Prompt, RAG,
@@ -230,7 +231,13 @@ def _make_cache_key(method: Callable, annotation: AiCache,
             raise ValueError(f"@AiCache key 缺少参数: {exc.args[0]}") from exc
     else:
         key_data = json.dumps(_stable(values), ensure_ascii=False, sort_keys=True)
-    return f"{method.__module__}.{method.__qualname__}:{key_data}"
+    # Scope both cached values and in-flight coalescing to trusted identity.
+    # Custom keys must not accidentally share a private RAG answer with another
+    # user. Hash the structured pair to avoid delimiter collisions/raw identity.
+    scoped = json.dumps([_stable(_trusted_request_context(values)), key_data],
+                        ensure_ascii=False, sort_keys=True)
+    digest = hashlib.sha256(scoped.encode("utf-8")).hexdigest()
+    return f"{method.__module__}.{method.__qualname__}:{digest}"
 
 
 def _cached_sync_call(key: str, annotation: AiCache, call: Callable[[], Any]) -> Any:
@@ -376,6 +383,41 @@ def _content(result: Any) -> str:
     return str(result)
 
 
+def _query_input(original: Any, values: dict[str, Any]) -> str:
+    """Keep query factories; let placeholder bodies use one unambiguous input."""
+    if original is not None and original is not Ellipsis:
+        return _content(original)
+    for name in ("question", "query", "text", "user_input", "prompt"):
+        if name in values:
+            return _content(values[name])
+    inputs = {key: value for key, value in values.items()
+              if key not in {"conversation_id", "tenant_id", "user_id"}}
+    if len(inputs) == 1:
+        return _content(next(iter(inputs.values())))
+    raise ValueError("AI 方法无法确定输入；请提供 @Prompt 模板或在方法体返回查询文本")
+
+
+def _inferred_output(method: Callable, instance: Any) -> Optional[StructuredOutput]:
+    """Infer only validated Pydantic models, leaving other return types alone."""
+    from pydantic import BaseModel
+    try:
+        hints = get_type_hints(inspect.unwrap(method),
+                               localns=dict(vars(instance.__class__)))
+    except (NameError, TypeError, ValueError):
+        return None
+    model = hints.get("return")
+    if isinstance(model, type) and issubclass(model, BaseModel):
+        return StructuredOutput(model)
+    return None
+
+
+def _apply_output_schema(spec: Any, output: Optional[StructuredOutput]) -> None:
+    if output is not None:
+        schema = output.model.model_json_schema()
+        spec.system("请仅输出符合以下 JSON Schema 的 JSON 对象，不要包含 Markdown 或额外说明：\n"
+                    + json.dumps(schema, ensure_ascii=False))
+
+
 def _structured(result: Any, annotation: StructuredOutput) -> Any:
     if isinstance(result, annotation.model):
         return result
@@ -499,7 +541,8 @@ def _apply_trusted_request_context(spec: Any, values: dict[str, Any]) -> None:
         spec.param(key, value)
 
 
-def _invoke_chat(factory: Any, annotation: Prompt, query: str, values: dict[str, Any]) -> Any:
+def _invoke_chat(factory: Any, annotation: Prompt, query: str, values: dict[str, Any],
+                 output: Optional[StructuredOutput] = None) -> Any:
     client = _resolve(factory, annotation.client)
     if client is None:
         raise RuntimeError(f"未找到 ChatClient Bean: {annotation.client}")
@@ -507,13 +550,15 @@ def _invoke_chat(factory: Any, annotation: Prompt, query: str, values: dict[str,
     system = _render(annotation.system, values)
     if system:
         spec.system(system)
+    _apply_output_schema(spec, output)
     spec.user(query)
     _apply_trusted_request_context(spec, values)
     return spec.call()
 
 
 async def _invoke_chat_async(factory: Any, annotation: Prompt, query: str,
-                             values: dict[str, Any]) -> Any:
+                             values: dict[str, Any],
+                             output: Optional[StructuredOutput] = None) -> Any:
     client = _resolve(factory, annotation.client)
     if client is None:
         raise RuntimeError(f"未找到 ChatClient Bean: {annotation.client}")
@@ -521,6 +566,7 @@ async def _invoke_chat_async(factory: Any, annotation: Prompt, query: str,
     system = _render(annotation.system, values)
     if system:
         spec.system(system)
+    _apply_output_schema(spec, output)
     spec.user(query)
     _apply_trusted_request_context(spec, values)
     if hasattr(spec, "acall"):
@@ -529,7 +575,9 @@ async def _invoke_chat_async(factory: Any, annotation: Prompt, query: str,
 
 
 def _invoke_rag(factory: Any, annotation: RAG, query: str,
-                values: Optional[dict[str, Any]] = None) -> Any:
+                values: Optional[dict[str, Any]] = None,
+                output: Optional[StructuredOutput] = None,
+                prompt: Optional[Prompt] = None) -> Any:
     client = _resolve(factory, annotation.client)
     store = _resolve(factory, annotation.vector_store)
     embedding = _resolve(factory, annotation.embedding)
@@ -542,13 +590,19 @@ def _invoke_rag(factory: Any, annotation: RAG, query: str,
         max_context_chars=annotation.max_context_chars,
         max_document_chars=annotation.max_document_chars,
     )
-    spec = client.prompt().advisors(advisor).user(query)
+    spec = client.prompt().advisors(advisor)
+    if prompt and prompt.system:
+        spec.system(_render(prompt.system, values or {}))
+    _apply_output_schema(spec, output)
+    spec.user(query)
     _apply_trusted_request_context(spec, values or {})
     return spec.call()
 
 
 async def _invoke_rag_async(factory: Any, annotation: RAG, query: str,
-                            values: Optional[dict[str, Any]] = None) -> Any:
+                            values: Optional[dict[str, Any]] = None,
+                            output: Optional[StructuredOutput] = None,
+                            prompt: Optional[Prompt] = None) -> Any:
     client = _resolve(factory, annotation.client)
     store = _resolve(factory, annotation.vector_store)
     embedding = _resolve(factory, annotation.embedding)
@@ -561,7 +615,11 @@ async def _invoke_rag_async(factory: Any, annotation: RAG, query: str,
         max_context_chars=annotation.max_context_chars,
         max_document_chars=annotation.max_document_chars,
     )
-    spec = client.prompt().advisors(advisor).user(query)
+    spec = client.prompt().advisors(advisor)
+    if prompt and prompt.system:
+        spec.system(_render(prompt.system, values or {}))
+    _apply_output_schema(spec, output)
+    spec.user(query)
     _apply_trusted_request_context(spec, values or {})
     if hasattr(spec, "acall"):
         return await spec.acall()
@@ -614,6 +672,10 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
     rag_ann = next((a for a in annotations if isinstance(a, RAG)), None)
     agent_ann = next((a for a in annotations if isinstance(a, Agent)), None)
     output_ann = next((a for a in annotations if isinstance(a, StructuredOutput)), None)
+    inferred_output = None
+    if output_ann is None and (prompt_ann or rag_ann):
+        inferred_output = _inferred_output(method, instance)
+        output_ann = inferred_output
     retry_ann = next((a for a in annotations if isinstance(a, AiRetry)), None)
     cache_ann = next((a for a in annotations if isinstance(a, AiCache)), None)
     token_ann = next((a for a in annotations if isinstance(a, TokenUsage)), None)
@@ -624,23 +686,25 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
         original = None
         if prompt_ann or rag_ann or agent_ann:
             # 原方法可作为无模板注解的 query 工厂；有模板时只读取参数。
-            if prompt_ann and prompt_ann.template:
-                query = _render(prompt_ann.template, values)
-                result = _invoke_chat(factory, prompt_ann, query, values)
-            elif rag_ann:
+            if rag_ann:
                 rag_query: Optional[str] = (
                     _render(prompt_ann.template, values)
                     if prompt_ann and prompt_ann.template else None)
                 if rag_query is None:
                     original = method(*args, **kwargs)
-                    rag_query = _content(original)
-                result = _invoke_rag(factory, rag_ann, rag_query, values)
+                    rag_query = _query_input(original, values)
+                result = _invoke_rag(factory, rag_ann, rag_query, values,
+                                     inferred_output, prompt_ann)
+            elif prompt_ann and prompt_ann.template:
+                query = _render(prompt_ann.template, values)
+                result = _invoke_chat(factory, prompt_ann, query, values, inferred_output)
             elif agent_ann:
                 original = method(*args, **kwargs)
                 result = _invoke_agent(factory, agent_ann, _content(original))
             else:
                 original = method(*args, **kwargs)
-                result = _invoke_chat(factory, prompt_ann, _content(original), values)
+                result = _invoke_chat(factory, prompt_ann, _query_input(original, values),
+                                      values, inferred_output)
         else:
             result = method(*args, **kwargs)
 
@@ -667,13 +731,18 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
         """异步方法对应的执行路径，避免把 coroutine 当成 Prompt 文本。"""
         values = _arguments(method, args, kwargs)
         if prompt_ann or rag_ann or agent_ann:
-            if prompt_ann and prompt_ann.template:
-                result = await _invoke_chat_async(
-                    factory, prompt_ann, _render(prompt_ann.template, values), values)
-            elif rag_ann:
-                original = await method(*args, **kwargs)
+            if rag_ann:
+                if prompt_ann and prompt_ann.template:
+                    rag_query = _render(prompt_ann.template, values)
+                else:
+                    original = await method(*args, **kwargs)
+                    rag_query = _query_input(original, values)
                 result = await _invoke_rag_async(
-                    factory, rag_ann, _content(original), values)
+                    factory, rag_ann, rag_query, values, inferred_output, prompt_ann)
+            elif prompt_ann and prompt_ann.template:
+                result = await _invoke_chat_async(
+                    factory, prompt_ann, _render(prompt_ann.template, values), values,
+                    inferred_output)
             elif agent_ann:
                 original = await method(*args, **kwargs)
                 result = await _invoke_agent_async(
@@ -681,7 +750,8 @@ def apply_ai_annotations(factory: Any, instance: Any, method: Callable) -> Calla
             else:
                 original = await method(*args, **kwargs)
                 result = await _invoke_chat_async(
-                    factory, prompt_ann, _content(original), values)
+                    factory, prompt_ann, _query_input(original, values), values,
+                    inferred_output)
         else:
             result = await method(*args, **kwargs)
         if inspect.isawaitable(result):

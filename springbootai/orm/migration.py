@@ -549,8 +549,8 @@ class MigrationManager:
         """回滚迁移（执行 Undo 脚本）。
 
         Args:
-            target_version: 回滚到指定版本（不包含该版本）。
-                           如 rollback("3") 会执行 U3、U2（回滚到 V1 状态）。
+            target_version: 回滚到指定版本，保留该版本及更早版本。
+                           如已应用 V1、V2、V3，rollback("2") 只执行 U3。
                            如果为 None，则只回滚最后一个版本。
 
         Returns:

@@ -1,6 +1,6 @@
 # SpringBootAI 常用注解模块指南
 
-> SpringBootAI 2.3.11
+> SpringBootAI 2.3.12
 
 ---
 

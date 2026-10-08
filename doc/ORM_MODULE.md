@@ -1,6 +1,6 @@
 # SpringBootAI 数据库操作（ORM）—— 使用指南
 
-> 框架版本：SpringBootAI 2.3.11 / 内嵌 PyMyBatis 2.3.11
+> 框架版本：SpringBootAI 2.3.12 / 内嵌 PyMyBatis 2.3.12
 
 ---
 
@@ -223,10 +223,13 @@ class UserMapper:
 
 ```python
 # demo/service/user_service.py
+from springbootai.annotations import Autowired, Service
 from demo.mapper.user_mapper import UserMapper
 
 
+@Service
 class UserService:
+    @Autowired
     def __init__(self, user_mapper: UserMapper):
         self.user_mapper = user_mapper  # 框架自动注入 Mapper
 
@@ -251,12 +254,14 @@ class UserService:
 
 ```python
 # demo/controller/user_controller.py
-from springbootai.web import RestController, PostMapping, GetMapping
+from springbootai.annotations import Autowired, RestController, RequestMapping, PostMapping, GetMapping
 from demo.service.user_service import UserService
 
 
-@RestController("/api/users")
+@RestController
+@RequestMapping("/api/users")
 class UserController:
+    @Autowired
     def __init__(self, user_service: UserService):
         self.user_service = user_service
 
@@ -264,31 +269,31 @@ class UserController:
     def list_users(self):
         """GET /api/users/ → 返回所有用户列表"""
         users = self.user_service.list_all()
-        return {"code": 0, "data": users}
+        return users  # 框架自动包装 Result 响应
 
     @GetMapping("/{user_id}")
     def get_user(self, user_id: int):
         """GET /api/users/1 → 返回单个用户"""
         user = self.user_service.get_by_id(user_id)
-        return {"code": 0, "data": user}
+        return user
 
     @PostMapping("/")
     def create_user(self, name: str, email: str, age: int):
         """POST /api/users/ → 新增用户"""
         self.user_service.create(name, email, age)
-        return {"code": 0, "msg": "创建成功"}
+        return "创建成功"
 
     @PostMapping("/{user_id}/rename")
     def rename_user(self, user_id: int, new_name: str):
         """POST /api/users/1/rename → 改名"""
         self.user_service.rename(user_id, new_name)
-        return {"code": 0, "msg": "改名成功"}
+        return "改名成功"
 
     @PostMapping("/{user_id}/delete")
     def delete_user(self, user_id: int):
         """POST /api/users/1/delete → 删除"""
         self.user_service.remove(user_id)
-        return {"code": 0, "msg": "删除成功"}
+        return "删除成功"
 ```
 
 ### 第四步：配置启动类
@@ -335,34 +340,51 @@ database:
 
 ### ② 怎么用
 
+以下事务示例使用独立的 `accounts` 表：`id` 为主键，`balance` 为整数分。请先建表并创建测试账户；前面用户表中的 `age` 不能作为余额。Mapper 放在 `@MapperScan` 的扫描包内。
+
+```python
+# demo/mapper/account_mapper.py
+from springbootai.orm import Mapper, Update
+
+@Mapper
+class AccountMapper:
+    @Update("UPDATE accounts SET balance = balance - #{amount} WHERE id = #{account_id} AND balance >= #{amount}")
+    def debit(self, account_id: int, amount: int) -> int:
+        ...
+
+    @Update("UPDATE accounts SET balance = balance + #{amount} WHERE id = #{account_id}")
+    def credit(self, account_id: int, amount: int) -> int:
+        ...
+```
+
 ```python
 # demo/service/transfer_service.py
-from springbootai.annotations import Transactional
-from demo.mapper.user_mapper import UserMapper
+from springbootai.annotations import Autowired, Service, Transactional
+from demo.mapper.account_mapper import AccountMapper
 
 
+@Service
 class TransferService:
-    def __init__(self, user_mapper: UserMapper):
-        self.user_mapper = user_mapper
+    @Autowired
+    def __init__(self, account_mapper: AccountMapper):
+        self.account_mapper = account_mapper
 
-    @Transactional  # 这个方法里的数据库操作绑定在一起
+    @Transactional(rollback_for=[Exception])
     def transfer(self, from_id: int, to_id: int, amount: int):
         """① A 减钱  ② B 加钱  —— 两步绑定在一起"""
-        from_user = self.user_mapper.find_by_id(from_id)
-        to_user = self.user_mapper.find_by_id(to_id)
-
-        if from_user.age < amount:
-            raise ValueError("余额不足，转账失败")
-
-        self.user_mapper.update_age(from_id, from_user.age - amount)
-        self.user_mapper.update_age(to_id, to_user.age + amount)
-        # 如果这中间出任何异常，所有修改都会自动撤销
+        if amount <= 0:
+            raise ValueError("转账金额必须大于 0")
+        if self.account_mapper.debit(from_id, amount) != 1:
+            raise ValueError("转出账户不存在或余额不足")
+        if self.account_mapper.credit(to_id, amount) != 1:
+            raise ValueError("转入账户不存在")
+        # 第二步失败时，事务回滚第一步扣款
 ```
 
 ### ③ 运行结果
 
 - 正常情况：两个账户都更新成功
-- 如果 `update_age(to_id, ...)` 出错了：第一个 `update_age` 的修改自动撤销，`from_id` 的钱不会少
+- 如果 `credit(to_id, ...)` 出错或转入账户不存在：`debit` 扣款自动回滚
 - 如果余额不足抛异常：什么都不会改
 
 > **重点**：`@Transactional` 应该放在 **Service 层**，不要放在 Controller 上。因为一个业务操作可能涉及多个 Mapper 调用，它们应该在同一个事务里。

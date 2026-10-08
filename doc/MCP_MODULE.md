@@ -189,6 +189,8 @@ manager = beans["mcpClientManager"]
 
 ## 6. 把 MCP 工具给 Spring AI、LangChain 和 LangGraph
 
+完整可运行案例：[Agent 调用 MCP 查询订单与物流](MCP_AGENT_EXAMPLE.md)。一条命令自动启动本地 MCP 服务，也支持独立 HTTP 服务及真实模型。
+
 `configure_mcp()` 创建的 `aiEffectiveToolRegistry` 会挂到现有 `aiChatClient`。模型只能看到服务器允许、客户端也允许、最终执行策略仍允许的交集。
 
 LangChain Agent 可把 Spring AI 工具转换为 LangChain 工具后使用。LangGraph 节点可以复用 `langGraphRuntime.tool_registry`，也可以在一个普通节点中调用注解客户端：

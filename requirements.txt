@@ -29,7 +29,7 @@ sqlglot==27.28.1
 defusedxml==0.7.1
 
 # 认证授权
-pyjwt==2.13.0
+pyjwt==2.15.0
 cryptography==50.0.0
 bcrypt==5.0.0
 
@@ -41,6 +41,7 @@ loguru==0.7.3
 
 # HTTP 客户端（Feign）
 requests==2.34.2
+urllib3==2.8.0
 httpx==0.28.1
 
 # RabbitMQ 消息队列
@@ -48,6 +49,7 @@ pika==1.4.4
 
 # Nacos 服务注册发现
 nacos-sdk-python==2.0.11
+multidict==6.9.1
 
 # 参数校验
 pydantic==2.13.4
