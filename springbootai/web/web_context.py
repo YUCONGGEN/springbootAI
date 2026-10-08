@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import datetime, date
 from decimal import Decimal
+from types import UnionType
 from fastapi import FastAPI, Request, Response, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse
@@ -581,6 +582,18 @@ class WebApplicationContext:
         for param_name, param in sig.parameters.items():
             if param_name == 'self':
                 continue
+
+            # Python 3.10 adds Optional[T] for a None default in
+            # get_type_hints(). Keep that wrapper for validation while
+            # classifying nullable dictionaries as request bodies.
+            inferred_body_type = param.annotation
+            if get_origin(inferred_body_type) in (Union, UnionType):
+                body_types = [
+                    item for item in get_args(inferred_body_type)
+                    if item is not type(None)
+                ]
+                if len(body_types) == 1:
+                    inferred_body_type = body_types[0]
             
             # 检查是否在路径中
             path_param_match = re.search(r'\{' + param_name + r'\}', path)
@@ -648,11 +661,11 @@ class WebApplicationContext:
                     'annotation': param.annotation if param.annotation is not inspect.Parameter.empty else str,
                     'default': None, 'required': True,
                 })
-            elif param.annotation == dict:
+            elif inferred_body_type is dict or get_origin(inferred_body_type) is dict:
                 # dict 类型的参数，视为请求体参数
                 param_infos.append({
                     'name': param_name, 'kind': 'body', 'http_name': param_name,
-                    'annotation': dict, 'default': None, 'required': param.default is inspect.Parameter.empty,
+                    'annotation': param.annotation, 'default': None, 'required': param.default is inspect.Parameter.empty,
                 })
             elif param.default is not inspect.Parameter.empty:
                 # 有默认值的参数，视为查询参数

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from typing import Dict, Optional
 
 import pytest
 from fastapi import HTTPException
@@ -87,6 +88,27 @@ def test_path_variable_alias_uses_the_url_placeholder():
 
 class _AuditPayload(BaseModel):
     count: int
+
+
+@pytest.mark.parametrize("annotation", [
+    dict, Dict[str, int], Optional[dict], dict | None,
+    dict[str, int], Optional[dict[str, int]],
+])
+def test_nullable_dictionary_parameters_bind_json_bodies(annotation):
+    class Controller:
+        def create(self, payload=None):
+            return payload or {}
+
+    Controller.create.__annotations__ = {"payload": annotation}
+    with _client(Controller(), Controller.create, "/items", "POST") as client:
+        response = client.post("/items", json={"count": 7})
+        assert response.status_code == 200
+        assert response.json()["data"] == {"count": 7}
+        assert client.post("/items").json()["data"] == {}
+        assert client.post("/items", json=["invalid"]).status_code == 422
+        operation = client.get("/openapi.json").json()["paths"]["/items"]["post"]
+        assert "requestBody" in operation
+        assert not any(item["name"] == "payload" for item in operation.get("parameters", []))
 
 
 def test_controller_resolves_postponed_body_annotations_in_its_own_module():
